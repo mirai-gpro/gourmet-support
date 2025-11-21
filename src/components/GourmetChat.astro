@@ -1,0 +1,944 @@
+---
+// GourmetChat.astro - グルメサポートチャットコンポーネント
+export interface Props {
+  apiBaseUrl?: string;
+}
+
+const { apiBaseUrl = '' } = Astro.props;
+---
+
+<div class="gourmet-chat-container" data-api-base={apiBaseUrl}>
+  <div class="chat-header">
+    <h2>🍽️ グルメサポートAI</h2>
+    <p>お店探しをお手伝いします</p>
+  </div>
+
+  <div class="voice-status stopped" id="voiceStatus">
+    🎤 音声認識: 停止中
+  </div>
+
+  <div class="chat-area" id="chatArea">
+    <!-- メッセージはJSで動的に追加 -->
+  </div>
+
+  <div class="input-area">
+    <div class="input-group">
+      <input 
+        type="text" 
+        id="userInput" 
+        placeholder="メッセージを入力..."
+        disabled
+      />
+      <button class="btn btn-icon btn-mic" id="micBtn" title="音声入力" disabled>
+        🎤
+      </button>
+      <button class="btn btn-icon btn-speaker" id="speakerBtn" title="音声読み上げON" disabled>
+        🔊
+      </button>
+      <button class="btn" id="sendBtn" disabled>
+        送信
+      </button>
+    </div>
+    <div class="input-actions">
+      <button class="btn btn-secondary" id="finalizeBtn">
+        📋 質問要約書を作成
+      </button>
+    </div>
+  </div>
+</div>
+
+<style>
+  .gourmet-chat-container {
+    background: white;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+    width: 100%;
+    max-width: 800px;
+    max-height: 600px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    margin: 0 auto;
+  }
+
+  .chat-header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 20px;
+    text-align: center;
+  }
+
+  .chat-header h2 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px 0;
+  }
+
+  .chat-header p {
+    font-size: 13px;
+    opacity: 0.9;
+    margin: 0;
+  }
+
+  .voice-status {
+    padding: 10px 15px;
+    text-align: center;
+    font-size: 12px;
+    border-bottom: 1px solid #e0e0e0;
+    font-weight: 500;
+  }
+
+  .voice-status.listening {
+    background: #e8f5e9;
+    color: #2e7d32;
+    animation: pulse 2s infinite;
+  }
+
+  .voice-status.stopped {
+    background: #ffebee;
+    color: #c62828;
+  }
+
+  .voice-status.speaking {
+    background: #e1f5fe;
+    color: #0277bd;
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.8; }
+  }
+
+  .chat-area {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+    background: #f7f9fc;
+    min-height: 300px;
+  }
+
+  .message {
+    margin-bottom: 16px;
+    display: flex;
+    gap: 10px;
+  }
+
+  .message.assistant {
+    flex-direction: row;
+  }
+
+  .message.user {
+    flex-direction: row-reverse;
+  }
+
+  .message.system {
+    justify-content: center;
+  }
+
+  .message-avatar {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    flex-shrink: 0;
+  }
+
+  .message.assistant .message-avatar {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+  }
+
+  .message.user .message-avatar {
+    background: #e0e7ff;
+    color: #667eea;
+  }
+
+  .message.system .message-avatar {
+    background: #fff3e0;
+    color: #f57c00;
+  }
+
+  .message-content {
+    max-width: 70%;
+    padding: 10px 14px;
+    border-radius: 12px;
+    line-height: 1.5;
+    font-size: 14px;
+    white-space: pre-wrap;
+  }
+
+  .message.assistant .message-content {
+    background: white;
+    border: 1px solid #e5e7eb;
+    color: #1f2937;
+  }
+
+  .message.user .message-content {
+    background: #667eea;
+    color: white;
+  }
+
+  .message.system .message-content {
+    background: #fff3e0;
+    color: #e65100;
+    font-size: 12px;
+  }
+
+  .summary-box {
+    margin-top: 10px;
+    padding: 10px;
+    background: #fef3c7;
+    border-left: 4px solid #f59e0b;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #92400e;
+  }
+
+  .summary-box strong {
+    display: block;
+    margin-bottom: 6px;
+    color: #78350f;
+  }
+
+  .final-summary {
+    margin: 16px 0;
+    padding: 16px;
+    background: white;
+    border: 2px solid #10b981;
+    border-radius: 12px;
+  }
+
+  .final-summary h3 {
+    color: #065f46;
+    margin: 0 0 10px 0;
+    font-size: 16px;
+  }
+
+  .final-summary-content {
+    white-space: pre-wrap;
+    line-height: 1.7;
+    color: #1f2937;
+    font-size: 13px;
+  }
+
+  .input-area {
+    padding: 16px;
+    background: white;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  .input-group {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+
+  #userInput {
+    flex: 1;
+    padding: 10px 14px;
+    border: 2px solid #e5e7eb;
+    border-radius: 20px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  #userInput:focus {
+    border-color: #667eea;
+  }
+
+  .btn {
+    padding: 10px 16px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    border: none;
+    border-radius: 20px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  }
+
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .btn-secondary {
+    background: #f3f4f6;
+    color: #374151;
+    font-size: 12px;
+    padding: 8px 12px;
+  }
+
+  .btn-secondary:hover:not(:disabled) {
+    background: #e5e7eb;
+    box-shadow: none;
+    transform: none;
+  }
+
+  .btn-icon {
+    padding: 10px;
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .btn-mic {
+    background: #10b981;
+  }
+
+  .btn-mic:hover:not(:disabled) {
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.4);
+  }
+
+  .btn-mic.recording {
+    background: #ef4444;
+    animation: pulse-btn 1.5s infinite;
+  }
+
+  @keyframes pulse-btn {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.7; }
+  }
+
+  .btn-speaker {
+    background: #f59e0b;
+  }
+
+  .btn-speaker:hover:not(:disabled) {
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.4);
+  }
+
+  .btn-speaker.disabled {
+    background: #9ca3af;
+  }
+
+  .input-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  .loading {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    border: 3px solid #e5e7eb;
+    border-radius: 50%;
+    border-top-color: #667eea;
+    animation: spin 1s ease-in-out infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .error-message {
+    background: #fee2e2;
+    color: #b91c1c;
+    padding: 10px;
+    border-radius: 8px;
+    margin: 10px 0;
+    font-size: 13px;
+    text-align: center;
+  }
+
+  /* クリックプロンプト */
+  .click-prompt {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 20px;
+    border-radius: 12px;
+    text-align: center;
+    z-index: 100;
+    cursor: pointer;
+  }
+
+  .click-prompt p {
+    margin: 5px 0;
+  }
+</style>
+
+<script>
+  // グルメチャット機能
+  document.addEventListener('DOMContentLoaded', () => {
+    const container = document.querySelector('.gourmet-chat-container') as HTMLElement;
+    if (!container) return;
+
+    const apiBase = container.dataset.apiBase || '';
+    
+    // DOM要素
+    const chatArea = document.getElementById('chatArea')!;
+    const userInput = document.getElementById('userInput') as HTMLInputElement;
+    const sendBtn = document.getElementById('sendBtn') as HTMLButtonElement;
+    const micBtn = document.getElementById('micBtn') as HTMLButtonElement;
+    const speakerBtn = document.getElementById('speakerBtn') as HTMLButtonElement;
+    const finalizeBtn = document.getElementById('finalizeBtn') as HTMLButtonElement;
+    const voiceStatus = document.getElementById('voiceStatus')!;
+
+    // 状態
+    let sessionId: string | null = null;
+    let isProcessing = false;
+    let currentStage = 'conversation';
+    let isRecording = false;
+    let mediaRecorder: MediaRecorder | null = null;
+    let audioChunks: Blob[] = [];
+    let isTTSEnabled = true;
+    let currentAudio: HTMLAudioElement | null = null;
+    let isUserInteracted = false;
+
+    // ユーザーインタラクション検出
+    function enableAudioPlayback() {
+      if (!isUserInteracted) {
+        isUserInteracted = true;
+        const clickPrompt = container.querySelector('.click-prompt');
+        if (clickPrompt) clickPrompt.remove();
+      }
+    }
+
+    // クリックプロンプト表示
+    function showClickPrompt() {
+      const prompt = document.createElement('div');
+      prompt.className = 'click-prompt';
+      prompt.innerHTML = `
+        <p>🔊</p>
+        <p>音声を再生するには、画面をクリックしてください</p>
+        <p>🔊</p>
+      `;
+      prompt.addEventListener('click', enableAudioPlayback);
+      container.style.position = 'relative';
+      container.appendChild(prompt);
+    }
+
+    // 音声停止
+    function stopCurrentAudio() {
+      if (currentAudio) {
+        currentAudio.pause();
+        currentAudio.src = '';
+        currentAudio = null;
+      }
+    }
+
+    // マークダウン記号を除去（TTS用）
+    function stripMarkdown(text: string): string {
+      return text
+        // **太字** や *斜体* を除去
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        // __太字__ や _斜体_ を除去
+        .replace(/__([^_]+)__/g, '$1')
+        .replace(/_([^_]+)_/g, '$1')
+        // # 見出し を除去
+        .replace(/^#+\s*/gm, '')
+        // [リンクテキスト](URL) を リンクテキスト に
+        .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+        // `コード` を除去
+        .replace(/`([^`]+)`/g, '$1')
+        // 番号リストの番号を読みやすく
+        .replace(/^(\d+)\.\s+/gm, '$1番目、')
+        // 余分な空白を整理
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    // GCP TTS音声合成
+    async function speakTextGCP(text: string) {
+      console.log('[TTS] speakTextGCP 呼び出し:', text.substring(0, 50) + '...', '文字数:', text.length);
+      
+      if (!isTTSEnabled || !text) return;
+
+      stopCurrentAudio();
+
+      // マークダウン記号を除去
+      const cleanText = stripMarkdown(text);
+      
+      console.log('[TTS] cleanText:', cleanText.substring(0, 50) + '...', '文字数:', cleanText.length);
+
+      try {
+        voiceStatus.textContent = '🔊 音声合成中...';
+        voiceStatus.className = 'voice-status speaking';
+
+        const response = await fetch(`${apiBase}/api/tts/synthesize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: cleanText,
+            language_code: 'ja-JP',
+            voice_name: 'ja-JP-Chirp3-HD-Leda'
+          })
+        });
+
+        const data = await response.json();
+        
+        console.log('[TTS] API レスポンス受信:', data.success);
+
+        if (data.success && data.audio) {
+          const audio = new Audio(`data:audio/mp3;base64,${data.audio}`);
+          currentAudio = audio;
+          
+          console.log('[TTS] 音声再生開始');
+
+          // 音声再生完了を待つPromiseを作成
+          const playPromise = new Promise<void>((resolve) => {
+            audio.onended = () => {
+              console.log('[TTS] 音声再生完了');
+              voiceStatus.textContent = '🎤 音声認識: 停止中';
+              voiceStatus.className = 'voice-status stopped';
+              currentAudio = null;
+              resolve();
+            };
+
+            audio.onerror = () => {
+              console.log('[TTS] 音声再生エラー');
+              voiceStatus.textContent = '🎤 音声認識: 停止中';
+              voiceStatus.className = 'voice-status stopped';
+              resolve();
+            };
+          });
+
+          if (isUserInteracted) {
+            await audio.play();
+            await playPromise; // 再生完了を待つ
+          } else {
+            showClickPrompt();
+            voiceStatus.textContent = '🎤 音声認識: 停止中';
+            voiceStatus.className = 'voice-status stopped';
+          }
+        }
+      } catch (error) {
+        console.error('[TTS] Error:', error);
+        voiceStatus.textContent = '🎤 音声認識: 停止中';
+        voiceStatus.className = 'voice-status stopped';
+      }
+    }
+
+    // 録音切り替え
+    async function toggleRecording() {
+      enableAudioPlayback();
+      stopCurrentAudio();
+
+      if (isRecording) {
+        if (mediaRecorder && mediaRecorder.state === 'recording') {
+          mediaRecorder.stop();
+        }
+        isRecording = false;
+        micBtn.classList.remove('recording');
+        micBtn.textContent = '🎤';
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+
+        audioChunks = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            audioChunks.push(event.data);
+          }
+        };
+
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach(track => track.stop());
+          
+          if (audioChunks.length > 0) {
+            const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+            await transcribeAudio(audioBlob);
+          }
+        };
+
+        mediaRecorder.start();
+        isRecording = true;
+        micBtn.classList.add('recording');
+        micBtn.textContent = '⏹️';
+        voiceStatus.textContent = '🎤 録音中... (クリックで停止)';
+        voiceStatus.className = 'voice-status listening';
+
+      } catch (error) {
+        console.error('[Recording] Error:', error);
+        addMessage('system', `マイクアクセスエラー: ${(error as Error).message}`);
+      }
+    }
+
+    // 音声認識
+    async function transcribeAudio(audioBlob: Blob) {
+      try {
+        voiceStatus.textContent = '🔄 音声認識中...';
+        voiceStatus.className = 'voice-status';
+
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+
+        reader.onloadend = async () => {
+          const base64Audio = (reader.result as string).split(',')[1];
+
+          const response = await fetch(`${apiBase}/api/stt/transcribe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audio: base64Audio,
+              language_code: 'ja-JP'
+            })
+          });
+
+          const data = await response.json();
+
+          if (data.success && data.transcript) {
+            userInput.value = data.transcript;
+            voiceStatus.textContent = '✅ 認識完了 - 送信中...';
+            voiceStatus.className = 'voice-status';
+
+            // 自動送信
+            setTimeout(async () => {
+              if (!isRecording && userInput.value.trim()) {
+                await sendMessage();
+              }
+              voiceStatus.textContent = '🎤 音声認識: 停止中';
+              voiceStatus.className = 'voice-status stopped';
+            }, 500);
+          } else {
+            voiceStatus.textContent = '音声が認識されませんでした';
+          }
+        };
+
+      } catch (error) {
+        console.error('[STT] Error:', error);
+        addMessage('system', `音声認識エラー: ${(error as Error).message}`);
+        voiceStatus.textContent = '🎤 音声認識: 停止中';
+        voiceStatus.className = 'voice-status stopped';
+      }
+    }
+
+    // TTS切り替え
+    function toggleTTS() {
+      if (!isUserInteracted) {
+        enableAudioPlayback();
+        return;
+      }
+
+      enableAudioPlayback();
+      isTTSEnabled = !isTTSEnabled;
+      speakerBtn.textContent = isTTSEnabled ? '🔊' : '🔇';
+      speakerBtn.title = isTTSEnabled ? '音声読み上げON' : '音声読み上げOFF';
+      speakerBtn.className = isTTSEnabled ? 'btn btn-icon btn-speaker' : 'btn btn-icon btn-speaker disabled';
+
+      if (!isTTSEnabled) {
+        stopCurrentAudio();
+      }
+    }
+
+    // 初期化
+    async function initialize() {
+      try {
+        const response = await fetch(`${apiBase}/api/session/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ user_info: {} })
+        });
+
+        const data = await response.json();
+        sessionId = data.session_id;
+
+        addMessage('assistant', data.initial_message);
+
+        userInput.disabled = false;
+        sendBtn.disabled = false;
+        micBtn.disabled = false;
+        speakerBtn.disabled = false;
+        userInput.focus();
+
+        speakTextGCP(data.initial_message);
+
+      } catch (error) {
+        console.error('初期化エラー:', error);
+        showError('初期化に失敗しました。ページを再読み込みしてください。');
+      }
+    }
+
+    // レスポンステキストからショップ情報を抽出
+    function extractShopsFromResponse(text: string): any[] {
+      const shops: any[] = [];
+      
+      // パターン: 番号. **店名（読み）**: 説明
+      // または: 番号. **店名**: 説明
+      const pattern = /(\d+)\.\s*\*\*([^*]+)\*\*[：:]\s*([^\n]+)/g;
+      let match;
+
+      console.log('[ShopExtract] テキストからショップを抽出中...');
+
+      while ((match = pattern.exec(text)) !== null) {
+        const fullName = match[2].trim();
+        const description = match[3].trim();
+        
+        // 店名から読み仮名を分離
+        let name = fullName;
+        let reading = '';
+        
+        const nameMatch = fullName.match(/^([^（(]+)[（(]([^）)]+)[）)]/);
+        if (nameMatch) {
+          name = nameMatch[1].trim();
+          reading = nameMatch[2].trim();
+        }
+
+        // 店名をエンコードしてURLを生成
+        const encodedName = encodeURIComponent(name);
+
+        shops.push({
+          name: name,
+          description: description,
+          category: 'イタリアン',
+          // 検索用URLを生成
+          hotpepper_url: `https://www.hotpepper.jp/SA11/srchRS/?keyword=${encodedName}`,
+          maps_url: `https://www.google.com/maps/search/${encodedName}`,
+          tabelog_url: `https://tabelog.com/rstLst/?vs=1&sa=&sk=${encodedName}`
+        });
+      }
+
+      console.log(`[ShopExtract] ${shops.length}件のショップを抽出:`, shops);
+
+      return shops;
+    }
+
+    // メッセージ送信
+    async function sendMessage() {
+      enableAudioPlayback();
+
+      const message = userInput.value.trim();
+      if (!message || isProcessing) return;
+
+      isProcessing = true;
+      sendBtn.disabled = true;
+      micBtn.disabled = true;
+      userInput.disabled = true;
+
+      addMessage('user', message);
+      userInput.value = '';
+
+      // 即座に確認メッセージを表示（質問内容に関わらず）
+      const quickAck = "かしこまりました。只今、お店の情報を確認してまとめておりますので、少々お待ちください。";
+      addMessage('assistant', quickAck);
+      
+      // 確認メッセージを読み上げ（完了を待たない）
+      speakTextGCP(quickAck);
+
+      try {
+        const loadingId = addLoadingMessage();
+
+        const response = await fetch(`${apiBase}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            session_id: sessionId,
+            message: message,
+            stage: currentStage
+          })
+        });
+
+        const data = await response.json();
+
+        removeLoadingMessage(loadingId);
+
+        // デバッグ: レスポンス内容を確認
+        console.log('[DEBUG] data.response 文字数:', data.response.length);
+        console.log('[DEBUG] data.response 内容:', data.response);
+        console.log('[DEBUG] data.summary:', data.summary);
+
+        // 本文を表示（summaryも保存するが読み上げはresponseのみ）
+        addMessage('assistant', data.response, data.summary);
+        
+        // ショップデータがあればイベントを発行（読み上げ前に表示）
+        if (data.shops && data.shops.length > 0) {
+          const event = new CustomEvent('displayShops', {
+            detail: { shops: data.shops }
+          });
+          document.dispatchEvent(event);
+          
+          // セクションにクラスを追加
+          const section = document.getElementById('shopListSection');
+          if (section) {
+            section.classList.add('has-shops');
+          }
+        } else {
+          // レスポンスからショップ情報をパースして抽出を試みる
+          const extractedShops = extractShopsFromResponse(data.response);
+          if (extractedShops.length > 0) {
+            const event = new CustomEvent('displayShops', {
+              detail: { shops: extractedShops }
+            });
+            document.dispatchEvent(event);
+            
+            const section = document.getElementById('shopListSection');
+            if (section) {
+              section.classList.add('has-shops');
+            }
+          }
+        }
+        
+        // 確認メッセージの読み上げを停止してから本文を再生
+        stopCurrentAudio();
+        await new Promise(resolve => setTimeout(resolve, 100)); // 停止処理を確実に完了
+        await speakTextGCP(data.response);
+
+      } catch (error) {
+        console.error('送信エラー:', error);
+        showError('メッセージの送信に失敗しました。');
+      } finally {
+        isProcessing = false;
+        sendBtn.disabled = false;
+        micBtn.disabled = false;
+        userInput.disabled = false;
+        userInput.focus();
+      }
+    }
+
+    // 最終要約生成
+    async function finalizeSession() {
+      if (!confirm('会話を終了して質問要約書を作成しますか?')) {
+        return;
+      }
+
+      isProcessing = true;
+      finalizeBtn.disabled = true;
+      sendBtn.disabled = true;
+      micBtn.disabled = true;
+      userInput.disabled = true;
+
+      try {
+        const loadingId = addLoadingMessage();
+
+        const response = await fetch(`${apiBase}/api/finalize`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ session_id: sessionId })
+        });
+
+        const data = await response.json();
+
+        removeLoadingMessage(loadingId);
+        showFinalSummary(data.summary);
+
+      } catch (error) {
+        console.error('完了処理エラー:', error);
+        showError('要約の生成に失敗しました。');
+        isProcessing = false;
+        finalizeBtn.disabled = false;
+      }
+    }
+
+    // メッセージ追加
+    function addMessage(role: string, content: string, summary: string | null = null) {
+      const messageDiv = document.createElement('div');
+      messageDiv.className = `message ${role}`;
+
+      const avatar = document.createElement('div');
+      avatar.className = 'message-avatar';
+      avatar.textContent = role === 'assistant' ? '🍽️' : role === 'user' ? '👤' : '⚠️';
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'message-content';
+      contentDiv.textContent = content;
+
+      messageDiv.appendChild(avatar);
+
+      const wrapper = document.createElement('div');
+      wrapper.appendChild(contentDiv);
+
+      if (summary) {
+        const summaryDiv = document.createElement('div');
+        summaryDiv.className = 'summary-box';
+        summaryDiv.innerHTML = `<strong>📝 内容確認</strong>${summary}`;
+        wrapper.appendChild(summaryDiv);
+      }
+
+      messageDiv.appendChild(wrapper);
+      chatArea.appendChild(messageDiv);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    // ローディング表示
+    function addLoadingMessage(): string {
+      const id = 'loading-' + Date.now();
+      const messageDiv = document.createElement('div');
+      messageDiv.id = id;
+      messageDiv.className = 'message assistant';
+
+      const avatar = document.createElement('div');
+      avatar.className = 'message-avatar';
+      avatar.textContent = '🍽️';
+
+      const contentDiv = document.createElement('div');
+      contentDiv.className = 'message-content';
+      contentDiv.innerHTML = `
+        <div class="loading"></div>
+        <p style="margin-top: 8px; font-size: 13px; color: #6b7280;">
+          提案するお店の情報を探しています。少々お待ちください...
+        </p>
+      `;
+
+      messageDiv.appendChild(avatar);
+      messageDiv.appendChild(contentDiv);
+      chatArea.appendChild(messageDiv);
+      chatArea.scrollTop = chatArea.scrollHeight;
+
+      return id;
+    }
+
+    function removeLoadingMessage(id: string) {
+      const element = document.getElementById(id);
+      if (element) element.remove();
+    }
+
+    // 最終要約表示
+    function showFinalSummary(summary: string) {
+      const summaryDiv = document.createElement('div');
+      summaryDiv.className = 'final-summary';
+      summaryDiv.innerHTML = `
+        <h3>📋 質問要約書</h3>
+        <div class="final-summary-content">${summary}</div>
+        <p style="margin-top: 12px; font-size: 12px; color: #6b7280;">
+          担当スタッフが内容を確認し、追ってご連絡いたします。
+        </p>
+      `;
+      chatArea.appendChild(summaryDiv);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    // エラー表示
+    function showError(message: string) {
+      const errorDiv = document.createElement('div');
+      errorDiv.className = 'error-message';
+      errorDiv.textContent = message;
+      chatArea.appendChild(errorDiv);
+      chatArea.scrollTop = chatArea.scrollHeight;
+    }
+
+    // イベントリスナー
+    sendBtn.addEventListener('click', sendMessage);
+    micBtn.addEventListener('click', toggleRecording);
+    speakerBtn.addEventListener('click', toggleTTS);
+    userInput.addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') sendMessage();
+    });
+    finalizeBtn.addEventListener('click', finalizeSession);
+
+    // 初期化実行
+    initialize();
+  });
+</script>

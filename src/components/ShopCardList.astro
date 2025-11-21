@@ -1,0 +1,719 @@
+---
+// ShopCardList.astro - ProposalCard形式のショップカードリスト
+export interface Props {
+  apiBaseUrl?: string;
+}
+
+const { apiBaseUrl = '' } = Astro.props;
+---
+
+<div class="shop-card-list" id="shopCardList" data-api-base={apiBaseUrl}>
+  <!-- ショップカードはJSで動的に追加 -->
+</div>
+
+<style>
+  .shop-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* ProposalCard形式のショップカード */
+  .shop-card-list :global(.shop-card) {
+    background: white;
+    border-radius: 24px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.12);
+    overflow: hidden;
+    transition: transform 0.2s, box-shadow 0.2s;
+  }
+
+  .shop-card-list :global(.shop-card:hover) {
+    transform: translateY(-4px);
+    box-shadow: 0 16px 50px rgba(0, 0, 0, 0.18);
+  }
+
+  /* ヒーロー画像リンク */
+  .shop-card-list :global(.hero-image-link) {
+    display: block;
+    text-decoration: none;
+    position: relative;
+  }
+
+  /* ヒーロー画像 */
+  .shop-card-list :global(.hero-image) {
+    position: relative;
+    aspect-ratio: 16/9;
+    overflow: hidden;
+  }
+
+  .shop-card-list :global(.hero-image::after) {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40%;
+    background: linear-gradient(to top, rgba(0,0,0,0.4), transparent);
+    pointer-events: none;
+  }
+
+  .shop-card-list :global(.hero-image img) {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    transition: transform 0.3s ease;
+  }
+
+  .shop-card-list :global(.hero-image-link:hover img) {
+    transform: scale(1.05);
+  }
+
+  /* Google Mapsオーバーレイ */
+  .shop-card-list :global(.maps-overlay) {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    color: white;
+    gap: 8px;
+    z-index: 5;
+  }
+
+  .shop-card-list :global(.hero-image-link:hover .maps-overlay) {
+    opacity: 1;
+  }
+
+  .shop-card-list :global(.maps-overlay svg) {
+    width: 32px;
+    height: 32px;
+  }
+
+  .shop-card-list :global(.maps-overlay span) {
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .shop-card-list :global(.category-badge) {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(4px);
+    color: #1f2937;
+    padding: 4px 10px;
+    border-radius: 16px;
+    font-size: 11px;
+    font-weight: 700;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    z-index: 10;
+  }
+
+  .shop-card-list :global(.location-badge) {
+    position: absolute;
+    bottom: 12px;
+    left: 12px;
+    right: 12px;
+    background: rgba(255, 255, 255, 0.95);
+    backdrop-filter: blur(10px);
+    padding: 6px 10px;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #1f2937;
+    z-index: 10;
+  }
+
+  .shop-card-list :global(.location-badge svg) {
+    width: 14px;
+    height: 14px;
+    color: #ef4444;
+    flex-shrink: 0;
+  }
+
+  /* カードボディ */
+  .shop-card-list :global(.card-body) {
+    padding: 16px;
+  }
+
+  .shop-card-list :global(.shop-name) {
+    font-size: 18px;
+    font-weight: 900;
+    color: #1f2937;
+    margin: 0 0 10px 0;
+    line-height: 1.3;
+  }
+
+  .shop-card-list :global(.meta-info) {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .shop-card-list :global(.rating) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .shop-card-list :global(.stars) {
+    display: flex;
+  }
+
+  .shop-card-list :global(.star) {
+    width: 16px;
+    height: 16px;
+    color: #d1d5db;
+  }
+
+  .shop-card-list :global(.star.filled) {
+    color: #fbbf24;
+  }
+
+  .shop-card-list :global(.rating-value) {
+    font-size: 14px;
+    font-weight: 700;
+    color: #1f2937;
+  }
+
+  .shop-card-list :global(.review-count) {
+    font-size: 11px;
+    color: #6b7280;
+  }
+
+  .shop-card-list :global(.price-range) {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    color: #4b5563;
+    background: #f3f4f6;
+    padding: 4px 8px;
+    border-radius: 12px;
+  }
+
+  .shop-card-list :global(.price-range svg) {
+    width: 12px;
+    height: 12px;
+  }
+
+  /* 説明 */
+  .shop-card-list :global(.description) {
+    color: #4b5563;
+    font-size: 13px;
+    line-height: 1.6;
+    margin-bottom: 12px;
+  }
+
+  /* おすすめポイント */
+  .shop-card-list :global(.highlights) {
+    background: linear-gradient(135deg, #f3e8ff 0%, #fce7f3 100%);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 12px;
+  }
+
+  .shop-card-list :global(.highlights h4) {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0 0 8px 0;
+  }
+
+  .shop-card-list :global(.highlights ul) {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .shop-card-list :global(.highlights li) {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin-bottom: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #1f2937;
+  }
+
+  .shop-card-list :global(.highlights li:last-child) {
+    margin-bottom: 0;
+  }
+
+  .shop-card-list :global(.check-icon) {
+    flex-shrink: 0;
+    width: 16px;
+    height: 16px;
+    background: #10b981;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-top: 1px;
+  }
+
+  .shop-card-list :global(.check-icon svg) {
+    width: 10px;
+    height: 10px;
+    color: white;
+  }
+
+  /* 来店のポイント */
+  .shop-card-list :global(.tips) {
+    display: flex;
+    gap: 10px;
+    background: #eff6ff;
+    border-left: 3px solid #3b82f6;
+    border-radius: 0 8px 8px 0;
+    padding: 10px;
+    margin-bottom: 12px;
+  }
+
+  .shop-card-list :global(.tips-icon svg) {
+    width: 18px;
+    height: 18px;
+    color: #3b82f6;
+    flex-shrink: 0;
+  }
+
+  .shop-card-list :global(.tips h5) {
+    font-weight: 700;
+    color: #1f2937;
+    margin: 0 0 2px 0;
+    font-size: 12px;
+  }
+
+  .shop-card-list :global(.tips p) {
+    font-size: 11px;
+    color: #4b5563;
+    margin: 0;
+    line-height: 1.4;
+  }
+
+  /* リンクボタン */
+  .shop-card-list :global(.link-buttons) {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .shop-card-list :global(.link-btn) {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    border-radius: 10px;
+    text-decoration: none;
+    transition: all 0.2s ease;
+  }
+
+  .shop-card-list :global(.link-btn:active) {
+    transform: scale(0.98);
+  }
+
+  .shop-card-list :global(.link-btn.hotpepper) {
+    background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(249, 115, 22, 0.3);
+  }
+
+  .shop-card-list :global(.link-btn.maps) {
+    background: white;
+    border: 2px solid #e5e7eb;
+    color: #1f2937;
+  }
+
+  .shop-card-list :global(.link-btn.maps:hover) {
+    border-color: #fca5a5;
+  }
+
+  .shop-card-list :global(.link-btn.tabelog) {
+    background: white;
+    border: 2px solid #e5e7eb;
+    color: #1f2937;
+  }
+
+  .shop-card-list :global(.link-btn.tabelog:hover) {
+    border-color: #fdba74;
+  }
+
+  .shop-card-list :global(.link-btn-content) {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .shop-card-list :global(.link-icon) {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .shop-card-list :global(.link-icon svg) {
+    width: 16px;
+    height: 16px;
+  }
+
+  .shop-card-list :global(.link-btn.hotpepper .link-icon) {
+    background: rgba(255, 255, 255, 0.2);
+  }
+
+  .shop-card-list :global(.link-btn.gnavi .link-icon) {
+    background: #fbbf24;
+    color: white;
+  }
+
+  .shop-card-list :global(.link-btn.tabelog .link-icon) {
+    background: #f97316;
+    color: white;
+  }
+
+  .shop-card-list :global(.link-text) {
+    text-align: left;
+  }
+
+  .shop-card-list :global(.link-title) {
+    font-weight: 700;
+    font-size: 12px;
+  }
+
+  .shop-card-list :global(.link-subtitle) {
+    font-size: 10px;
+    opacity: 0.8;
+  }
+
+  .shop-card-list :global(.link-arrow) {
+    width: 16px;
+    height: 16px;
+    opacity: 0.6;
+  }
+
+  /* 空状態 */
+  .shop-card-list :global(.empty-state) {
+    text-align: center;
+    padding: 40px 20px;
+    color: #9ca3af;
+    font-size: 13px;
+  }
+</style>
+
+<script>
+  // 食べログGoogle検索の自動処理
+  window.handleTabelogSearch = function(event, searchUrl) {
+    event.preventDefault();
+    
+    // 新しいウィンドウでGoogle検索を開く
+    const searchWindow = window.open(searchUrl, '_blank');
+    
+    if (searchWindow) {
+      // ウィンドウが開けたら、食べログリンクを探してクリック（試行）
+      // 注: クロスオリジンのため直接操作はできないが、ユーザーには検索結果が表示される
+      console.log('[Tabelog] Google検索結果を開きました');
+    }
+    
+    return false;
+  };
+
+  // ショップカードリストの管理
+  interface ShopData {
+    name: string;
+    category?: string;
+    description?: string;
+    rating?: number;
+    reviewCount?: number;
+    priceRange?: string;
+    location?: string;
+    image?: string;
+    highlights?: string[];
+    tips?: string;
+    hotpepper_url?: string;
+    maps_url?: string;
+    tabelog_url?: string;
+    gnavi_url?: string;
+  }
+
+  class ShopCardManager {
+    private container: HTMLElement;
+
+    constructor(containerId: string) {
+      this.container = document.getElementById(containerId)!;
+    }
+
+    // ショップリストを表示
+    displayShops(shops: ShopData[]) {
+      console.log('[ShopCardList] displayShops called with:', shops);
+      this.container.innerHTML = '';
+
+      if (!shops || shops.length === 0) {
+        console.log('[ShopCardList] No shops to display');
+        this.container.innerHTML = `
+          <div class="empty-state">
+            お店が見つかりませんでした
+          </div>
+        `;
+        return;
+      }
+
+      shops.forEach((shop, index) => {
+        console.log(`[ShopCardList] Creating card ${index + 1}:`, shop.name);
+        const card = this.createShopCard(shop);
+        this.container.appendChild(card);
+      });
+      
+      console.log(`[ShopCardList] ${shops.length} cards created`);
+    }
+
+    // ショップカードを追加
+    addShop(shop: ShopData) {
+      const card = this.createShopCard(shop);
+      this.container.appendChild(card);
+    }
+
+    // ProposalCard形式でショップカードを作成
+    private createShopCard(shop: ShopData): HTMLElement {
+      const card = document.createElement('div');
+      card.className = 'shop-card';
+
+      // デフォルト画像
+      const imageUrl = shop.image || 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&h=450&fit=crop';
+
+      // 星の生成
+      const starsHtml = this.createStarsHtml(shop.rating || 0);
+
+      // おすすめポイントの生成
+      const highlightsHtml = this.createHighlightsHtml(shop.highlights || []);
+
+      // 来店のポイント
+      const tipsHtml = shop.tips ? this.createTipsHtml(shop.tips) : '';
+
+      // リンクボタンの生成
+      const linksHtml = this.createLinksHtml(shop);
+
+      card.innerHTML = `
+        <a href="${shop.maps_url || '#'}" target="_blank" rel="noopener noreferrer" class="hero-image-link">
+          <div class="hero-image">
+            <img src="${imageUrl}" alt="${shop.name}" loading="lazy" />
+            ${shop.category ? `<span class="category-badge">${shop.category}</span>` : ''}
+            ${shop.location ? `
+              <div class="location-badge">
+                <svg fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clip-rule="evenodd"/>
+                </svg>
+                <span>${shop.location}</span>
+              </div>
+            ` : ''}
+            <div class="maps-overlay">
+              <svg fill="currentColor" viewBox="0 0 24 24">
+                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+              </svg>
+              <span>Google Mapsで見る</span>
+            </div>
+          </div>
+        </a>
+        <div class="card-body">
+          <h3 class="shop-name">${shop.name}</h3>
+          
+          <div class="meta-info">
+            ${shop.rating ? `
+              <div class="rating">
+                <div class="stars">${starsHtml}</div>
+                <span class="rating-value">${shop.rating}</span>
+                ${shop.reviewCount ? `<span class="review-count">(${shop.reviewCount}件)</span>` : ''}
+              </div>
+            ` : ''}
+            ${shop.priceRange ? `
+              <div class="price-range">
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span>${shop.priceRange}</span>
+              </div>
+            ` : ''}
+          </div>
+
+          ${shop.description ? `<p class="description">${shop.description}</p>` : ''}
+          
+          ${highlightsHtml}
+          
+          ${tipsHtml}
+          
+          <div class="link-buttons">
+            ${linksHtml}
+          </div>
+        </div>
+      `;
+
+      return card;
+    }
+
+    // 星の生成
+    private createStarsHtml(rating: number): string {
+      let html = '';
+      for (let i = 0; i < 5; i++) {
+        const filled = i < Math.floor(rating) ? 'filled' : '';
+        html += `
+          <svg class="star ${filled}" fill="currentColor" viewBox="0 0 20 20">
+            <path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"/>
+          </svg>
+        `;
+      }
+      return html;
+    }
+
+    // おすすめポイントの生成
+    private createHighlightsHtml(highlights: string[]): string {
+      if (highlights.length === 0) return '';
+
+      const listItems = highlights.map(h => `
+        <li>
+          <span class="check-icon">
+            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="3" d="M5 13l4 4L19 7"/>
+            </svg>
+          </span>
+          <span>${h}</span>
+        </li>
+      `).join('');
+
+      return `
+        <div class="highlights">
+          <h4>✨ おすすめポイント</h4>
+          <ul>${listItems}</ul>
+        </div>
+      `;
+    }
+
+    // 来店のポイント
+    private createTipsHtml(tips: string): string {
+      return `
+        <div class="tips">
+          <div class="tips-icon">
+            <svg fill="currentColor" viewBox="0 0 20 20">
+              <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clip-rule="evenodd"/>
+            </svg>
+          </div>
+          <div>
+            <h5>来店のポイント</h5>
+            <p>${tips}</p>
+          </div>
+        </div>
+      `;
+    }
+
+    // リンクボタンの生成
+    private createLinksHtml(shop: ShopData): string {
+      const links: string[] = [];
+
+      // 1. 食べログ
+      if (shop.tabelog_url) {
+        const isGoogleSearch = shop.tabelog_url.includes('google.com/search');
+        const onclickAttr = isGoogleSearch 
+          ? `onclick="return handleTabelogSearch(event, '${shop.tabelog_url.replace(/'/g, "\\'")}')"`
+          : '';
+        
+        links.push(`
+          <a href="${shop.tabelog_url}" target="_blank" rel="noopener noreferrer" class="link-btn tabelog" ${onclickAttr}>
+            <div class="link-btn-content">
+              <div class="link-icon">
+                <svg fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2V6h2V4h-4zm4 0v8h2V6h2V4h-4z"/>
+                </svg>
+              </div>
+              <div class="link-text">
+                <div class="link-title">食べログ</div>
+                <div class="link-subtitle">口コミ・写真</div>
+              </div>
+            </div>
+            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </a>
+        `);
+      }
+
+      // 2. ぐるなび
+      if (shop.gnavi_url) {
+        links.push(`
+          <a href="${shop.gnavi_url}" target="_blank" rel="noopener noreferrer" class="link-btn gnavi">
+            <div class="link-btn-content">
+              <div class="link-icon">
+                <svg fill="currentColor" viewBox="0 0 24 24">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                </svg>
+              </div>
+              <div class="link-text">
+                <div class="link-title">ぐるなび</div>
+                <div class="link-subtitle">お店情報</div>
+              </div>
+            </div>
+            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </a>
+        `);
+      }
+
+      // 3. ホットペッパー
+      if (shop.hotpepper_url) {
+        links.push(`
+          <a href="${shop.hotpepper_url}" target="_blank" rel="noopener noreferrer" class="link-btn hotpepper">
+            <div class="link-btn-content">
+              <div class="link-icon">
+                <svg fill="currentColor" viewBox="0 0 20 20">
+                  <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
+                </svg>
+              </div>
+              <div class="link-text">
+                <div class="link-title">ホットペッパー</div>
+                <div class="link-subtitle">予約・クーポン</div>
+              </div>
+            </div>
+            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+            </svg>
+          </a>
+        `);
+      }
+
+      return links.join('');
+    }
+
+    // クリア
+    clear() {
+      this.container.innerHTML = '';
+    }
+  }
+
+  // グローバルに公開
+  (window as any).ShopCardManager = ShopCardManager;
+
+  // 初期化
+  document.addEventListener('DOMContentLoaded', () => {
+    const manager = new ShopCardManager('shopCardList');
+    (window as any).shopCardManager = manager;
+
+    // カスタムイベントをリッスン
+    document.addEventListener('displayShops', ((event: CustomEvent) => {
+      if (event.detail && event.detail.shops) {
+        manager.displayShops(event.detail.shops);
+      }
+    }) as EventListener);
+  });
+</script>
