@@ -1,0 +1,166 @@
+---
+// index.astro - グルメサポートメインページ
+import GourmetChat from '../components/GourmetChat.astro';
+import ShopCardList from '../components/ShopCardList.astro';
+
+// APIベースURL（Cloud Runのエンドポイント）
+// 本番環境では環境変数から取得
+const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
+---
+
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>グルメサポートAI - お店探しをお手伝い</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Noto Sans JP', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .page-container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    .page-header {
+      text-align: center;
+      color: white;
+      padding: 20px 0 30px;
+    }
+
+    .page-header h1 {
+      font-size: 28px;
+      font-weight: 900;
+      margin-bottom: 8px;
+    }
+
+    .page-header p {
+      font-size: 14px;
+      opacity: 0.9;
+    }
+
+    .main-content {
+      display: grid;
+      gap: 24px;
+      grid-template-columns: 1fr;
+    }
+
+    @media (min-width: 1024px) {
+      .main-content {
+        grid-template-columns: 1fr 1fr;
+        align-items: start;
+      }
+    }
+
+    .chat-section {
+      order: 1;
+    }
+
+    .shop-list-section {
+      order: 2;
+    }
+
+    .shop-list-header {
+      background: white;
+      border-radius: 16px 16px 0 0;
+      padding: 16px 20px;
+      text-align: center;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .shop-list-header h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #1f2937;
+      margin: 0 0 4px 0;
+    }
+
+    .shop-list-header p {
+      font-size: 12px;
+      color: #6b7280;
+      margin: 0;
+    }
+
+    #shopCardList {
+      background: white;
+      border-radius: 0 0 16px 16px;
+      padding: 16px;
+      max-height: 500px;
+      overflow-y: auto;
+    }
+
+    .shop-list-section.has-shops .shop-list-header p {
+      display: none;
+    }
+
+    @keyframes slideIn {
+      from {
+        opacity: 0;
+        transform: translateY(20px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+
+    .page-footer {
+      text-align: center;
+      color: rgba(255, 255, 255, 0.8);
+      padding: 30px 0;
+      font-size: 13px;
+    }
+
+    /* モバイルでのスタック表示 */
+    @media (max-width: 1023px) {
+      .chat-section {
+        order: 1;
+      }
+      
+      .shop-list-section {
+        order: 2;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-container">
+    <header class="page-header">
+      <h1>$D83C$DF7D$FE0F グルメサポートAI</h1>
+      <p>AIがあなたにぴったりのお店をご提案します</p>
+    </header>
+
+    <main class="main-content">
+      <section class="chat-section">
+        <GourmetChat apiBaseUrl={apiBaseUrl} />
+      </section>
+
+      <section class="shop-list-section" id="shopListSection">
+        <div class="shop-list-header">
+          <h2>$D83C$DF7D$FE0F おすすめのお店</h2>
+          <p>チャットで検索すると、ここにお店が表示されます</p>
+        </div>
+        <ShopCardList apiBaseUrl={apiBaseUrl} />
+      </section>
+    </main>
+
+    <footer class="page-footer">
+      素敵なグルメ体験をお楽しみください $2728
+    </footer>
+  </div>
+</body>
+</html>
