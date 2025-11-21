@@ -646,18 +646,7 @@ class SupportAssistant:
             
             message = data.get('message', text)
             shops = data.get('shops', [])
-            
-            # チャット表示用に店舗情報をメッセージに追記
-            if shops:
-                shop_lines = []
-                for i, shop in enumerate(shops, 1):
-                    name = shop.get('name', '')
-                    area = shop.get('area', '')
-                    desc = shop.get('description', '')
-                    shop_lines.append(f"{i}. **{name}**（{area}）- {desc}")
-                
-                message = message + "\n\n" + "\n".join(shop_lines)
-            
+
             logger.info(f"[JSON Parse] 成功: message={len(message)}文字, shops={len(shops)}件")
             return message, shops
             

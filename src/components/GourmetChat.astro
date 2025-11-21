@@ -762,14 +762,18 @@ const { apiBaseUrl = '' } = Astro.props;
 
         // 本文を表示（summaryも保存するが読み上げはresponseのみ）
         addMessage('assistant', data.response, data.summary);
-        
-        // ショップデータがあればイベントを発行（読み上げ前に表示）
+
+        // テキスト表示と同時にTTS読み上げを開始（並行実行）
+        stopCurrentAudio();
+        speakTextGCP(data.response);  // awaitを外して並行実行
+
+        // ショップデータ表示は並行してバックグラウンドで処理
         if (data.shops && data.shops.length > 0) {
           const event = new CustomEvent('displayShops', {
             detail: { shops: data.shops }
           });
           document.dispatchEvent(event);
-          
+
           // セクションにクラスを追加
           const section = document.getElementById('shopListSection');
           if (section) {
@@ -783,18 +787,13 @@ const { apiBaseUrl = '' } = Astro.props;
               detail: { shops: extractedShops }
             });
             document.dispatchEvent(event);
-            
+
             const section = document.getElementById('shopListSection');
             if (section) {
               section.classList.add('has-shops');
             }
           }
         }
-        
-        // 確認メッセージの読み上げを停止してから本文を再生
-        stopCurrentAudio();
-        await new Promise(resolve => setTimeout(resolve, 100)); // 停止処理を確実に完了
-        await speakTextGCP(data.response);
 
       } catch (error) {
         console.error('送信エラー:', error);
