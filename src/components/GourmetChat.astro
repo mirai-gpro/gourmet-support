@@ -399,6 +399,8 @@ const { apiBaseUrl = '' } = Astro.props;
     let isRecording = false;
     let mediaRecorder: MediaRecorder | null = null;
     let audioChunks: Blob[] = [];
+    let recordingTimer: number | null = null;
+    const MAX_RECORDING_TIME = 55000; // 55秒（APIの60秒制限より短く設定）
     let isTTSEnabled = true;
     let currentAudio: HTMLAudioElement | null = null;
     let isUserInteracted = false;
@@ -537,6 +539,10 @@ const { apiBaseUrl = '' } = Astro.props;
         if (mediaRecorder && mediaRecorder.state === 'recording') {
           mediaRecorder.stop();
         }
+        if (recordingTimer) {
+          clearTimeout(recordingTimer);
+          recordingTimer = null;
+        }
         isRecording = false;
         micBtn.classList.remove('recording');
         micBtn.textContent = '🎤';
@@ -557,7 +563,12 @@ const { apiBaseUrl = '' } = Astro.props;
 
         mediaRecorder.onstop = async () => {
           stream.getTracks().forEach(track => track.stop());
-          
+
+          if (recordingTimer) {
+            clearTimeout(recordingTimer);
+            recordingTimer = null;
+          }
+
           if (audioChunks.length > 0) {
             const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
             await transcribeAudio(audioBlob);
@@ -570,6 +581,18 @@ const { apiBaseUrl = '' } = Astro.props;
         micBtn.textContent = '⏹️';
         voiceStatus.textContent = '🎤 録音中... (クリックで停止)';
         voiceStatus.className = 'voice-status listening';
+
+        // 55秒後に自動停止（APIの60秒制限対策）
+        recordingTimer = window.setTimeout(() => {
+          if (isRecording && mediaRecorder && mediaRecorder.state === 'recording') {
+            console.log('[Recording] 最大録音時間に達したため自動停止');
+            mediaRecorder.stop();
+            isRecording = false;
+            micBtn.classList.remove('recording');
+            micBtn.textContent = '🎤';
+            addMessage('system', '録音時間が上限（55秒）に達したため自動停止しました');
+          }
+        }, MAX_RECORDING_TIME);
 
       } catch (error) {
         console.error('[Recording] Error:', error);
