@@ -766,8 +766,8 @@ const { apiBaseUrl = '' } = Astro.props;
         // ショップデータの有無で読み上げ内容を変える
         stopCurrentAudio();
         if (data.shops && data.shops.length > 0) {
-          // ショップ提案時は短い定型文を即座に再生（0.5秒以内）
-          speakTextGCP(`${data.shops.length}件のお店をご案内します`);
+          // ショップ提案時は定型文+詳細情報を読み上げ
+          speakTextGCP(`${data.shops.length}件のお店をご案内します。${data.response}`);
 
           // ショップカード表示
           const event = new CustomEvent('displayShops', {
@@ -784,8 +784,8 @@ const { apiBaseUrl = '' } = Astro.props;
           // レスポンスからショップ情報をパースして抽出を試みる
           const extractedShops = extractShopsFromResponse(data.response);
           if (extractedShops.length > 0) {
-            // 抽出されたショップがある場合も定型文で即座に案内
-            speakTextGCP(`${extractedShops.length}件のお店をご案内します`);
+            // 抽出されたショップがある場合も定型文+詳細で案内
+            speakTextGCP(`${extractedShops.length}件のお店をご案内します。${data.response}`);
 
             const event = new CustomEvent('displayShops', {
               detail: { shops: extractedShops }
