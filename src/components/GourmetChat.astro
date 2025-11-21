@@ -460,12 +460,14 @@ const { apiBaseUrl = '' } = Astro.props;
     }
 
     // GCP TTS音声合成
-    async function speakTextGCP(text: string) {
+    async function speakTextGCP(text: string, stopPrevious: boolean = true) {
       console.log('[TTS] speakTextGCP 呼び出し:', text.substring(0, 50) + '...', '文字数:', text.length);
-      
+
       if (!isTTSEnabled || !text) return;
 
-      stopCurrentAudio();
+      if (stopPrevious) {
+        stopCurrentAudio();
+      }
 
       // マークダウン記号を除去
       const cleanText = stripMarkdown(text);
@@ -628,14 +630,12 @@ const { apiBaseUrl = '' } = Astro.props;
             voiceStatus.textContent = '✅ 認識完了 - 送信中...';
             voiceStatus.className = 'voice-status';
 
-            // 自動送信
-            setTimeout(async () => {
-              if (!isRecording && userInput.value.trim()) {
-                await sendMessage();
-              }
-              voiceStatus.textContent = '🎤 音声認識: 停止中';
-              voiceStatus.className = 'voice-status stopped';
-            }, 500);
+            // 自動送信（即座に実行）
+            if (!isRecording && userInput.value.trim()) {
+              await sendMessage();
+            }
+            voiceStatus.textContent = '🎤 音声認識: 停止中';
+            voiceStatus.className = 'voice-status stopped';
           } else {
             voiceStatus.textContent = '音声が認識されませんでした';
           }
@@ -757,9 +757,16 @@ const { apiBaseUrl = '' } = Astro.props;
       // 即座に確認メッセージを表示（質問内容に関わらず）
       const quickAck = "かしこまりました。只今、お店の情報を確認してまとめておりますので、少々お待ちください。";
       addMessage('assistant', quickAck);
-      
-      // 確認メッセージを読み上げ（完了を待たない）
-      speakTextGCP(quickAck);
+
+      // 確認メッセージを読み上げ（完了を待つ）
+      await speakTextGCP(quickAck);
+
+      // 読み上げ完了後、1.5秒待ってから先行TTSを再生
+      let advanceTTSStarted = false;
+      const advanceTTSTimer = setTimeout(() => {
+        advanceTTSStarted = true;
+        speakTextGCP("お待たせしました。お店の情報を確認中です。", false);
+      }, 1500);
 
       try {
         const loadingId = addLoadingMessage();
@@ -776,6 +783,9 @@ const { apiBaseUrl = '' } = Astro.props;
 
         const data = await response.json();
 
+        // 先行TTSのタイマーをクリア
+        clearTimeout(advanceTTSTimer);
+
         removeLoadingMessage(loadingId);
 
         // デバッグ: レスポンス内容を確認
@@ -786,11 +796,16 @@ const { apiBaseUrl = '' } = Astro.props;
         // 本文を表示（summaryも保存するが読み上げはresponseのみ）
         addMessage('assistant', data.response, data.summary);
 
-        // ショップデータの有無で読み上げ内容を変える
+        // 先行TTSを停止
         stopCurrentAudio();
+
+        // ショップデータの有無で読み上げ内容を変える
         if (data.shops && data.shops.length > 0) {
-          // ショップ提案時は定型文+詳細情報を読み上げ
-          speakTextGCP(`${data.shops.length}件のお店をご案内します。${data.response}`);
+          // 短い定型文を即座に再生（完了まで待つ）
+          await speakTextGCP(`お待たせしました。${data.shops.length}件のお店をご案内します。`);
+
+          // 詳細情報を読み上げ（前の音声を停止しない）
+          speakTextGCP(data.response, false);
 
           // ショップカード表示
           const event = new CustomEvent('displayShops', {
@@ -807,8 +822,11 @@ const { apiBaseUrl = '' } = Astro.props;
           // レスポンスからショップ情報をパースして抽出を試みる
           const extractedShops = extractShopsFromResponse(data.response);
           if (extractedShops.length > 0) {
-            // 抽出されたショップがある場合も定型文+詳細で案内
-            speakTextGCP(`${extractedShops.length}件のお店をご案内します。${data.response}`);
+            // 短い定型文を即座に再生（完了まで待つ）
+            await speakTextGCP(`お待たせしました。${extractedShops.length}件のお店をご案内します。`);
+
+            // 詳細情報を読み上げ（前の音声を停止しない）
+            speakTextGCP(data.response, false);
 
             const event = new CustomEvent('displayShops', {
               detail: { shops: extractedShops }
