@@ -31,15 +31,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app, resources={
-    r"/api/*": {
-        "origins": ["*"],
-        "methods": ["GET", "POST", "OPTIONS"],
-        "allow_headers": ["Content-Type"],
-        "expose_headers": ["Content-Type"],
-        "supports_credentials": False
-    }
-})
+CORS(app)
 
 # Gemini API初期化
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
