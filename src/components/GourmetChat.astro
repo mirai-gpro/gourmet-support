@@ -763,12 +763,13 @@ const { apiBaseUrl = '' } = Astro.props;
         // 本文を表示（summaryも保存するが読み上げはresponseのみ）
         addMessage('assistant', data.response, data.summary);
 
-        // テキスト表示と同時にTTS読み上げを開始（並行実行）
+        // ショップデータの有無で読み上げ内容を変える
         stopCurrentAudio();
-        speakTextGCP(data.response);  // awaitを外して並行実行
-
-        // ショップデータ表示は並行してバックグラウンドで処理
         if (data.shops && data.shops.length > 0) {
+          // ショップ提案時は短い定型文を即座に再生（0.5秒以内）
+          speakTextGCP(`${data.shops.length}件のお店をご案内します`);
+
+          // ショップカード表示
           const event = new CustomEvent('displayShops', {
             detail: { shops: data.shops }
           });
@@ -783,6 +784,9 @@ const { apiBaseUrl = '' } = Astro.props;
           // レスポンスからショップ情報をパースして抽出を試みる
           const extractedShops = extractShopsFromResponse(data.response);
           if (extractedShops.length > 0) {
+            // 抽出されたショップがある場合も定型文で即座に案内
+            speakTextGCP(`${extractedShops.length}件のお店をご案内します`);
+
             const event = new CustomEvent('displayShops', {
               detail: { shops: extractedShops }
             });
@@ -792,6 +796,9 @@ const { apiBaseUrl = '' } = Astro.props;
             if (section) {
               section.classList.add('has-shops');
             }
+          } else {
+            // ショップなしの通常会話は全文読み上げ
+            speakTextGCP(data.response);
           }
         }
 
