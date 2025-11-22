@@ -87,6 +87,42 @@ HOTPEPPER_AREA_CODES = {
     '北海道': 'Z011',
 }
 
+# 海外都市名の日本語→英語マッピング
+CITY_NAME_MAPPING = {
+    'ニューヨーク': ['new york', 'nyc', 'ny'],
+    'ロサンゼルス': ['los angeles', 'la'],
+    'サンフランシスコ': ['san francisco', 'sf'],
+    'シカゴ': ['chicago'],
+    'ボストン': ['boston'],
+    'シアトル': ['seattle'],
+    'ラスベガス': ['las vegas', 'vegas'],
+    'マイアミ': ['miami'],
+    'ワシントン': ['washington', 'dc'],
+    'パリ': ['paris'],
+    'ロンドン': ['london'],
+    'ローマ': ['rome', 'roma'],
+    'ミラノ': ['milan', 'milano'],
+    'バルセロナ': ['barcelona'],
+    'マドリード': ['madrid'],
+    'ベルリン': ['berlin'],
+    'ミュンヘン': ['munich', 'münchen'],
+    'アムステルダム': ['amsterdam'],
+    'ブリュッセル': ['brussels', 'bruxelles'],
+    'ウィーン': ['vienna', 'wien'],
+    'チューリッヒ': ['zurich', 'zürich'],
+    'シドニー': ['sydney'],
+    'メルボルン': ['melbourne'],
+    'シンガポール': ['singapore'],
+    '香港': ['hong kong'],
+    'ソウル': ['seoul'],
+    '台北': ['taipei'],
+    'バンコク': ['bangkok'],
+    'ホノルル': ['honolulu', 'hawaii'],
+    'ハワイ': ['hawaii', 'honolulu'],
+    'グアム': ['guam'],
+    'バリ': ['bali'],
+}
+
 # エリアの座標と都道府県マッピング
 AREA_DATA = {
     '恵比寿': {'lat': 35.6467, 'lng': 139.7101, 'pref': '東京'},
@@ -239,11 +275,16 @@ def search_place(shop_name: str, area: str = '') -> dict:
             'language': 'ja',
             'type': 'restaurant'
         }
-        
-        # エリアの座標があれば位置バイアスを追加
+
+        # エリアの座標があれば位置バイアスを追加（日本国内のエリア）
         if 'lat' in area_info and 'lng' in area_info:
             params['location'] = f"{area_info['lat']},{area_info['lng']}"
             params['radius'] = 3000  # 3km以内
+            params['region'] = 'jp'  # 日本国内エリアの場合のみ
+        elif area_info:
+            # AREA_DATAに登録済み（日本国内）だが座標がない場合
+            params['region'] = 'jp'
+        # 海外や不明なエリアの場合は地域制限なし
         
         logger.info(f"[Places API] 検索クエリ: {query}")
         
@@ -319,16 +360,38 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
             logger.warning(f"[Places API] 店舗が見つからないため除外: {shop_name}")
             continue
         
-        # 都道府県が異なる場合は除外
+        # エリア/都道府県が異なる場合は除外
         if area:
             address = place_data.get('formatted_address', '')
             area_info = AREA_DATA.get(area, {})
             pref = area_info.get('pref', '')
-            
-            # 都道府県名が住所に含まれていない場合は除外
-            if pref and pref not in address:
-                logger.warning(f"[Places API] 都道府県不一致のため除外: {shop_name} (検索: {pref}, 住所: {address})")
-                continue
+
+            if pref:
+                # 日本国内: 都道府県名が住所に含まれていない場合は除外
+                if pref not in address:
+                    logger.warning(f"[Places API] 都道府県不一致のため除外: {shop_name} (検索: {pref}, 住所: {address})")
+                    continue
+            else:
+                # 海外/AREA_DATA未登録: エリア名が住所に含まれていない場合は除外
+                # 日本語→英語のマッピングも考慮
+                address_lower = address.lower()
+                area_matched = False
+
+                # まず直接マッチを確認（日本語エリア名）
+                if area in address or area.lower() in address_lower:
+                    area_matched = True
+                else:
+                    # CITY_NAME_MAPPINGで英語バリエーションを確認
+                    english_variants = CITY_NAME_MAPPING.get(area, [])
+                    for variant in english_variants:
+                        if variant.lower() in address_lower:
+                            area_matched = True
+                            logger.info(f"[Places API] 英語マッチ: {area} -> {variant} in {address}")
+                            break
+
+                if not area_matched:
+                    logger.warning(f"[Places API] エリア不一致のため除外: {shop_name} (検索: {area}, 住所: {address})")
+                    continue
         
         # データを追加
         if place_data.get('photo_url'):
