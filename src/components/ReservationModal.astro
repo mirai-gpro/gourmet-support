@@ -7,7 +7,7 @@ export interface Props {
 const { apiBaseUrl = '' } = Astro.props;
 ---
 
-<div class="reservation-modal-overlay" id="reservationModalOverlay">
+<div class="reservation-modal-overlay" id="reservationModalOverlay" data-api-base={apiBaseUrl}>
   <div class="reservation-modal" id="reservationModal">
     <div class="modal-header">
       <h2>&#128222; 予約依頼</h2>
@@ -120,7 +120,13 @@ const { apiBaseUrl = '' } = Astro.props;
 
         <div class="form-row">
           <label>&#128221; その他の希望</label>
-          <textarea id="otherRequests" placeholder="誕生日ケーキ、アレルギー対応、禁煙席など"></textarea>
+          <div class="textarea-with-mic">
+            <textarea id="otherRequests" placeholder="誕生日ケーキ、アレルギー対応、禁煙席など"></textarea>
+            <button type="button" class="mic-btn" id="otherRequestsMic" title="音声入力">
+              &#127908;
+            </button>
+          </div>
+          <p class="voice-hint" id="voiceHint"></p>
         </div>
       </div>
 
@@ -388,6 +394,61 @@ const { apiBaseUrl = '' } = Astro.props;
   .form-row textarea {
     resize: vertical;
     min-height: 60px;
+  }
+
+  .textarea-with-mic {
+    display: flex;
+    gap: 8px;
+    align-items: flex-start;
+  }
+
+  .textarea-with-mic textarea {
+    flex: 1;
+  }
+
+  .mic-btn {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #10b981;
+    border: none;
+    cursor: pointer;
+    font-size: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .mic-btn:hover {
+    background: #059669;
+    transform: scale(1.05);
+  }
+
+  .mic-btn.recording {
+    background: #ef4444;
+    animation: pulse-mic 1.5s infinite;
+  }
+
+  @keyframes pulse-mic {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.8; transform: scale(1.05); }
+  }
+
+  .voice-hint {
+    margin: 6px 0 0;
+    font-size: 12px;
+    color: #6b7280;
+    min-height: 18px;
+  }
+
+  .voice-hint.recording {
+    color: #ef4444;
+  }
+
+  .voice-hint.success {
+    color: #10b981;
   }
 
   /* ラジオボタングループ */
@@ -801,10 +862,201 @@ const { apiBaseUrl = '' } = Astro.props;
   // グローバルに公開
   (window as any).ReservationModal = ReservationModal;
 
+  // 音声入力クラス
+  class VoiceInput {
+    private micBtn: HTMLButtonElement;
+    private textarea: HTMLTextAreaElement;
+    private voiceHint: HTMLElement;
+    private apiBase: string;
+
+    private isRecording = false;
+    private mediaRecorder: MediaRecorder | null = null;
+    private audioChunks: Blob[] = [];
+    private audioContext: AudioContext | null = null;
+    private analyser: AnalyserNode | null = null;
+    private silenceTimer: number | null = null;
+    private vadCheckInterval: number | null = null;
+    private hasSpoken = false;
+
+    private readonly SILENCE_THRESHOLD = 15;
+    private readonly SILENCE_DURATION = 3000;
+
+    constructor(micBtnId: string, textareaId: string, voiceHintId: string, apiBase: string) {
+      this.micBtn = document.getElementById(micBtnId) as HTMLButtonElement;
+      this.textarea = document.getElementById(textareaId) as HTMLTextAreaElement;
+      this.voiceHint = document.getElementById(voiceHintId) as HTMLElement;
+      this.apiBase = apiBase;
+
+      this.micBtn.addEventListener('click', () => this.toggleRecording());
+    }
+
+    private stopVAD() {
+      if (this.vadCheckInterval) {
+        clearInterval(this.vadCheckInterval);
+        this.vadCheckInterval = null;
+      }
+      if (this.silenceTimer) {
+        clearTimeout(this.silenceTimer);
+        this.silenceTimer = null;
+      }
+      if (this.audioContext) {
+        this.audioContext.close();
+        this.audioContext = null;
+      }
+      this.analyser = null;
+      this.hasSpoken = false;
+    }
+
+    private autoStopRecording() {
+      console.log('[VoiceInput] 無音検出 - 自動停止');
+      this.stopVAD();
+      if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+        this.mediaRecorder.stop();
+      }
+      this.isRecording = false;
+      this.micBtn.classList.remove('recording');
+      this.micBtn.innerHTML = '&#127908;';
+    }
+
+    async toggleRecording() {
+      if (this.isRecording) {
+        this.stopVAD();
+        if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+          this.mediaRecorder.stop();
+        }
+        this.isRecording = false;
+        this.micBtn.classList.remove('recording');
+        this.micBtn.innerHTML = '&#127908;';
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        this.mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+        this.audioChunks = [];
+        this.hasSpoken = false;
+
+        // 無音検出のセットアップ
+        this.audioContext = new AudioContext();
+        const source = this.audioContext.createMediaStreamSource(stream);
+        this.analyser = this.audioContext.createAnalyser();
+        this.analyser.fftSize = 512;
+        source.connect(this.analyser);
+
+        const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+
+        // 音声レベルを定期的にチェック
+        this.vadCheckInterval = window.setInterval(() => {
+          if (!this.analyser || !this.isRecording) return;
+
+          this.analyser.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+
+          if (average > this.SILENCE_THRESHOLD) {
+            this.hasSpoken = true;
+            if (this.silenceTimer) {
+              clearTimeout(this.silenceTimer);
+              this.silenceTimer = null;
+            }
+            this.voiceHint.textContent = '録音中...';
+            this.voiceHint.className = 'voice-hint recording';
+          } else if (this.hasSpoken && !this.silenceTimer) {
+            this.voiceHint.textContent = '認識待機中...';
+            this.silenceTimer = window.setTimeout(() => {
+              this.autoStopRecording();
+            }, this.SILENCE_DURATION);
+          }
+        }, 100);
+
+        this.mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            this.audioChunks.push(event.data);
+          }
+        };
+
+        this.mediaRecorder.onstop = async () => {
+          this.stopVAD();
+          stream.getTracks().forEach(track => track.stop());
+
+          if (this.audioChunks.length > 0) {
+            const audioBlob = new Blob(this.audioChunks, { type: 'audio/webm' });
+            await this.transcribeAudio(audioBlob);
+          }
+        };
+
+        this.mediaRecorder.start();
+        this.isRecording = true;
+        this.micBtn.classList.add('recording');
+        this.micBtn.innerHTML = '&#9209;';
+        this.voiceHint.textContent = '話してください...';
+        this.voiceHint.className = 'voice-hint recording';
+
+      } catch (error) {
+        console.error('[VoiceInput] Error:', error);
+        this.voiceHint.textContent = 'マイクアクセスエラー';
+        this.voiceHint.className = 'voice-hint';
+      }
+    }
+
+    private async transcribeAudio(audioBlob: Blob) {
+      try {
+        this.voiceHint.textContent = '音声認識中...';
+        this.voiceHint.className = 'voice-hint';
+
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+
+        reader.onloadend = async () => {
+          const base64Audio = (reader.result as string).split(',')[1];
+
+          const response = await fetch(`${this.apiBase}/api/stt/transcribe`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              audio: base64Audio,
+              language_code: 'ja-JP'
+            })
+          });
+
+          const data = await response.json();
+
+          if (data.success && data.transcript) {
+            // 既存のテキストに追記
+            const currentText = this.textarea.value;
+            this.textarea.value = currentText
+              ? currentText + '\n' + data.transcript
+              : data.transcript;
+            this.voiceHint.textContent = '入力完了';
+            this.voiceHint.className = 'voice-hint success';
+            setTimeout(() => {
+              this.voiceHint.textContent = '';
+              this.voiceHint.className = 'voice-hint';
+            }, 2000);
+          } else {
+            this.voiceHint.textContent = '音声が認識されませんでした';
+            this.voiceHint.className = 'voice-hint';
+          }
+        };
+
+      } catch (error) {
+        console.error('[VoiceInput] Error:', error);
+        this.voiceHint.textContent = '認識エラー';
+        this.voiceHint.className = 'voice-hint';
+      }
+    }
+  }
+
   // 初期化
   document.addEventListener('DOMContentLoaded', () => {
     const modal = new ReservationModal();
     (window as any).reservationModal = modal;
+
+    // APIベースURLを取得
+    const overlay = document.getElementById('reservationModalOverlay') as HTMLElement;
+    const apiBase = overlay?.dataset.apiBase || '';
+
+    // 音声入力を初期化
+    new VoiceInput('otherRequestsMic', 'otherRequests', 'voiceHint', apiBase);
 
     // カスタムイベントをリッスン
     document.addEventListener('openReservationModal', ((event: CustomEvent) => {
