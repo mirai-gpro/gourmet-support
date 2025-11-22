@@ -90,64 +90,6 @@ HOTPEPPER_AREA_CODES = {
     '北海道': 'Z011',
 }
 
-# エリアの座標と都道府県マッピング
-AREA_DATA = {
-    '恵比寿': {'lat': 35.6467, 'lng': 139.7101, 'pref': '東京'},
-    '渋谷': {'lat': 35.6580, 'lng': 139.7016, 'pref': '東京'},
-    '新宿': {'lat': 35.6896, 'lng': 139.7006, 'pref': '東京'},
-    '池袋': {'lat': 35.7295, 'lng': 139.7109, 'pref': '東京'},
-    '銀座': {'lat': 35.6717, 'lng': 139.7649, 'pref': '東京'},
-    '六本木': {'lat': 35.6627, 'lng': 139.7311, 'pref': '東京'},
-    '表参道': {'lat': 35.6654, 'lng': 139.7121, 'pref': '東京'},
-    '原宿': {'lat': 35.6702, 'lng': 139.7027, 'pref': '東京'},
-    '品川': {'lat': 35.6284, 'lng': 139.7387, 'pref': '東京'},
-    '目黒': {'lat': 35.6337, 'lng': 139.7158, 'pref': '東京'},
-    '五反田': {'lat': 35.6262, 'lng': 139.7234, 'pref': '東京'},
-    '大崎': {'lat': 35.6197, 'lng': 139.7283, 'pref': '東京'},
-    '東京': {'lat': 35.6812, 'lng': 139.7671, 'pref': '東京'},
-    '有楽町': {'lat': 35.6748, 'lng': 139.7630, 'pref': '東京'},
-    '秋葉原': {'lat': 35.6984, 'lng': 139.7731, 'pref': '東京'},
-    '上野': {'lat': 35.7141, 'lng': 139.7774, 'pref': '東京'},
-    '浅草': {'lat': 35.7148, 'lng': 139.7967, 'pref': '東京'},
-    '押上': {'lat': 35.7101, 'lng': 139.8136, 'pref': '東京'},
-    '錦糸町': {'lat': 35.6966, 'lng': 139.8144, 'pref': '東京'},
-    '亀戸': {'lat': 35.6969, 'lng': 139.8265, 'pref': '東京'},
-    '北千住': {'lat': 35.7497, 'lng': 139.8049, 'pref': '東京'},
-    '赤羽': {'lat': 35.7780, 'lng': 139.7209, 'pref': '東京'},
-    '中野': {'lat': 35.7056, 'lng': 139.6656, 'pref': '東京'},
-    '高円寺': {'lat': 35.7054, 'lng': 139.6496, 'pref': '東京'},
-    '吉祥寺': {'lat': 35.7030, 'lng': 139.5796, 'pref': '東京'},
-    '三鷹': {'lat': 35.7026, 'lng': 139.5606, 'pref': '東京'},
-    '立川': {'lat': 35.6980, 'lng': 139.4143, 'pref': '東京'},
-    '八王子': {'lat': 35.6554, 'lng': 139.3239, 'pref': '東京'},
-    '町田': {'lat': 35.5424, 'lng': 139.4463, 'pref': '東京'},
-    '東陽町': {'lat': 35.6699, 'lng': 139.8176, 'pref': '東京'},
-    '門前仲町': {'lat': 35.6724, 'lng': 139.7963, 'pref': '東京'},
-    '豊洲': {'lat': 35.6531, 'lng': 139.7967, 'pref': '東京'},
-    '月島': {'lat': 35.6625, 'lng': 139.7834, 'pref': '東京'},
-    '代官山': {'lat': 35.6486, 'lng': 139.7030, 'pref': '東京'},
-    '中目黒': {'lat': 35.6443, 'lng': 139.6989, 'pref': '東京'},
-    '自由が丘': {'lat': 35.6077, 'lng': 139.6686, 'pref': '東京'},
-    '二子玉川': {'lat': 35.6115, 'lng': 139.6265, 'pref': '東京'},
-    '下北沢': {'lat': 35.6614, 'lng': 139.6681, 'pref': '東京'},
-    '三軒茶屋': {'lat': 35.6437, 'lng': 139.6702, 'pref': '東京'},
-    # 神奈川
-    '横浜': {'lat': 35.4437, 'lng': 139.6380, 'pref': '神奈川'},
-    '川崎': {'lat': 35.5309, 'lng': 139.7030, 'pref': '神奈川'},
-    'みなとみらい': {'lat': 35.4578, 'lng': 139.6325, 'pref': '神奈川'},
-    '関内': {'lat': 35.4437, 'lng': 139.6380, 'pref': '神奈川'},
-    '桜木町': {'lat': 35.4508, 'lng': 139.6310, 'pref': '神奈川'},
-    '元町': {'lat': 35.4378, 'lng': 139.6508, 'pref': '神奈川'},
-    '中華街': {'lat': 35.4421, 'lng': 139.6453, 'pref': '神奈川'},
-    # 埼玉
-    '大宮': {'lat': 35.9062, 'lng': 139.6237, 'pref': '埼玉'},
-    '浦和': {'lat': 35.8585, 'lng': 139.6456, 'pref': '埼玉'},
-    # 千葉
-    '千葉': {'lat': 35.6073, 'lng': 140.1063, 'pref': '千葉'},
-    '船橋': {'lat': 35.7015, 'lng': 139.9854, 'pref': '千葉'},
-    '柏': {'lat': 35.8676, 'lng': 139.9757, 'pref': '千葉'},
-}
-
 # 定数
 MAX_TOKENS = 4000
 
@@ -155,25 +97,29 @@ MAX_TOKENS = 4000
 # ホットペッパーAPI 連携
 # ========================================
 
-def search_hotpepper(shop_name: str, area: str = '') -> str:
+def search_hotpepper(shop_name: str, area: str = '', geo_info: dict = None) -> str:
     """
     ホットペッパーAPIで店舗を検索して店舗ページURLを返す
-    
+
     Args:
         shop_name: 店舗名
         area: エリア名
-    
+        geo_info: Geocoding APIから取得した地域情報（オプション）
+
     Returns:
         店舗ページURL、または None
     """
     if not HOTPEPPER_API_KEY:
         logger.warning("[Hotpepper API] APIキーが設定されていません")
         return None
-    
-    # エリアデータを取得
-    area_info = AREA_DATA.get(area, {})
-    pref = area_info.get('pref', '')
-    large_area = HOTPEPPER_AREA_CODES.get(pref, 'Z011')  # デフォルト東京
+
+    # Geocoding APIの結果から都道府県を取得
+    large_area = 'Z011'  # デフォルト東京
+    if geo_info:
+        region = geo_info.get('region', '')
+        # "東京都" → "東京" に変換してエリアコードを取得
+        pref = region.rstrip('都道府県') if region else ''
+        large_area = HOTPEPPER_AREA_CODES.get(pref, 'Z011')
     
     try:
         url = 'http://webservice.recruit.co.jp/hotpepper/gourmet/v1/'
@@ -211,7 +157,7 @@ def search_hotpepper(shop_name: str, area: str = '') -> str:
 
 def get_region_from_area(area: str) -> dict:
     """
-    Geocoding APIでエリアの地域情報（国、都道府県/州）を取得
+    Geocoding APIでエリアの地域情報（国、都道府県/州、座標）を取得
 
     Args:
         area: エリア名（例: "麻布十番", "Manhattan", "梅田"）
@@ -221,7 +167,9 @@ def get_region_from_area(area: str) -> dict:
             'country': '日本',
             'country_code': 'JP',
             'region': '東京都',  # 都道府県 or 州
-            'formatted_address': '日本、〒106-0045 東京都港区麻布十番'
+            'formatted_address': '日本、〒106-0045 東京都港区麻布十番',
+            'lat': 35.6541,
+            'lng': 139.7370
         }
         または None（取得失敗時）
     """
@@ -267,14 +215,21 @@ def get_region_from_area(area: str) -> dict:
             if 'administrative_area_level_1' in types:
                 region = component.get('long_name')
 
+        # 座標を取得
+        location = result.get('geometry', {}).get('location', {})
+        lat = location.get('lat')
+        lng = location.get('lng')
+
         geo_result = {
             'country': country,
             'country_code': country_code,
             'region': region,
-            'formatted_address': result.get('formatted_address', '')
+            'formatted_address': result.get('formatted_address', ''),
+            'lat': lat,
+            'lng': lng
         }
 
-        logger.info(f"[Geocoding API] 取得成功: {area} → country={country}, region={region}")
+        logger.info(f"[Geocoding API] 取得成功: {area} → country={country}, region={region}, lat={lat}, lng={lng}")
         return geo_result
 
     except requests.exceptions.Timeout:
@@ -289,31 +244,31 @@ def get_region_from_area(area: str) -> dict:
 # Google Places API 連携
 # ========================================
 
-def search_place(shop_name: str, area: str = '') -> dict:
+def search_place(shop_name: str, area: str = '', geo_info: dict = None) -> dict:
     """
     Google Places APIで店舗を検索
-    
+
     Args:
         shop_name: 店舗名
         area: エリア名（例: "恵比寿"）
-    
+        geo_info: Geocoding APIから取得した地域情報（オプション）
+
     Returns:
         店舗情報の辞書、または None
     """
     if not GOOGLE_PLACES_API_KEY:
         logger.warning("[Places API] APIキーが設定されていません")
         return None
-    
-    # エリアデータを取得
-    area_info = AREA_DATA.get(area, {})
-    pref = area_info.get('pref', '')
-    
-    # 検索クエリを構築（都道府県名を追加）
-    if pref:
-        query = f"{shop_name} {area} {pref}".strip()
+
+    # Geocoding APIの結果から都道府県/州を取得
+    region = geo_info.get('region', '') if geo_info else ''
+
+    # 検索クエリを構築（都道府県/州名を追加）
+    if region:
+        query = f"{shop_name} {area} {region}".strip()
     else:
         query = f"{shop_name} {area}".strip()
-    
+
     try:
         search_url = 'https://maps.googleapis.com/maps/api/place/textsearch/json'
         params = {
@@ -323,15 +278,13 @@ def search_place(shop_name: str, area: str = '') -> dict:
             'type': 'restaurant'
         }
 
-        # エリアの座標があれば位置バイアスを追加（日本国内のエリア）
-        if 'lat' in area_info and 'lng' in area_info:
-            params['location'] = f"{area_info['lat']},{area_info['lng']}"
+        # Geocoding APIの座標があれば位置バイアスを追加
+        if geo_info and geo_info.get('lat') and geo_info.get('lng'):
+            params['location'] = f"{geo_info['lat']},{geo_info['lng']}"
             params['radius'] = 3000  # 3km以内
-            params['region'] = 'jp'  # 日本国内エリアの場合のみ
-        elif area_info:
-            # AREA_DATAに登録済み（日本国内）だが座標がない場合
-            params['region'] = 'jp'
-        # 海外や不明なエリアの場合は地域制限なし
+            # 日本の場合のみregion=jpを設定
+            if geo_info.get('country_code') == 'JP':
+                params['region'] = 'jp'
         
         logger.info(f"[Places API] 検索クエリ: {query}")
         
@@ -401,7 +354,7 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
         if not shop_name:
             continue
         
-        place_data = search_place(shop_name, area)
+        place_data = search_place(shop_name, area, geo_info)
         
         # Places APIで見つからない店舗は除外
         if not place_data:
@@ -460,14 +413,14 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
             shop['maps_url'] = place_data['maps_url']
         
         # ホットペッパーAPIで検索
-        hotpepper_url = search_hotpepper(shop_name, area)
-        
+        hotpepper_url = search_hotpepper(shop_name, area, geo_info)
+
         # LLMの店舗名で見つからない場合、Places APIの店舗名で再検索
         if not hotpepper_url:
             places_name = place_data.get('name', '')
             if places_name and places_name != shop_name:
                 logger.info(f"[Hotpepper API] Places名で再検索: {places_name}")
-                hotpepper_url = search_hotpepper(places_name, area)
+                hotpepper_url = search_hotpepper(places_name, area, geo_info)
         
         if hotpepper_url:
             shop['hotpepper_url'] = hotpepper_url
@@ -478,8 +431,11 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
         
         # 食べログURL（tabelog.comの検索機能を使用、該当なしの場合はGoogle検索）
         places_name = place_data.get('name', '')
-        pref = area_info.get('pref', '東京')
-        
+
+        # Geocoding APIの結果から都道府県を取得
+        region = geo_info.get('region', '') if geo_info else ''
+        pref = region.rstrip('都道府県') if region else '東京'
+
         # 都道府県コードを取得（デフォルトは東京）
         pref_code_map = {
             '東京': 'tokyo',
