@@ -128,6 +128,13 @@ const { apiBaseUrl = '' } = Astro.props;
           </div>
           <p class="voice-hint" id="voiceHint"></p>
         </div>
+
+        <!-- お店毎に予約内容を変えるボタン -->
+        <div class="per-shop-toggle">
+          <button type="button" class="per-shop-btn" id="togglePerShopSettings">
+            &#9881; お店毎に予約内容を変える
+          </button>
+        </div>
       </div>
 
       <!-- 選択済み店舗の個別設定 -->
@@ -512,16 +519,46 @@ const { apiBaseUrl = '' } = Astro.props;
     margin: 0;
   }
 
-  /* 選択済み店舗詳細 */
-  .selected-shops-detail {
-    display: none;
+  /* お店毎に予約内容を変えるボタン */
+  .per-shop-toggle {
+    margin-top: 16px;
+    text-align: center;
   }
 
-  .selected-shops-detail.has-selection {
+  .per-shop-btn {
+    background: #f3f4f6;
+    border: 1px solid #d1d5db;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #4b5563;
+    transition: all 0.2s;
+  }
+
+  .per-shop-btn:hover {
+    background: #e5e7eb;
+    border-color: #9ca3af;
+  }
+
+  .per-shop-btn.active {
+    background: #dbeafe;
+    border-color: #3b82f6;
+    color: #1d4ed8;
+  }
+
+  /* 選択済み店舗詳細 */
+  :global(.selected-shops-detail) {
+    display: none;
+    margin-top: 20px;
+  }
+
+  :global(.selected-shops-detail.has-selection) {
     display: block;
   }
 
-  .shop-detail-card {
+  :global(.shop-detail-card) {
     background: #fff;
     border: 1px solid #e5e7eb;
     border-radius: 12px;
@@ -529,39 +566,63 @@ const { apiBaseUrl = '' } = Astro.props;
     margin-bottom: 12px;
   }
 
-  .shop-detail-header {
+  :global(.shop-detail-header) {
     display: flex;
     align-items: center;
     gap: 10px;
     margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e5e7eb;
   }
 
-  .shop-detail-badge {
-    width: 24px;
-    height: 24px;
+  :global(.shop-detail-badge) {
+    width: 28px;
+    height: 28px;
     border-radius: 50%;
-    background: #f59e0b;
+    background: #2563eb;
     color: white;
     display: flex;
     align-items: center;
     justify-content: center;
     font-weight: 700;
-    font-size: 12px;
-  }
-
-  .shop-detail-name {
-    font-weight: 600;
     font-size: 14px;
   }
 
-  .use-common-toggle {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 12px;
-    color: #6b7280;
+  :global(.shop-detail-name) {
+    font-weight: 600;
+    font-size: 15px;
+    flex: 1;
   }
+
+  :global(.shop-detail-form) {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  :global(.shop-detail-form .form-row) {
+    margin-bottom: 0;
+  }
+
+  :global(.shop-detail-form label) {
+    display: block;
+    font-size: 12px;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: #374151;
+  }
+
+  :global(.shop-detail-form select),
+  :global(.shop-detail-form input[type="date"]),
+  :global(.shop-detail-form textarea) {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 13px;
+    background: white;
+  }
+
 
   /* モーダルフッター */
   .modal-footer {
@@ -671,10 +732,12 @@ const { apiBaseUrl = '' } = Astro.props;
     private selectedShopsDetail: HTMLElement;
     private submitBtn: HTMLButtonElement;
     private selectionGuide: HTMLElement;
+    private perShopBtn: HTMLButtonElement;
 
     private shops: ShopData[] = [];
     private selectedShops: SelectedShop[] = [];
     private maxSelection = 3;
+    private perShopMode = false;
 
     constructor() {
       this.overlay = document.getElementById('reservationModalOverlay')!;
@@ -683,6 +746,7 @@ const { apiBaseUrl = '' } = Astro.props;
       this.selectedShopsDetail = document.getElementById('selectedShopsDetail')!;
       this.submitBtn = document.getElementById('submitReservation') as HTMLButtonElement;
       this.selectionGuide = document.getElementById('selectionGuide')!;
+      this.perShopBtn = document.getElementById('togglePerShopSettings') as HTMLButtonElement;
 
       this.initEventListeners();
       this.setDefaultDate();
@@ -710,6 +774,9 @@ const { apiBaseUrl = '' } = Astro.props;
           this.close();
         }
       });
+
+      // お店毎に予約内容を変えるボタン
+      this.perShopBtn?.addEventListener('click', () => this.togglePerShopMode());
     }
 
     private setDefaultDate() {
@@ -723,6 +790,11 @@ const { apiBaseUrl = '' } = Astro.props;
     open(shops: ShopData[]) {
       this.shops = shops;
       this.selectedShops = [];
+      this.perShopMode = false;
+      this.perShopBtn.classList.remove('active');
+      this.perShopBtn.innerHTML = '&#9881; お店毎に予約内容を変える';
+      this.selectedShopsDetail.innerHTML = '';
+      this.selectedShopsDetail.classList.remove('has-selection');
       this.renderShopList();
       this.updateSubmitButton();
       this.overlay.classList.add('active');
@@ -799,12 +871,18 @@ const { apiBaseUrl = '' } = Astro.props;
 
       this.renderShopList();
       this.updateSubmitButton();
+      if (this.perShopMode) {
+        this.renderPerShopSettings();
+      }
     }
 
     private resetSelection() {
       this.selectedShops = [];
       this.renderShopList();
       this.updateSubmitButton();
+      if (this.perShopMode) {
+        this.renderPerShopSettings();
+      }
     }
 
     private updateSelectionGuide() {
@@ -820,6 +898,89 @@ const { apiBaseUrl = '' } = Astro.props;
 
     private updateSubmitButton() {
       this.submitBtn.disabled = this.selectedShops.length === 0;
+    }
+
+    private togglePerShopMode() {
+      this.perShopMode = !this.perShopMode;
+      this.perShopBtn.classList.toggle('active', this.perShopMode);
+
+      if (this.perShopMode) {
+        this.perShopBtn.innerHTML = '&#10003; 共通設定に戻す';
+        this.renderPerShopSettings();
+      } else {
+        this.perShopBtn.innerHTML = '&#9881; お店毎に予約内容を変える';
+        this.selectedShopsDetail.innerHTML = '';
+        this.selectedShopsDetail.classList.remove('has-selection');
+      }
+    }
+
+    private renderPerShopSettings() {
+      if (this.selectedShops.length === 0) {
+        this.selectedShopsDetail.innerHTML = '<p style="text-align: center; color: #6b7280; padding: 20px;">先にお店を選択してください</p>';
+        this.selectedShopsDetail.classList.add('has-selection');
+        return;
+      }
+
+      const commonData = this.getFormData();
+      const priorityLabels = ['①', '②', '③'];
+
+      this.selectedShopsDetail.innerHTML = this.selectedShops.map((shop, index) => {
+        const settings = shop.customSettings || commonData;
+        return `
+          <div class="shop-detail-card" data-shop-index="${index}">
+            <div class="shop-detail-header">
+              <div class="shop-detail-badge">${priorityLabels[index]}</div>
+              <div class="shop-detail-name">${shop.name}</div>
+            </div>
+            <div class="shop-detail-form">
+              <div class="form-row">
+                <label>👥 人数</label>
+                <select class="shop-guest-count">
+                  ${[1,2,3,4,5,6,7,8,9,10].map(n =>
+                    `<option value="${n}" ${settings.guestCount == n ? 'selected' : ''}>${n}${n === 10 ? '名以上' : '名'}</option>`
+                  ).join('')}
+                </select>
+              </div>
+              <div class="form-row">
+                <label>📅 希望日</label>
+                <input type="date" class="shop-date" value="${settings.date || ''}" />
+              </div>
+              <div class="form-row">
+                <label>⏰ 開始時間</label>
+                <select class="shop-start-time">
+                  <option value="">選択してください</option>
+                  ${['11:00','11:30','12:00','12:30','13:00','13:30','17:00','17:30','18:00','18:30','19:00','19:30','20:00','20:30','21:00','21:30'].map(t =>
+                    `<option value="${t}" ${settings.startTime === t ? 'selected' : ''}>${t}</option>`
+                  ).join('')}
+                </select>
+              </div>
+              <div class="form-row">
+                <label>📝 その他の希望</label>
+                <textarea class="shop-other-requests" placeholder="このお店への特別なリクエスト">${settings.otherRequests || ''}</textarea>
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      this.selectedShopsDetail.classList.add('has-selection');
+
+      // 各フォームの変更を監視
+      this.selectedShopsDetail.querySelectorAll('.shop-detail-card').forEach((card, index) => {
+        const updateCustomSettings = () => {
+          this.selectedShops[index].useCommonSettings = false;
+          this.selectedShops[index].customSettings = {
+            guestCount: (card.querySelector('.shop-guest-count') as HTMLSelectElement)?.value,
+            date: (card.querySelector('.shop-date') as HTMLInputElement)?.value,
+            startTime: (card.querySelector('.shop-start-time') as HTMLSelectElement)?.value,
+            otherRequests: (card.querySelector('.shop-other-requests') as HTMLTextAreaElement)?.value
+          };
+        };
+        card.querySelectorAll('select, input, textarea').forEach(el => {
+          el.addEventListener('change', updateCustomSettings);
+          el.addEventListener('input', updateCustomSettings);
+        });
+      });
     }
 
     private getFormData() {
