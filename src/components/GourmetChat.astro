@@ -432,7 +432,7 @@ const { apiBaseUrl = '' } = Astro.props;
     let vadCheckInterval: number | null = null;
     let hasSpoken = false; // 音声が検出されたかどうか
     const SILENCE_THRESHOLD = 15; // 無音判定の閾値（0-255）
-    const SILENCE_DURATION = 1500; // 無音が続いたら停止するミリ秒
+    const SILENCE_DURATION = 3000; // 無音が続いたら停止するミリ秒（3秒）
 
     // ユーザーインタラクション検出
     function enableAudioPlayback() {
