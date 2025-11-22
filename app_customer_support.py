@@ -87,6 +87,42 @@ HOTPEPPER_AREA_CODES = {
     '北海道': 'Z011',
 }
 
+# 海外都市名の日本語→英語マッピング
+CITY_NAME_MAPPING = {
+    'ニューヨーク': ['new york', 'nyc', 'ny'],
+    'ロサンゼルス': ['los angeles', 'la'],
+    'サンフランシスコ': ['san francisco', 'sf'],
+    'シカゴ': ['chicago'],
+    'ボストン': ['boston'],
+    'シアトル': ['seattle'],
+    'ラスベガス': ['las vegas', 'vegas'],
+    'マイアミ': ['miami'],
+    'ワシントン': ['washington', 'dc'],
+    'パリ': ['paris'],
+    'ロンドン': ['london'],
+    'ローマ': ['rome', 'roma'],
+    'ミラノ': ['milan', 'milano'],
+    'バルセロナ': ['barcelona'],
+    'マドリード': ['madrid'],
+    'ベルリン': ['berlin'],
+    'ミュンヘン': ['munich', 'münchen'],
+    'アムステルダム': ['amsterdam'],
+    'ブリュッセル': ['brussels', 'bruxelles'],
+    'ウィーン': ['vienna', 'wien'],
+    'チューリッヒ': ['zurich', 'zürich'],
+    'シドニー': ['sydney'],
+    'メルボルン': ['melbourne'],
+    'シンガポール': ['singapore'],
+    '香港': ['hong kong'],
+    'ソウル': ['seoul'],
+    '台北': ['taipei'],
+    'バンコク': ['bangkok'],
+    'ホノルル': ['honolulu', 'hawaii'],
+    'ハワイ': ['hawaii', 'honolulu'],
+    'グアム': ['guam'],
+    'バリ': ['bali'],
+}
+
 # エリアの座標と都道府県マッピング
 AREA_DATA = {
     '恵比寿': {'lat': 35.6467, 'lng': 139.7101, 'pref': '東京'},
@@ -337,10 +373,23 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
                     continue
             else:
                 # 海外/AREA_DATA未登録: エリア名が住所に含まれていない場合は除外
-                # 英語表記のバリエーションも考慮
-                area_lower = area.lower()
+                # 日本語→英語のマッピングも考慮
                 address_lower = address.lower()
-                if area_lower not in address_lower and area not in address:
+                area_matched = False
+
+                # まず直接マッチを確認（日本語エリア名）
+                if area in address or area.lower() in address_lower:
+                    area_matched = True
+                else:
+                    # CITY_NAME_MAPPINGで英語バリエーションを確認
+                    english_variants = CITY_NAME_MAPPING.get(area, [])
+                    for variant in english_variants:
+                        if variant.lower() in address_lower:
+                            area_matched = True
+                            logger.info(f"[Places API] 英語マッチ: {area} -> {variant} in {address}")
+                            break
+
+                if not area_matched:
                     logger.warning(f"[Places API] エリア不一致のため除外: {shop_name} (検索: {area}, 住所: {address})")
                     continue
         
