@@ -768,7 +768,8 @@ const { apiBaseUrl = '' } = Astro.props;
     }
 
     private getPriorityLabel(priority: number): string {
-      const labels = ['', '①', '②', '③'];
+      // HTMLエンティティで丸数字を表示（太字赤）
+      const labels = ['', '&#9312;', '&#9313;', '&#9314;'];
       return labels[priority] || priority.toString();
     }
 
