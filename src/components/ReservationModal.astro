@@ -292,7 +292,7 @@ const { apiBaseUrl = '' } = Astro.props;
     opacity: 0.4;
   }
 
-  .priority-badge {
+  :global(.priority-badge) {
     width: 36px;
     height: 36px;
     border-radius: 50%;
@@ -307,7 +307,7 @@ const { apiBaseUrl = '' } = Astro.props;
     border: 2px solid #2563eb !important;
   }
 
-  .priority-badge.empty {
+  :global(.priority-badge.empty) {
     background: #f3f4f6 !important;
     color: #9ca3af !important;
     border: 2px solid #d1d5db !important;
