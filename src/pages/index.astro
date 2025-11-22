@@ -2,6 +2,7 @@
 // index.astro - グルメサポートメインページ
 import GourmetChat from '../components/GourmetChat.astro';
 import ShopCardList from '../components/ShopCardList.astro';
+import ReservationModal from '../components/ReservationModal.astro';
 
 // APIベースURL（Cloud Runのエンドポイント）
 // 本番環境では環境変数から取得
@@ -162,5 +163,8 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
       素敵なグルメ体験をお楽しみください ✨
     </footer>
   </div>
+
+  <!-- 予約依頼モーダル -->
+  <ReservationModal apiBaseUrl={apiBaseUrl} />
 </body>
 </html>

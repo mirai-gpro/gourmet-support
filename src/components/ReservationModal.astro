@@ -1,0 +1,816 @@
+---
+// ReservationModal.astro - 予約依頼モーダル
+export interface Props {
+  apiBaseUrl?: string;
+}
+
+const { apiBaseUrl = '' } = Astro.props;
+---
+
+<div class="reservation-modal-overlay" id="reservationModalOverlay">
+  <div class="reservation-modal" id="reservationModal">
+    <div class="modal-header">
+      <h2>📞 予約依頼</h2>
+      <button class="close-btn" id="closeReservationModal">&times;</button>
+    </div>
+
+    <div class="modal-body">
+      <!-- 店舗選択エリア -->
+      <div class="shop-selection-area">
+        <div class="section-header">
+          <h3>🏆 お店を選択</h3>
+          <p class="selection-guide" id="selectionGuide">優先順にクリックしてください（最大3件）</p>
+          <button class="reset-btn" id="resetSelection">やり直し</button>
+        </div>
+        <div class="shop-list-compact" id="shopListCompact">
+          <!-- 店舗リストはJSで動的に追加 -->
+        </div>
+        <p class="priority-note">
+          ℹ️ ①→②→③の順で電話します。予約成立時点で終了します。
+        </p>
+      </div>
+
+      <!-- 共通設定エリア -->
+      <div class="common-settings" id="commonSettings">
+        <h3>📋 予約内容</h3>
+
+        <div class="form-row">
+          <label>👥 人数</label>
+          <select id="guestCount">
+            <option value="1">1名</option>
+            <option value="2" selected>2名</option>
+            <option value="3">3名</option>
+            <option value="4">4名</option>
+            <option value="5">5名</option>
+            <option value="6">6名</option>
+            <option value="7">7名</option>
+            <option value="8">8名</option>
+            <option value="9">9名</option>
+            <option value="10">10名以上</option>
+          </select>
+        </div>
+
+        <div class="form-row">
+          <label>📅 希望日</label>
+          <input type="date" id="reservationDate" />
+        </div>
+
+        <div class="form-row">
+          <label>⏰ 開始時間</label>
+          <select id="startTime">
+            <option value="">選択してください</option>
+            <option value="11:00">11:00</option>
+            <option value="11:30">11:30</option>
+            <option value="12:00">12:00</option>
+            <option value="12:30">12:30</option>
+            <option value="13:00">13:00</option>
+            <option value="13:30">13:30</option>
+            <option value="17:00">17:00</option>
+            <option value="17:30">17:30</option>
+            <option value="18:00" selected>18:00</option>
+            <option value="18:30">18:30</option>
+            <option value="19:00">19:00</option>
+            <option value="19:30">19:30</option>
+            <option value="20:00">20:00</option>
+            <option value="20:30">20:30</option>
+            <option value="21:00">21:00</option>
+            <option value="21:30">21:30</option>
+          </select>
+        </div>
+
+        <div class="form-row time-flexibility">
+          <label>⏱️ 時間の許容範囲</label>
+          <div class="radio-group">
+            <label class="radio-label">
+              <input type="radio" name="timeFlexibility" value="exact" checked />
+              <span>開始時間優先</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="timeFlexibility" value="30" />
+              <span>+30分まで</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="timeFlexibility" value="60" />
+              <span>+60分まで</span>
+            </label>
+            <label class="radio-label">
+              <input type="radio" name="timeFlexibility" value="90" />
+              <span>+90分まで</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>🪑 席の希望</label>
+          <div class="checkbox-group">
+            <label class="checkbox-label">
+              <input type="checkbox" name="seatType" value="table" checked />
+              <span>テーブル席</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="seatType" value="counter" />
+              <span>カウンター席</span>
+            </label>
+            <label class="checkbox-label">
+              <input type="checkbox" name="seatType" value="private" />
+              <span>個室</span>
+            </label>
+          </div>
+        </div>
+
+        <div class="form-row">
+          <label>📝 その他の希望</label>
+          <textarea id="otherRequests" placeholder="誕生日ケーキ、アレルギー対応、禁煙席など"></textarea>
+        </div>
+      </div>
+
+      <!-- 選択済み店舗の個別設定 -->
+      <div class="selected-shops-detail" id="selectedShopsDetail">
+        <!-- 選択した店舗の詳細設定がここに表示される -->
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="cancel-btn" id="cancelReservation">キャンセル</button>
+      <button class="submit-btn" id="submitReservation" disabled>
+        📞 予約依頼を開始する
+      </button>
+    </div>
+  </div>
+</div>
+
+<style>
+  .reservation-modal-overlay {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    justify-content: center;
+    align-items: center;
+    padding: 20px;
+  }
+
+  .reservation-modal-overlay.active {
+    display: flex;
+  }
+
+  .reservation-modal {
+    background: white;
+    border-radius: 20px;
+    max-width: 600px;
+    width: 100%;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 24px;
+    border-bottom: 1px solid #e5e7eb;
+    position: sticky;
+    top: 0;
+    background: white;
+    z-index: 10;
+    border-radius: 20px 20px 0 0;
+  }
+
+  .modal-header h2 {
+    margin: 0;
+    font-size: 20px;
+    font-weight: 700;
+  }
+
+  .close-btn {
+    background: none;
+    border: none;
+    font-size: 28px;
+    cursor: pointer;
+    color: #6b7280;
+    line-height: 1;
+    padding: 0;
+  }
+
+  .close-btn:hover {
+    color: #1f2937;
+  }
+
+  .modal-body {
+    padding: 24px;
+  }
+
+  /* 店舗選択エリア */
+  .shop-selection-area {
+    margin-bottom: 24px;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .section-header h3 {
+    margin: 0;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .selection-guide {
+    margin: 0;
+    font-size: 13px;
+    color: #6b7280;
+    flex: 1;
+  }
+
+  .reset-btn {
+    background: #f3f4f6;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    color: #6b7280;
+  }
+
+  .reset-btn:hover {
+    background: #e5e7eb;
+    color: #1f2937;
+  }
+
+  .shop-list-compact {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .shop-item-compact {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px 16px;
+    background: #f9fafb;
+    border: 2px solid #e5e7eb;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+  }
+
+  .shop-item-compact.unselected {
+    opacity: 0.6;
+  }
+
+  .shop-item-compact.selected {
+    background: #fef3c7;
+    border-color: #f59e0b;
+    opacity: 1;
+  }
+
+  .shop-item-compact:hover:not(.max-reached) {
+    border-color: #f59e0b;
+    opacity: 1;
+  }
+
+  .shop-item-compact.max-reached:not(.selected) {
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+
+  .priority-badge {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #f59e0b;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+
+  .priority-badge.empty {
+    background: #d1d5db;
+    color: #9ca3af;
+  }
+
+  .shop-info-compact {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .shop-name-compact {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 2px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .shop-meta-compact {
+    font-size: 11px;
+    color: #6b7280;
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .priority-note {
+    margin: 12px 0 0;
+    padding: 10px 12px;
+    background: #eff6ff;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #1e40af;
+  }
+
+  /* 共通設定エリア */
+  .common-settings {
+    background: #f9fafb;
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .common-settings h3 {
+    margin: 0 0 16px;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .form-row {
+    margin-bottom: 16px;
+  }
+
+  .form-row:last-child {
+    margin-bottom: 0;
+  }
+
+  .form-row label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 6px;
+    color: #374151;
+  }
+
+  .form-row select,
+  .form-row input[type="date"],
+  .form-row textarea {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    background: white;
+  }
+
+  .form-row select:focus,
+  .form-row input:focus,
+  .form-row textarea:focus {
+    outline: none;
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+  }
+
+  .form-row textarea {
+    resize: vertical;
+    min-height: 60px;
+  }
+
+  /* ラジオボタングループ */
+  .radio-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .radio-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: white;
+    border: 1px solid #d1d5db;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+
+  .radio-label:has(input:checked) {
+    background: #fef3c7;
+    border-color: #f59e0b;
+  }
+
+  .radio-label input {
+    margin: 0;
+  }
+
+  /* チェックボックスグループ */
+  .checkbox-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .checkbox-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: white;
+    border: 1px solid #d1d5db;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+
+  .checkbox-label:has(input:checked) {
+    background: #fef3c7;
+    border-color: #f59e0b;
+  }
+
+  .checkbox-label input {
+    margin: 0;
+  }
+
+  /* 選択済み店舗詳細 */
+  .selected-shops-detail {
+    display: none;
+  }
+
+  .selected-shops-detail.has-selection {
+    display: block;
+  }
+
+  .shop-detail-card {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+
+  .shop-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+
+  .shop-detail-badge {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    background: #f59e0b;
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 12px;
+  }
+
+  .shop-detail-name {
+    font-weight: 600;
+    font-size: 14px;
+  }
+
+  .use-common-toggle {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #6b7280;
+  }
+
+  /* モーダルフッター */
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 12px;
+    padding: 16px 24px;
+    border-top: 1px solid #e5e7eb;
+    position: sticky;
+    bottom: 0;
+    background: white;
+    border-radius: 0 0 20px 20px;
+  }
+
+  .cancel-btn {
+    padding: 12px 24px;
+    background: #f3f4f6;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    color: #6b7280;
+  }
+
+  .cancel-btn:hover {
+    background: #e5e7eb;
+  }
+
+  .submit-btn {
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    color: white;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+    transition: all 0.2s;
+  }
+
+  .submit-btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(245, 158, 11, 0.4);
+  }
+
+  .submit-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  /* レスポンシブ */
+  @media (max-width: 480px) {
+    .reservation-modal {
+      max-height: 100vh;
+      border-radius: 0;
+    }
+
+    .modal-header {
+      border-radius: 0;
+    }
+
+    .modal-footer {
+      border-radius: 0;
+    }
+
+    .radio-group,
+    .checkbox-group {
+      flex-direction: column;
+    }
+
+    .radio-label,
+    .checkbox-label {
+      width: 100%;
+    }
+  }
+</style>
+
+<script>
+  interface ShopData {
+    name: string;
+    category?: string;
+    rating?: number;
+    location?: string;
+    priceRange?: string;
+    image?: string;
+  }
+
+  interface SelectedShop extends ShopData {
+    priority: number;
+    useCommonSettings: boolean;
+    customSettings?: {
+      guestCount?: number;
+      date?: string;
+      startTime?: string;
+      timeFlexibility?: string;
+      seatTypes?: string[];
+      otherRequests?: string;
+    };
+  }
+
+  class ReservationModal {
+    private overlay: HTMLElement;
+    private modal: HTMLElement;
+    private shopListContainer: HTMLElement;
+    private selectedShopsDetail: HTMLElement;
+    private submitBtn: HTMLButtonElement;
+    private selectionGuide: HTMLElement;
+
+    private shops: ShopData[] = [];
+    private selectedShops: SelectedShop[] = [];
+    private maxSelection = 3;
+
+    constructor() {
+      this.overlay = document.getElementById('reservationModalOverlay')!;
+      this.modal = document.getElementById('reservationModal')!;
+      this.shopListContainer = document.getElementById('shopListCompact')!;
+      this.selectedShopsDetail = document.getElementById('selectedShopsDetail')!;
+      this.submitBtn = document.getElementById('submitReservation') as HTMLButtonElement;
+      this.selectionGuide = document.getElementById('selectionGuide')!;
+
+      this.initEventListeners();
+      this.setDefaultDate();
+    }
+
+    private initEventListeners() {
+      // 閉じるボタン
+      document.getElementById('closeReservationModal')?.addEventListener('click', () => this.close());
+      document.getElementById('cancelReservation')?.addEventListener('click', () => this.close());
+
+      // オーバーレイクリックで閉じる
+      this.overlay.addEventListener('click', (e) => {
+        if (e.target === this.overlay) this.close();
+      });
+
+      // やり直しボタン
+      document.getElementById('resetSelection')?.addEventListener('click', () => this.resetSelection());
+
+      // 送信ボタン
+      this.submitBtn.addEventListener('click', () => this.submitReservation());
+
+      // ESCキーで閉じる
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && this.overlay.classList.contains('active')) {
+          this.close();
+        }
+      });
+    }
+
+    private setDefaultDate() {
+      const dateInput = document.getElementById('reservationDate') as HTMLInputElement;
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      dateInput.value = tomorrow.toISOString().split('T')[0];
+      dateInput.min = new Date().toISOString().split('T')[0];
+    }
+
+    open(shops: ShopData[]) {
+      this.shops = shops;
+      this.selectedShops = [];
+      this.renderShopList();
+      this.updateSubmitButton();
+      this.overlay.classList.add('active');
+      document.body.style.overflow = 'hidden';
+    }
+
+    close() {
+      this.overlay.classList.remove('active');
+      document.body.style.overflow = '';
+    }
+
+    private renderShopList() {
+      this.shopListContainer.innerHTML = '';
+
+      this.shops.forEach((shop, index) => {
+        const selectedIndex = this.selectedShops.findIndex(s => s.name === shop.name);
+        const isSelected = selectedIndex !== -1;
+        const priority = isSelected ? selectedIndex + 1 : 0;
+        const isMaxReached = this.selectedShops.length >= this.maxSelection && !isSelected;
+
+        const item = document.createElement('div');
+        item.className = `shop-item-compact ${isSelected ? 'selected' : 'unselected'} ${isMaxReached ? 'max-reached' : ''}`;
+        item.dataset.shopIndex = index.toString();
+
+        item.innerHTML = `
+          <div class="priority-badge ${!isSelected ? 'empty' : ''}">
+            ${isSelected ? this.getPriorityLabel(priority) : '-'}
+          </div>
+          <div class="shop-info-compact">
+            <div class="shop-name-compact">${shop.name}</div>
+            <div class="shop-meta-compact">
+              ${shop.rating ? `<span>⭐${shop.rating}</span>` : ''}
+              ${shop.location ? `<span>${this.truncateLocation(shop.location)}</span>` : ''}
+              ${shop.priceRange ? `<span>${shop.priceRange}</span>` : ''}
+            </div>
+          </div>
+        `;
+
+        item.addEventListener('click', () => this.toggleShopSelection(index));
+        this.shopListContainer.appendChild(item);
+      });
+
+      this.updateSelectionGuide();
+    }
+
+    private getPriorityLabel(priority: number): string {
+      const labels = ['', '①', '②', '③'];
+      return labels[priority] || priority.toString();
+    }
+
+    private truncateLocation(location: string): string {
+      if (location.length > 15) {
+        return location.substring(0, 15) + '...';
+      }
+      return location;
+    }
+
+    private toggleShopSelection(shopIndex: number) {
+      const shop = this.shops[shopIndex];
+      const existingIndex = this.selectedShops.findIndex(s => s.name === shop.name);
+
+      if (existingIndex !== -1) {
+        // 選択解除
+        this.selectedShops.splice(existingIndex, 1);
+      } else if (this.selectedShops.length < this.maxSelection) {
+        // 新規選択
+        this.selectedShops.push({
+          ...shop,
+          priority: this.selectedShops.length + 1,
+          useCommonSettings: true
+        });
+      }
+
+      this.renderShopList();
+      this.updateSubmitButton();
+    }
+
+    private resetSelection() {
+      this.selectedShops = [];
+      this.renderShopList();
+      this.updateSubmitButton();
+    }
+
+    private updateSelectionGuide() {
+      const remaining = this.maxSelection - this.selectedShops.length;
+      if (this.selectedShops.length === 0) {
+        this.selectionGuide.textContent = '優先順にクリックしてください（最大3件）';
+      } else if (remaining > 0) {
+        this.selectionGuide.textContent = `あと${remaining}件選択できます`;
+      } else {
+        this.selectionGuide.textContent = '選択完了（変更するには店舗をクリック）';
+      }
+    }
+
+    private updateSubmitButton() {
+      this.submitBtn.disabled = this.selectedShops.length === 0;
+    }
+
+    private getFormData() {
+      return {
+        guestCount: (document.getElementById('guestCount') as HTMLSelectElement).value,
+        date: (document.getElementById('reservationDate') as HTMLInputElement).value,
+        startTime: (document.getElementById('startTime') as HTMLSelectElement).value,
+        timeFlexibility: (document.querySelector('input[name="timeFlexibility"]:checked') as HTMLInputElement)?.value,
+        seatTypes: Array.from(document.querySelectorAll('input[name="seatType"]:checked'))
+          .map(el => (el as HTMLInputElement).value),
+        otherRequests: (document.getElementById('otherRequests') as HTMLTextAreaElement).value
+      };
+    }
+
+    private submitReservation() {
+      const formData = this.getFormData();
+      const reservationData = {
+        shops: this.selectedShops.map((shop, index) => ({
+          ...shop,
+          priority: index + 1,
+          settings: shop.useCommonSettings ? formData : shop.customSettings
+        })),
+        commonSettings: formData
+      };
+
+      console.log('[ReservationModal] 予約依頼データ:', reservationData);
+
+      // カスタムイベントを発火
+      const event = new CustomEvent('reservationSubmit', {
+        detail: reservationData
+      });
+      document.dispatchEvent(event);
+
+      // モーダルを閉じる
+      this.close();
+
+      // TODO: 実際の予約処理を実装
+      alert('予約依頼を受け付けました。\n\n選択されたお店:\n' +
+        this.selectedShops.map((s, i) => `${i + 1}. ${s.name}`).join('\n') +
+        '\n\n（この機能は現在開発中です）');
+    }
+  }
+
+  // グローバルに公開
+  (window as any).ReservationModal = ReservationModal;
+
+  // 初期化
+  document.addEventListener('DOMContentLoaded', () => {
+    const modal = new ReservationModal();
+    (window as any).reservationModal = modal;
+
+    // カスタムイベントをリッスン
+    document.addEventListener('openReservationModal', ((event: CustomEvent) => {
+      if (event.detail && event.detail.shops) {
+        modal.open(event.detail.shops);
+      }
+    }) as EventListener);
+  });
+</script>
