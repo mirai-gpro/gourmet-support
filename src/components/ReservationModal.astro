@@ -10,7 +10,7 @@ const { apiBaseUrl = '' } = Astro.props;
 <div class="reservation-modal-overlay" id="reservationModalOverlay">
   <div class="reservation-modal" id="reservationModal">
     <div class="modal-header">
-      <h2>📞 予約依頼</h2>
+      <h2>&#128222; 予約依頼</h2>
       <button class="close-btn" id="closeReservationModal">&times;</button>
     </div>
 
@@ -18,7 +18,7 @@ const { apiBaseUrl = '' } = Astro.props;
       <!-- 店舗選択エリア -->
       <div class="shop-selection-area">
         <div class="section-header">
-          <h3>🏆 お店を選択</h3>
+          <h3>&#127942; お店を選択</h3>
           <p class="selection-guide" id="selectionGuide">優先順にクリックしてください（最大3件）</p>
           <button class="reset-btn" id="resetSelection">やり直し</button>
         </div>
@@ -26,16 +26,16 @@ const { apiBaseUrl = '' } = Astro.props;
           <!-- 店舗リストはJSで動的に追加 -->
         </div>
         <p class="priority-note">
-          ℹ️ ①→②→③の順で電話します。予約成立時点で終了します。
+          &#8505; ①→②→③の順で電話します。予約成立時点で終了します。
         </p>
       </div>
 
       <!-- 共通設定エリア -->
       <div class="common-settings" id="commonSettings">
-        <h3>📋 予約内容</h3>
+        <h3>&#128203; 予約内容</h3>
 
         <div class="form-row">
-          <label>👥 人数</label>
+          <label>&#128101; 人数</label>
           <select id="guestCount">
             <option value="1">1名</option>
             <option value="2" selected>2名</option>
@@ -51,12 +51,12 @@ const { apiBaseUrl = '' } = Astro.props;
         </div>
 
         <div class="form-row">
-          <label>📅 希望日</label>
+          <label>&#128197; 希望日</label>
           <input type="date" id="reservationDate" />
         </div>
 
         <div class="form-row">
-          <label>⏰ 開始時間</label>
+          <label>&#9200; 開始時間</label>
           <select id="startTime">
             <option value="">選択してください</option>
             <option value="11:00">11:00</option>
@@ -79,7 +79,7 @@ const { apiBaseUrl = '' } = Astro.props;
         </div>
 
         <div class="form-row time-flexibility">
-          <label>⏱️ 時間の許容範囲</label>
+          <label>&#9201; 時間の許容範囲</label>
           <div class="radio-group">
             <label class="radio-label">
               <input type="radio" name="timeFlexibility" value="exact" checked />
@@ -101,7 +101,7 @@ const { apiBaseUrl = '' } = Astro.props;
         </div>
 
         <div class="form-row">
-          <label>🪑 席の希望</label>
+          <label>&#129681; 席の希望</label>
           <div class="checkbox-group">
             <label class="checkbox-label">
               <input type="checkbox" name="seatType" value="table" checked />
@@ -119,7 +119,7 @@ const { apiBaseUrl = '' } = Astro.props;
         </div>
 
         <div class="form-row">
-          <label>📝 その他の希望</label>
+          <label>&#128221; その他の希望</label>
           <textarea id="otherRequests" placeholder="誕生日ケーキ、アレルギー対応、禁煙席など"></textarea>
         </div>
       </div>
@@ -133,7 +133,7 @@ const { apiBaseUrl = '' } = Astro.props;
     <div class="modal-footer">
       <button class="cancel-btn" id="cancelReservation">キャンセル</button>
       <button class="submit-btn" id="submitReservation" disabled>
-        📞 予約依頼を開始する
+        &#128222; 予約依頼を開始する
       </button>
     </div>
   </div>
