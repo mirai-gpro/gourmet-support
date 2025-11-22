@@ -276,34 +276,92 @@ def search_hotpepper(shop_name: str, area: str = '') -> str:
         return None
 
 # ========================================
+# Google Geocoding API 連携
+# ========================================
+
+def geocode_area(area: str) -> dict:
+    """
+    エリア名を座標に変換（Google Geocoding API）
+
+    Args:
+        area: エリア名（例: "ワイキキ", "麻布十番"）
+
+    Returns:
+        {'lat': float, 'lng': float} または None
+    """
+    if not GOOGLE_PLACES_API_KEY:
+        return None
+
+    # まずAREA_DATAにあればそれを使う（APIコール節約）
+    if area in AREA_DATA:
+        area_info = AREA_DATA[area]
+        return {'lat': area_info['lat'], 'lng': area_info['lng']}
+
+    try:
+        url = 'https://maps.googleapis.com/maps/api/geocode/json'
+        params = {
+            'address': area,
+            'key': GOOGLE_PLACES_API_KEY,
+            'language': 'ja'
+        }
+
+        response = requests.get(url, params=params, timeout=10)
+        data = response.json()
+
+        if data.get('status') == 'OK' and data.get('results'):
+            location = data['results'][0]['geometry']['location']
+            logger.info(f"[Geocoding] {area} -> ({location['lat']}, {location['lng']})")
+            return {'lat': location['lat'], 'lng': location['lng']}
+        else:
+            logger.warning(f"[Geocoding] 変換失敗: {area} - {data.get('status')}")
+            return None
+
+    except Exception as e:
+        logger.error(f"[Geocoding] エラー: {e}")
+        return None
+
+
+def calculate_distance(lat1: float, lng1: float, lat2: float, lng2: float) -> float:
+    """
+    2点間の距離を計算（km）- Haversine formula
+    """
+    import math
+    R = 6371  # 地球の半径（km）
+
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lng = math.radians(lng2 - lng1)
+
+    a = math.sin(delta_lat/2)**2 + math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lng/2)**2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+    return R * c
+
+
+# ========================================
 # Google Places API 連携
 # ========================================
 
-def search_place(shop_name: str, area: str = '') -> dict:
+def search_place(shop_name: str, area: str = '', area_coords: dict = None) -> dict:
     """
     Google Places APIで店舗を検索
-    
+
     Args:
         shop_name: 店舗名
-        area: エリア名（例: "恵比寿"）
-    
+        area: エリア名（例: "恵比寿", "ワイキキ"）
+        area_coords: エリアの座標 {'lat': float, 'lng': float}
+
     Returns:
         店舗情報の辞書、または None
     """
     if not GOOGLE_PLACES_API_KEY:
         logger.warning("[Places API] APIキーが設定されていません")
         return None
-    
-    # エリアデータを取得
-    area_info = AREA_DATA.get(area, {})
-    pref = area_info.get('pref', '')
-    
-    # 検索クエリを構築（都道府県名を追加）
-    if pref:
-        query = f"{shop_name} {area} {pref}".strip()
-    else:
-        query = f"{shop_name} {area}".strip()
-    
+
+    # 検索クエリを構築
+    query = f"{shop_name} {area}".strip()
+
     try:
         search_url = 'https://maps.googleapis.com/maps/api/place/textsearch/json'
         params = {
@@ -313,15 +371,10 @@ def search_place(shop_name: str, area: str = '') -> dict:
             'type': 'restaurant'
         }
 
-        # エリアの座標があれば位置バイアスを追加（日本国内のエリア）
-        if 'lat' in area_info and 'lng' in area_info:
-            params['location'] = f"{area_info['lat']},{area_info['lng']}"
-            params['radius'] = 3000  # 3km以内
-            params['region'] = 'jp'  # 日本国内エリアの場合のみ
-        elif area_info:
-            # AREA_DATAに登録済み（日本国内）だが座標がない場合
-            params['region'] = 'jp'
-        # 海外や不明なエリアの場合は地域制限なし
+        # 座標があれば位置バイアスを追加（世界中どこでも対応）
+        if area_coords:
+            params['location'] = f"{area_coords['lat']},{area_coords['lng']}"
+            params['radius'] = 5000  # 5km以内
         
         logger.info(f"[Places API] 検索クエリ: {query}")
         
@@ -352,6 +405,10 @@ def search_place(shop_name: str, area: str = '') -> dict:
         
         maps_url = f"https://www.google.com/maps/place/?q=place_id:{place_id}"
         
+        # 店舗の座標を取得
+        geometry = place.get('geometry', {})
+        location = geometry.get('location', {})
+
         result = {
             'place_id': place_id,
             'name': place.get('name'),
@@ -359,7 +416,9 @@ def search_place(shop_name: str, area: str = '') -> dict:
             'user_ratings_total': place.get('user_ratings_total'),
             'formatted_address': place.get('formatted_address'),
             'photo_url': photo_url,
-            'maps_url': maps_url
+            'maps_url': maps_url,
+            'lat': location.get('lat'),
+            'lng': location.get('lng')
         }
         
         logger.info(f"[Places API] 取得成功: {result['name']}")
@@ -377,73 +436,49 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
     """
     ショップリストにGoogle Places APIのデータを追加
     Places APIで見つからない店舗は除外（ハルシネーション対策）
+    座標ベースで距離検証（世界中どこでも対応）
     """
     enriched_shops = []
-    
-    # エリアデータを取得
-    area_info = AREA_DATA.get(area, {})
-    pref = area_info.get('pref', '')
-    
+
+    # エリアの座標を取得（Geocoding API）
+    area_coords = None
+    if area:
+        area_coords = geocode_area(area)
+        if area_coords:
+            logger.info(f"[Enrich] エリア座標: {area} -> ({area_coords['lat']}, {area_coords['lng']})")
+        else:
+            logger.warning(f"[Enrich] エリア座標取得失敗: {area}")
+
+    # 距離の閾値（km）- これより遠い店舗は除外
+    MAX_DISTANCE_KM = 50
+
     for shop in shops:
         shop_name = shop.get('name', '')
-        
+
         if not shop_name:
             continue
-        
-        place_data = search_place(shop_name, area)
-        
+
+        place_data = search_place(shop_name, area, area_coords)
+
         # Places APIで見つからない店舗は除外
         if not place_data:
             logger.warning(f"[Places API] 店舗が見つからないため除外: {shop_name}")
             continue
-        
-        # 住所検証: 海外都市か日本国内かで判定方法を変える
-        address = place_data.get('formatted_address', '')
-        address_lower = address.lower()
-        logger.info(f"[Places API] 住所検証: shop={shop_name}, area={area}, address={address}")
 
-        # 海外都市名マッピングにあるか確認
-        if area and area in CITY_NAME_MAPPING:
-            # 海外検索: 都市名の英語バリエーションが住所に含まれているかチェック
-            english_variants = CITY_NAME_MAPPING[area]
-            area_matched = False
-            for variant in english_variants:
-                if variant.lower() in address_lower:
-                    area_matched = True
-                    logger.info(f"[Places API] 海外マッチ: {area} -> {variant} in {address}")
-                    break
+        # 座標ベースの距離検証
+        if area_coords and place_data.get('lat') and place_data.get('lng'):
+            distance = calculate_distance(
+                area_coords['lat'], area_coords['lng'],
+                place_data['lat'], place_data['lng']
+            )
+            logger.info(f"[Places API] 距離検証: {shop_name} - {distance:.1f}km from {area}")
 
-            if not area_matched:
-                logger.warning(f"[Places API] 海外エリア不一致のため除外: {shop_name} (検索: {area}, 住所: {address})")
+            if distance > MAX_DISTANCE_KM:
+                logger.warning(f"[Places API] 距離超過のため除外: {shop_name} ({distance:.1f}km > {MAX_DISTANCE_KM}km)")
                 continue
         else:
-            # 日本国内検索: 住所が日本かどうかをチェック
-            # 日本の都道府県名リスト（日本語・英語）
-            japan_indicators = [
-                'japan', '日本',
-                '東京', 'tokyo', '神奈川', 'kanagawa', '埼玉', 'saitama',
-                '千葉', 'chiba', '大阪', 'osaka', '京都', 'kyoto',
-                '兵庫', 'hyogo', '愛知', 'aichi', '福岡', 'fukuoka',
-                '北海道', 'hokkaido', '宮城', 'miyagi', '広島', 'hiroshima',
-                '静岡', 'shizuoka', '新潟', 'niigata', '長野', 'nagano',
-                '石川', 'ishikawa', '沖縄', 'okinawa', '奈良', 'nara',
-                '滋賀', 'shiga', '岡山', 'okayama', '熊本', 'kumamoto',
-                '鹿児島', 'kagoshima', '三重', 'mie', '岐阜', 'gifu',
-                '群馬', 'gunma', '栃木', 'tochigi', '茨城', 'ibaraki',
-                '山梨', 'yamanashi', '福島', 'fukushima', '青森', 'aomori',
-                '岩手', 'iwate', '秋田', 'akita', '山形', 'yamagata',
-                '富山', 'toyama', '福井', 'fukui', '和歌山', 'wakayama',
-                '鳥取', 'tottori', '島根', 'shimane', '山口', 'yamaguchi',
-                '徳島', 'tokushima', '香川', 'kagawa', '愛媛', 'ehime',
-                '高知', 'kochi', '佐賀', 'saga', '長崎', 'nagasaki',
-                '大分', 'oita', '宮崎', 'miyazaki'
-            ]
-
-            is_japan = any(ind in address or ind in address_lower for ind in japan_indicators)
-
-            if not is_japan:
-                logger.warning(f"[Places API] 日本国外のため除外: {shop_name} (住所: {address})")
-                continue
+            # 座標が取得できない場合はログのみ（除外しない）
+            logger.warning(f"[Places API] 座標検証スキップ: {shop_name} (座標なし)")
         
         # データを追加
         if place_data.get('photo_url'):
@@ -534,13 +569,28 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
 def extract_area_from_text(text: str) -> str:
     """
     テキストからエリア名を抽出
-    海外都市（CITY_NAME_MAPPING）と日本のエリア（AREA_DATA）両方をチェック
+    「〜の」「〜で」「〜にある」などのパターンで地名を抽出
     """
-    # 海外都市と日本のエリアを統合（長い名前を先にチェックして部分一致を防ぐ）
-    all_areas = list(CITY_NAME_MAPPING.keys()) + list(AREA_DATA.keys())
-    areas = sorted(set(all_areas), key=len, reverse=True)
+    import re
 
-    for area in areas:
+    # パターン1: 「XXXの」「XXXで」「XXXにある」
+    patterns = [
+        r'([ぁ-んァ-ン一-龥a-zA-Z]{2,10})[のでにへ]',  # 麻布十番の、ワイキキで
+        r'([ぁ-んァ-ン一-龥a-zA-Z]{2,10})(?:にある|周辺|エリア|近く)',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            area = match.group(1)
+            # 除外ワード（料理名など）
+            exclude = ['イタリアン', 'フレンチ', 'ラーメン', '寿司', '焼肉', '中華', '和食', '洋食', '居酒屋', 'カフェ', 'バー']
+            if area not in exclude:
+                return area
+
+    # パターン2: 既知のエリア名（フォールバック）
+    known_areas = list(CITY_NAME_MAPPING.keys()) + list(AREA_DATA.keys())
+    for area in sorted(known_areas, key=len, reverse=True):
         if area in text:
             return area
 
