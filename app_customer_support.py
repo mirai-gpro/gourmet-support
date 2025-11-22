@@ -487,21 +487,29 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
 
 def extract_area_from_text(text: str) -> str:
     """
-    テキストからエリア名を抽出
+    テキストからエリア名を抽出（Geocoding APIで動的に検証）
     """
-    areas = [
-        '恵比寿', '渋谷', '新宿', '池袋', '銀座', '六本木', '表参道', '原宿',
-        '品川', '目黒', '五反田', '大崎', '東京', '有楽町', '秋葉原', '上野',
-        '浅草', '押上', '錦糸町', '亀戸', '北千住', '赤羽', '中野', '高円寺',
-        '吉祥寺', '三鷹', '立川', '八王子', '町田', '横浜', '川崎', '大宮',
-        '浦和', '千葉', '船橋', '柏', '東陽町', '門前仲町', '豊洲', '月島',
-        '代官山', '中目黒', '自由が丘', '二子玉川', '下北沢', '三軒茶屋'
+    import re
+
+    # 「〇〇の」「〇〇で」「〇〇にある」などのパターンでエリア候補を抽出
+    patterns = [
+        r'([ァ-ヴー一-龥a-zA-Z]{2,10})の[ァ-ヴー一-龥a-zA-Z]',  # 「麻布十番のイタリアン」
+        r'([ァ-ヴー一-龥a-zA-Z]{2,10})で[ァ-ヴー一-龥a-zA-Z]',  # 「渋谷でランチ」
+        r'([ァ-ヴー一-龥a-zA-Z]{2,10})にある',  # 「新宿にあるお店」
+        r'([ァ-ヴー一-龥a-zA-Z]{2,10})周辺',  # 「銀座周辺」
     ]
-    
-    for area in areas:
-        if area in text:
-            return area
-    
+
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            candidate = match.group(1)
+            # Geocoding APIで検証（地名かどうか確認）
+            geo_info = get_region_from_area(candidate)
+            if geo_info and geo_info.get('region'):
+                logger.info(f"[Extract Area] エリア抽出成功: '{candidate}' from '{text}'")
+                return candidate
+
+    logger.info(f"[Extract Area] エリア抽出失敗: '{text}'")
     return ''
 
 
