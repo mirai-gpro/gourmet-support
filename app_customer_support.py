@@ -237,13 +237,18 @@ def search_place(shop_name: str, area: str = '') -> dict:
             'query': query,
             'key': GOOGLE_PLACES_API_KEY,
             'language': 'ja',
+            'region': 'jp',  # 日本国内に限定
             'type': 'restaurant'
         }
-        
+
         # エリアの座標があれば位置バイアスを追加
         if 'lat' in area_info and 'lng' in area_info:
             params['location'] = f"{area_info['lat']},{area_info['lng']}"
             params['radius'] = 3000  # 3km以内
+        else:
+            # エリア座標がない場合は東京を中心に日本全体をカバー
+            params['location'] = '35.6762,139.6503'  # 東京駅
+            params['radius'] = 50000  # 50km
         
         logger.info(f"[Places API] 検索クエリ: {query}")
         
