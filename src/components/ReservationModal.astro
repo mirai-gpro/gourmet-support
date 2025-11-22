@@ -623,6 +623,104 @@ const { apiBaseUrl = '' } = Astro.props;
     background: white;
   }
 
+  /* お店毎設定: ラジオボタングループ (インライン) */
+  :global(.radio-group-inline) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  :global(.radio-label-sm) {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    background: white;
+    border: 1px solid #d1d5db;
+    border-radius: 16px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+  }
+
+  :global(.radio-label-sm:has(input:checked)) {
+    background: #fef3c7;
+    border-color: #f59e0b;
+  }
+
+  :global(.radio-label-sm input) {
+    margin: 0;
+    width: 12px;
+    height: 12px;
+  }
+
+  /* お店毎設定: チェックボックスグループ (インライン) */
+  :global(.checkbox-group-inline) {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+
+  :global(.checkbox-label-sm) {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 5px 10px;
+    background: white;
+    border: 1px solid #d1d5db;
+    border-radius: 16px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: all 0.2s;
+  }
+
+  :global(.checkbox-label-sm:has(input:checked)) {
+    background: #fef3c7;
+    border-color: #f59e0b;
+  }
+
+  :global(.checkbox-label-sm input) {
+    margin: 0;
+    width: 12px;
+    height: 12px;
+  }
+
+  /* お店毎設定: テキストエリア + マイクボタン (小) */
+  :global(.textarea-with-mic-sm) {
+    display: flex;
+    gap: 6px;
+    align-items: flex-start;
+  }
+
+  :global(.textarea-with-mic-sm textarea) {
+    flex: 1;
+    min-height: 50px;
+  }
+
+  :global(.mic-btn-sm) {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: #10b981;
+    border: none;
+    cursor: pointer;
+    font-size: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  :global(.mic-btn-sm:hover) {
+    background: #059669;
+    transform: scale(1.05);
+  }
+
+  :global(.mic-btn-sm.recording) {
+    background: #ef4444;
+    animation: pulse-mic 1.5s infinite;
+  }
 
   /* モーダルフッター */
   .modal-footer {
@@ -923,9 +1021,11 @@ const { apiBaseUrl = '' } = Astro.props;
 
       const commonData = this.getFormData();
       const priorityLabels = ['①', '②', '③'];
+      const apiBase = (document.getElementById('reservationModalOverlay') as HTMLElement)?.dataset.apiBase || '';
 
       this.selectedShopsDetail.innerHTML = this.selectedShops.map((shop, index) => {
         const settings = shop.customSettings || commonData;
+        const seatTypes = settings.seatTypes || [];
         return `
           <div class="shop-detail-card" data-shop-index="${index}">
             <div class="shop-detail-header">
@@ -955,8 +1055,49 @@ const { apiBaseUrl = '' } = Astro.props;
                 </select>
               </div>
               <div class="form-row">
+                <label>⏱ 時間の許容範囲</label>
+                <div class="radio-group-inline">
+                  <label class="radio-label-sm">
+                    <input type="radio" name="timeFlexibility_${index}" value="exact" ${settings.timeFlexibility === 'exact' || !settings.timeFlexibility ? 'checked' : ''} />
+                    <span>開始時間優先</span>
+                  </label>
+                  <label class="radio-label-sm">
+                    <input type="radio" name="timeFlexibility_${index}" value="30" ${settings.timeFlexibility === '30' ? 'checked' : ''} />
+                    <span>+30分</span>
+                  </label>
+                  <label class="radio-label-sm">
+                    <input type="radio" name="timeFlexibility_${index}" value="60" ${settings.timeFlexibility === '60' ? 'checked' : ''} />
+                    <span>+60分</span>
+                  </label>
+                  <label class="radio-label-sm">
+                    <input type="radio" name="timeFlexibility_${index}" value="90" ${settings.timeFlexibility === '90' ? 'checked' : ''} />
+                    <span>+90分</span>
+                  </label>
+                </div>
+              </div>
+              <div class="form-row">
+                <label>🪑 席の希望</label>
+                <div class="checkbox-group-inline">
+                  <label class="checkbox-label-sm">
+                    <input type="checkbox" class="shop-seat-table" value="table" ${seatTypes.includes('table') ? 'checked' : ''} />
+                    <span>テーブル席</span>
+                  </label>
+                  <label class="checkbox-label-sm">
+                    <input type="checkbox" class="shop-seat-counter" value="counter" ${seatTypes.includes('counter') ? 'checked' : ''} />
+                    <span>カウンター席</span>
+                  </label>
+                  <label class="checkbox-label-sm">
+                    <input type="checkbox" class="shop-seat-private" value="private" ${seatTypes.includes('private') ? 'checked' : ''} />
+                    <span>個室</span>
+                  </label>
+                </div>
+              </div>
+              <div class="form-row">
                 <label>📝 その他の希望</label>
-                <textarea class="shop-other-requests" placeholder="このお店への特別なリクエスト">${settings.otherRequests || ''}</textarea>
+                <div class="textarea-with-mic-sm">
+                  <textarea class="shop-other-requests" placeholder="このお店への特別なリクエスト">${settings.otherRequests || ''}</textarea>
+                  <button type="button" class="mic-btn-sm shop-mic-btn" data-shop-index="${index}" title="音声入力">🎤</button>
+                </div>
               </div>
             </div>
           </div>
@@ -968,11 +1109,18 @@ const { apiBaseUrl = '' } = Astro.props;
       // 各フォームの変更を監視
       this.selectedShopsDetail.querySelectorAll('.shop-detail-card').forEach((card, index) => {
         const updateCustomSettings = () => {
+          const seatTypes: string[] = [];
+          if ((card.querySelector('.shop-seat-table') as HTMLInputElement)?.checked) seatTypes.push('table');
+          if ((card.querySelector('.shop-seat-counter') as HTMLInputElement)?.checked) seatTypes.push('counter');
+          if ((card.querySelector('.shop-seat-private') as HTMLInputElement)?.checked) seatTypes.push('private');
+
           this.selectedShops[index].useCommonSettings = false;
           this.selectedShops[index].customSettings = {
             guestCount: (card.querySelector('.shop-guest-count') as HTMLSelectElement)?.value,
             date: (card.querySelector('.shop-date') as HTMLInputElement)?.value,
             startTime: (card.querySelector('.shop-start-time') as HTMLSelectElement)?.value,
+            timeFlexibility: (card.querySelector(`input[name="timeFlexibility_${index}"]:checked`) as HTMLInputElement)?.value,
+            seatTypes: seatTypes,
             otherRequests: (card.querySelector('.shop-other-requests') as HTMLTextAreaElement)?.value
           };
         };
@@ -980,6 +1128,82 @@ const { apiBaseUrl = '' } = Astro.props;
           el.addEventListener('change', updateCustomSettings);
           el.addEventListener('input', updateCustomSettings);
         });
+
+        // 音声入力ボタン
+        const micBtn = card.querySelector('.shop-mic-btn') as HTMLButtonElement;
+        const textarea = card.querySelector('.shop-other-requests') as HTMLTextAreaElement;
+        if (micBtn && textarea) {
+          this.setupShopVoiceInput(micBtn, textarea, apiBase);
+        }
+      });
+    }
+
+    private setupShopVoiceInput(micBtn: HTMLButtonElement, textarea: HTMLTextAreaElement, apiBase: string) {
+      let isRecording = false;
+      let mediaRecorder: MediaRecorder | null = null;
+
+      micBtn.addEventListener('click', async () => {
+        if (isRecording) {
+          mediaRecorder?.stop();
+          isRecording = false;
+          micBtn.classList.remove('recording');
+          micBtn.textContent = '🎤';
+          return;
+        }
+
+        try {
+          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
+          const audioChunks: Blob[] = [];
+
+          mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) audioChunks.push(event.data);
+          };
+
+          mediaRecorder.onstop = async () => {
+            stream.getTracks().forEach(track => track.stop());
+            if (audioChunks.length > 0) {
+              const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+              const reader = new FileReader();
+              reader.readAsDataURL(audioBlob);
+              reader.onloadend = async () => {
+                const base64Audio = (reader.result as string).split(',')[1];
+                try {
+                  const response = await fetch(`${apiBase}/api/stt/transcribe`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ audio: base64Audio, language_code: 'ja-JP' })
+                  });
+                  const data = await response.json();
+                  if (data.success && data.transcript) {
+                    textarea.value = textarea.value ? textarea.value + '\n' + data.transcript : data.transcript;
+                    textarea.dispatchEvent(new Event('input'));
+                  }
+                } catch (e) {
+                  console.error('[VoiceInput] Error:', e);
+                }
+              };
+            }
+          };
+
+          mediaRecorder.start();
+          isRecording = true;
+          micBtn.classList.add('recording');
+          micBtn.textContent = '⏹';
+
+          // 5秒後に自動停止
+          setTimeout(() => {
+            if (isRecording && mediaRecorder?.state === 'recording') {
+              mediaRecorder.stop();
+              isRecording = false;
+              micBtn.classList.remove('recording');
+              micBtn.textContent = '🎤';
+            }
+          }, 5000);
+
+        } catch (error) {
+          console.error('[VoiceInput] Mic error:', error);
+        }
       });
     }
 
