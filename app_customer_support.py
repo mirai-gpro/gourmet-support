@@ -359,22 +359,29 @@ def search_place(shop_name: str, area: str = '', area_coords: dict = None) -> di
         logger.warning("[Places API] APIキーが設定されていません")
         return None
 
-    # 検索クエリを構築
-    query = f"{shop_name} {area}".strip()
-
     try:
         search_url = 'https://maps.googleapis.com/maps/api/place/textsearch/json'
-        params = {
-            'query': query,
-            'key': GOOGLE_PLACES_API_KEY,
-            'language': 'ja',
-            'type': 'restaurant'
-        }
 
-        # 座標があれば位置バイアスを追加（世界中どこでも対応）
+        # 座標がある場合: 店名のみで検索し、座標で絞り込む
+        # 座標がない場合: 店名+エリア名で検索
         if area_coords:
-            params['location'] = f"{area_coords['lat']},{area_coords['lng']}"
-            params['radius'] = 5000  # 5km以内
+            query = shop_name  # 店名のみ
+            params = {
+                'query': query,
+                'key': GOOGLE_PLACES_API_KEY,
+                'language': 'ja',
+                'type': 'restaurant',
+                'location': f"{area_coords['lat']},{area_coords['lng']}",
+                'radius': 3000  # 3km以内に限定
+            }
+        else:
+            query = f"{shop_name} {area}".strip()
+            params = {
+                'query': query,
+                'key': GOOGLE_PLACES_API_KEY,
+                'language': 'ja',
+                'type': 'restaurant'
+            }
         
         logger.info(f"[Places API] 検索クエリ: {query}")
         
