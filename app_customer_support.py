@@ -397,55 +397,53 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
             logger.warning(f"[Places API] 店舗が見つからないため除外: {shop_name}")
             continue
         
-        # エリア/都道府県が異なる場合は除外
-        if area:
-            address = place_data.get('formatted_address', '')
-            area_info = AREA_DATA.get(area, {})
-            pref = area_info.get('pref', '')
-            logger.info(f"[Places API] 住所検証: shop={shop_name}, area={area}, pref={pref}, address={address}")
+        # 住所検証: 海外都市か日本国内かで判定方法を変える
+        address = place_data.get('formatted_address', '')
+        address_lower = address.lower()
+        logger.info(f"[Places API] 住所検証: shop={shop_name}, area={area}, address={address}")
 
-            if pref:
-                # 日本国内: 都道府県名が住所に含まれていない場合は除外
-                # 日本語と英語両方をチェック
-                pref_en_map = {
-                    '東京': 'tokyo', '神奈川': 'kanagawa', '埼玉': 'saitama',
-                    '千葉': 'chiba', '大阪': 'osaka', '京都': 'kyoto',
-                    '兵庫': 'hyogo', '愛知': 'aichi', '福岡': 'fukuoka',
-                    '北海道': 'hokkaido'
-                }
-                pref_en = pref_en_map.get(pref, '')
-                address_lower = address.lower()
-
-                # 日本語または英語の都道府県名、または「Japan」が含まれているかチェック
-                is_japan = (pref in address or
-                           (pref_en and pref_en in address_lower) or
-                           'japan' in address_lower or
-                           '日本' in address)
-
-                if not is_japan:
-                    logger.warning(f"[Places API] 都道府県不一致のため除外: {shop_name} (検索: {pref}, 住所: {address})")
-                    continue
-            else:
-                # 海外/AREA_DATA未登録: エリア名が住所に含まれていない場合は除外
-                # 日本語→英語のマッピングも考慮
-                address_lower = address.lower()
-                area_matched = False
-
-                # まず直接マッチを確認（日本語エリア名）
-                if area in address or area.lower() in address_lower:
+        # 海外都市名マッピングにあるか確認
+        if area and area in CITY_NAME_MAPPING:
+            # 海外検索: 都市名の英語バリエーションが住所に含まれているかチェック
+            english_variants = CITY_NAME_MAPPING[area]
+            area_matched = False
+            for variant in english_variants:
+                if variant.lower() in address_lower:
                     area_matched = True
-                else:
-                    # CITY_NAME_MAPPINGで英語バリエーションを確認
-                    english_variants = CITY_NAME_MAPPING.get(area, [])
-                    for variant in english_variants:
-                        if variant.lower() in address_lower:
-                            area_matched = True
-                            logger.info(f"[Places API] 英語マッチ: {area} -> {variant} in {address}")
-                            break
+                    logger.info(f"[Places API] 海外マッチ: {area} -> {variant} in {address}")
+                    break
 
-                if not area_matched:
-                    logger.warning(f"[Places API] エリア不一致のため除外: {shop_name} (検索: {area}, 住所: {address})")
-                    continue
+            if not area_matched:
+                logger.warning(f"[Places API] 海外エリア不一致のため除外: {shop_name} (検索: {area}, 住所: {address})")
+                continue
+        else:
+            # 日本国内検索: 住所が日本かどうかをチェック
+            # 日本の都道府県名リスト（日本語・英語）
+            japan_indicators = [
+                'japan', '日本',
+                '東京', 'tokyo', '神奈川', 'kanagawa', '埼玉', 'saitama',
+                '千葉', 'chiba', '大阪', 'osaka', '京都', 'kyoto',
+                '兵庫', 'hyogo', '愛知', 'aichi', '福岡', 'fukuoka',
+                '北海道', 'hokkaido', '宮城', 'miyagi', '広島', 'hiroshima',
+                '静岡', 'shizuoka', '新潟', 'niigata', '長野', 'nagano',
+                '石川', 'ishikawa', '沖縄', 'okinawa', '奈良', 'nara',
+                '滋賀', 'shiga', '岡山', 'okayama', '熊本', 'kumamoto',
+                '鹿児島', 'kagoshima', '三重', 'mie', '岐阜', 'gifu',
+                '群馬', 'gunma', '栃木', 'tochigi', '茨城', 'ibaraki',
+                '山梨', 'yamanashi', '福島', 'fukushima', '青森', 'aomori',
+                '岩手', 'iwate', '秋田', 'akita', '山形', 'yamagata',
+                '富山', 'toyama', '福井', 'fukui', '和歌山', 'wakayama',
+                '鳥取', 'tottori', '島根', 'shimane', '山口', 'yamaguchi',
+                '徳島', 'tokushima', '香川', 'kagawa', '愛媛', 'ehime',
+                '高知', 'kochi', '佐賀', 'saga', '長崎', 'nagasaki',
+                '大分', 'oita', '宮崎', 'miyazaki'
+            ]
+
+            is_japan = any(ind in address or ind in address_lower for ind in japan_indicators)
+
+            if not is_japan:
+                logger.warning(f"[Places API] 日本国外のため除外: {shop_name} (住所: {address})")
+                continue
         
         # データを追加
         if place_data.get('photo_url'):
@@ -536,10 +534,11 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
 def extract_area_from_text(text: str) -> str:
     """
     テキストからエリア名を抽出
-    AREA_DATAのキーを使用して一貫性を保つ
+    海外都市（CITY_NAME_MAPPING）と日本のエリア（AREA_DATA）両方をチェック
     """
-    # AREA_DATAのキーを使用（長い名前を先にチェックして部分一致を防ぐ）
-    areas = sorted(AREA_DATA.keys(), key=len, reverse=True)
+    # 海外都市と日本のエリアを統合（長い名前を先にチェックして部分一致を防ぐ）
+    all_areas = list(CITY_NAME_MAPPING.keys()) + list(AREA_DATA.keys())
+    areas = sorted(set(all_areas), key=len, reverse=True)
 
     for area in areas:
         if area in text:
