@@ -324,16 +324,25 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
             logger.warning(f"[Places API] 店舗が見つからないため除外: {shop_name}")
             continue
         
-        # 都道府県が異なる場合は除外
+        # エリア/都道府県が異なる場合は除外
         if area:
             address = place_data.get('formatted_address', '')
             area_info = AREA_DATA.get(area, {})
             pref = area_info.get('pref', '')
-            
-            # 都道府県名が住所に含まれていない場合は除外
-            if pref and pref not in address:
-                logger.warning(f"[Places API] 都道府県不一致のため除外: {shop_name} (検索: {pref}, 住所: {address})")
-                continue
+
+            if pref:
+                # 日本国内: 都道府県名が住所に含まれていない場合は除外
+                if pref not in address:
+                    logger.warning(f"[Places API] 都道府県不一致のため除外: {shop_name} (検索: {pref}, 住所: {address})")
+                    continue
+            else:
+                # 海外/AREA_DATA未登録: エリア名が住所に含まれていない場合は除外
+                # 英語表記のバリエーションも考慮
+                area_lower = area.lower()
+                address_lower = address.lower()
+                if area_lower not in address_lower and area not in address:
+                    logger.warning(f"[Places API] エリア不一致のため除外: {shop_name} (検索: {area}, 住所: {address})")
+                    continue
         
         # データを追加
         if place_data.get('photo_url'):
