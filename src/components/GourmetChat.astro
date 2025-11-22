@@ -425,6 +425,15 @@ const { apiBaseUrl = '' } = Astro.props;
     let isUserInteracted = false;
     let currentShops: any[] = []; // 現在表示中のショップリスト
 
+    // 無音検出用
+    let audioContext: AudioContext | null = null;
+    let analyser: AnalyserNode | null = null;
+    let silenceTimer: number | null = null;
+    let vadCheckInterval: number | null = null;
+    let hasSpoken = false; // 音声が検出されたかどうか
+    const SILENCE_THRESHOLD = 15; // 無音判定の閾値（0-255）
+    const SILENCE_DURATION = 1500; // 無音が続いたら停止するミリ秒
+
     // ユーザーインタラクション検出
     function enableAudioPlayback() {
       if (!isUserInteracted) {
@@ -552,12 +561,47 @@ const { apiBaseUrl = '' } = Astro.props;
       }
     }
 
+    // 無音検出の停止
+    function stopVAD() {
+      if (vadCheckInterval) {
+        clearInterval(vadCheckInterval);
+        vadCheckInterval = null;
+      }
+      if (silenceTimer) {
+        clearTimeout(silenceTimer);
+        silenceTimer = null;
+      }
+      if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+      }
+      analyser = null;
+      hasSpoken = false;
+    }
+
+    // 無音検出によるオートストップ
+    function autoStopRecording() {
+      console.log('[VAD] 無音検出 - 自動停止');
+      stopVAD();
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+      }
+      if (recordingTimer) {
+        clearTimeout(recordingTimer);
+        recordingTimer = null;
+      }
+      isRecording = false;
+      micBtn.classList.remove('recording');
+      micBtn.innerHTML = '&#127908;';
+    }
+
     // 録音切り替え
     async function toggleRecording() {
       enableAudioPlayback();
       stopCurrentAudio();
 
       if (isRecording) {
+        stopVAD();
         if (mediaRecorder && mediaRecorder.state === 'recording') {
           mediaRecorder.stop();
         }
@@ -576,6 +620,40 @@ const { apiBaseUrl = '' } = Astro.props;
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
 
         audioChunks = [];
+        hasSpoken = false;
+
+        // 無音検出のセットアップ
+        audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        // 音声レベルを定期的にチェック
+        vadCheckInterval = window.setInterval(() => {
+          if (!analyser || !isRecording) return;
+
+          analyser.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+
+          if (average > SILENCE_THRESHOLD) {
+            // 音声が検出された
+            hasSpoken = true;
+            if (silenceTimer) {
+              clearTimeout(silenceTimer);
+              silenceTimer = null;
+            }
+            voiceStatus.innerHTML = '&#127908; 録音中...';
+          } else if (hasSpoken && !silenceTimer) {
+            // 音声後の無音を検出 - タイマー開始
+            voiceStatus.innerHTML = '&#127908; 認識待機中...';
+            silenceTimer = window.setTimeout(() => {
+              autoStopRecording();
+            }, SILENCE_DURATION);
+          }
+        }, 100);
 
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
@@ -584,6 +662,7 @@ const { apiBaseUrl = '' } = Astro.props;
         };
 
         mediaRecorder.onstop = async () => {
+          stopVAD();
           stream.getTracks().forEach(track => track.stop());
 
           if (recordingTimer) {
@@ -601,13 +680,14 @@ const { apiBaseUrl = '' } = Astro.props;
         isRecording = true;
         micBtn.classList.add('recording');
         micBtn.innerHTML = '&#9209;';
-        voiceStatus.innerHTML = '&#127908; 録音中... (クリックで停止)';
+        voiceStatus.innerHTML = '&#127908; 話してください...';
         voiceStatus.className = 'voice-status listening';
 
         // 55秒後に自動停止（APIの60秒制限対策）
         recordingTimer = window.setTimeout(() => {
           if (isRecording && mediaRecorder && mediaRecorder.state === 'recording') {
             console.log('[Recording] 最大録音時間に達したため自動停止');
+            stopVAD();
             mediaRecorder.stop();
             isRecording = false;
             micBtn.classList.remove('recording');
