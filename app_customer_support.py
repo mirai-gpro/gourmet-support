@@ -365,10 +365,27 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
             address = place_data.get('formatted_address', '')
             area_info = AREA_DATA.get(area, {})
             pref = area_info.get('pref', '')
+            logger.info(f"[Places API] 住所検証: shop={shop_name}, area={area}, pref={pref}, address={address}")
 
             if pref:
                 # 日本国内: 都道府県名が住所に含まれていない場合は除外
-                if pref not in address:
+                # 日本語と英語両方をチェック
+                pref_en_map = {
+                    '東京': 'tokyo', '神奈川': 'kanagawa', '埼玉': 'saitama',
+                    '千葉': 'chiba', '大阪': 'osaka', '京都': 'kyoto',
+                    '兵庫': 'hyogo', '愛知': 'aichi', '福岡': 'fukuoka',
+                    '北海道': 'hokkaido'
+                }
+                pref_en = pref_en_map.get(pref, '')
+                address_lower = address.lower()
+
+                # 日本語または英語の都道府県名、または「Japan」が含まれているかチェック
+                is_japan = (pref in address or
+                           (pref_en and pref_en in address_lower) or
+                           'japan' in address_lower or
+                           '日本' in address)
+
+                if not is_japan:
                     logger.warning(f"[Places API] 都道府県不一致のため除外: {shop_name} (検索: {pref}, 住所: {address})")
                     continue
             else:
@@ -841,6 +858,7 @@ def chat():
             original_count = len(shops)
             # エリア名を抽出
             area = extract_area_from_text(user_message)
+            logger.info(f"[Chat] 抽出エリア: '{area}' from '{user_message}'")
             # Places APIで写真を取得（存在しない店舗は除外）
             shops = enrich_shops_with_photos(shops, area)
 
