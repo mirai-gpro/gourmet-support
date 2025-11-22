@@ -40,8 +40,8 @@ const { apiBaseUrl = '' } = Astro.props;
       </button>
     </div>
     <div class="input-actions">
-      <button class="btn btn-secondary" id="finalizeBtn">
-        📋 質問要約書を作成
+      <button class="btn btn-reservation" id="reservationBtn" disabled>
+        📞 予約依頼する
       </button>
     </div>
   </div>
@@ -287,6 +287,25 @@ const { apiBaseUrl = '' } = Astro.props;
     transform: none;
   }
 
+  .btn-reservation {
+    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    color: white;
+    font-size: 13px;
+    padding: 10px 16px;
+    font-weight: 600;
+    box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+  }
+
+  .btn-reservation:hover:not(:disabled) {
+    box-shadow: 0 6px 16px rgba(245, 158, 11, 0.4);
+    transform: translateY(-1px);
+  }
+
+  .btn-reservation:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
   .btn-icon {
     padding: 10px;
     width: 40px;
@@ -389,7 +408,7 @@ const { apiBaseUrl = '' } = Astro.props;
     const sendBtn = document.getElementById('sendBtn') as HTMLButtonElement;
     const micBtn = document.getElementById('micBtn') as HTMLButtonElement;
     const speakerBtn = document.getElementById('speakerBtn') as HTMLButtonElement;
-    const finalizeBtn = document.getElementById('finalizeBtn') as HTMLButtonElement;
+    const reservationBtn = document.getElementById('reservationBtn') as HTMLButtonElement;
     const voiceStatus = document.getElementById('voiceStatus')!;
 
     // 状態
@@ -404,6 +423,7 @@ const { apiBaseUrl = '' } = Astro.props;
     let isTTSEnabled = true;
     let currentAudio: HTMLAudioElement | null = null;
     let isUserInteracted = false;
+    let currentShops: any[] = []; // 現在表示中のショップリスト
 
     // ユーザーインタラクション検出
     function enableAudioPlayback() {
@@ -801,6 +821,10 @@ const { apiBaseUrl = '' } = Astro.props;
 
         // ショップデータの有無で読み上げ内容を変える
         if (data.shops && data.shops.length > 0) {
+          // ショップデータを保存し、予約依頼ボタンを有効化
+          currentShops = data.shops;
+          reservationBtn.disabled = false;
+
           // 短い定型文を即座に再生（完了まで待つ）
           await speakTextGCP(`お待たせしました。${data.shops.length}件のお店をご案内します。`);
 
@@ -822,6 +846,10 @@ const { apiBaseUrl = '' } = Astro.props;
           // レスポンスからショップ情報をパースして抽出を試みる
           const extractedShops = extractShopsFromResponse(data.response);
           if (extractedShops.length > 0) {
+            // ショップデータを保存し、予約依頼ボタンを有効化
+            currentShops = extractedShops;
+            reservationBtn.disabled = false;
+
             // 短い定型文を即座に再生（完了まで待つ）
             await speakTextGCP(`お待たせしました。${extractedShops.length}件のお店をご案内します。`);
 
@@ -855,38 +883,18 @@ const { apiBaseUrl = '' } = Astro.props;
       }
     }
 
-    // 最終要約生成
-    async function finalizeSession() {
-      if (!confirm('会話を終了して質問要約書を作成しますか?')) {
+    // 予約依頼モーダルを開く
+    function openReservationModal() {
+      if (currentShops.length === 0) {
+        showError('お店を検索してからご利用ください。');
         return;
       }
 
-      isProcessing = true;
-      finalizeBtn.disabled = true;
-      sendBtn.disabled = true;
-      micBtn.disabled = true;
-      userInput.disabled = true;
-
-      try {
-        const loadingId = addLoadingMessage();
-
-        const response = await fetch(`${apiBase}/api/finalize`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ session_id: sessionId })
-        });
-
-        const data = await response.json();
-
-        removeLoadingMessage(loadingId);
-        showFinalSummary(data.summary);
-
-      } catch (error) {
-        console.error('完了処理エラー:', error);
-        showError('要約の生成に失敗しました。');
-        isProcessing = false;
-        finalizeBtn.disabled = false;
-      }
+      // カスタムイベントを発火してモーダルを開く
+      const event = new CustomEvent('openReservationModal', {
+        detail: { shops: currentShops }
+      });
+      document.dispatchEvent(event);
     }
 
     // メッセージ追加
@@ -983,7 +991,7 @@ const { apiBaseUrl = '' } = Astro.props;
     userInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') sendMessage();
     });
-    finalizeBtn.addEventListener('click', finalizeSession);
+    reservationBtn.addEventListener('click', openReservationModal);
 
     // 初期化実行
     initialize();
