@@ -9,12 +9,12 @@ const { apiBaseUrl = '' } = Astro.props;
 
 <div class="gourmet-chat-container" data-api-base={apiBaseUrl}>
   <div class="chat-header">
-    <h2>🍽️ グルメサポートAI</h2>
+    <h2>&#127869; グルメサポートAI</h2>
     <p>お店探しをお手伝いします</p>
   </div>
 
   <div class="voice-status stopped" id="voiceStatus">
-    🎤 音声認識: 停止中
+    &#127908; 音声認識: 停止中
   </div>
 
   <div class="chat-area" id="chatArea">
@@ -30,10 +30,10 @@ const { apiBaseUrl = '' } = Astro.props;
         disabled
       />
       <button class="btn btn-icon btn-mic" id="micBtn" title="音声入力" disabled>
-        🎤
+        &#127908;
       </button>
       <button class="btn btn-icon btn-speaker" id="speakerBtn" title="音声読み上げON" disabled>
-        🔊
+        &#128266;
       </button>
       <button class="btn" id="sendBtn" disabled>
         送信
@@ -439,9 +439,9 @@ const { apiBaseUrl = '' } = Astro.props;
       const prompt = document.createElement('div');
       prompt.className = 'click-prompt';
       prompt.innerHTML = `
-        <p>🔊</p>
+        <p>&#128266;</p>
         <p>音声を再生するには、画面をクリックしてください</p>
-        <p>🔊</p>
+        <p>&#128266;</p>
       `;
       prompt.addEventListener('click', enableAudioPlayback);
       container.style.position = 'relative';
@@ -495,7 +495,7 @@ const { apiBaseUrl = '' } = Astro.props;
       console.log('[TTS] cleanText:', cleanText.substring(0, 50) + '...', '文字数:', cleanText.length);
 
       try {
-        voiceStatus.textContent = '🔊 音声合成中...';
+        voiceStatus.innerHTML = '&#128266; 音声合成中...';
         voiceStatus.className = 'voice-status speaking';
 
         const response = await fetch(`${apiBase}/api/tts/synthesize`, {
@@ -522,7 +522,7 @@ const { apiBaseUrl = '' } = Astro.props;
           const playPromise = new Promise<void>((resolve) => {
             audio.onended = () => {
               console.log('[TTS] 音声再生完了');
-              voiceStatus.textContent = '🎤 音声認識: 停止中';
+              voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
               voiceStatus.className = 'voice-status stopped';
               currentAudio = null;
               resolve();
@@ -530,7 +530,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
             audio.onerror = () => {
               console.log('[TTS] 音声再生エラー');
-              voiceStatus.textContent = '🎤 音声認識: 停止中';
+              voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
               voiceStatus.className = 'voice-status stopped';
               resolve();
             };
@@ -541,13 +541,13 @@ const { apiBaseUrl = '' } = Astro.props;
             await playPromise; // 再生完了を待つ
           } else {
             showClickPrompt();
-            voiceStatus.textContent = '🎤 音声認識: 停止中';
+            voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
             voiceStatus.className = 'voice-status stopped';
           }
         }
       } catch (error) {
         console.error('[TTS] Error:', error);
-        voiceStatus.textContent = '🎤 音声認識: 停止中';
+        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
         voiceStatus.className = 'voice-status stopped';
       }
     }
@@ -567,7 +567,7 @@ const { apiBaseUrl = '' } = Astro.props;
         }
         isRecording = false;
         micBtn.classList.remove('recording');
-        micBtn.textContent = '🎤';
+        micBtn.innerHTML = '&#127908;';
         return;
       }
 
@@ -600,8 +600,8 @@ const { apiBaseUrl = '' } = Astro.props;
         mediaRecorder.start();
         isRecording = true;
         micBtn.classList.add('recording');
-        micBtn.textContent = '⏹️';
-        voiceStatus.textContent = '🎤 録音中... (クリックで停止)';
+        micBtn.innerHTML = '&#9209;';
+        voiceStatus.innerHTML = '&#127908; 録音中... (クリックで停止)';
         voiceStatus.className = 'voice-status listening';
 
         // 55秒後に自動停止（APIの60秒制限対策）
@@ -611,7 +611,7 @@ const { apiBaseUrl = '' } = Astro.props;
             mediaRecorder.stop();
             isRecording = false;
             micBtn.classList.remove('recording');
-            micBtn.textContent = '🎤';
+            micBtn.innerHTML = '&#127908;';
             addMessage('system', '録音時間が上限（55秒）に達したため自動停止しました');
           }
         }, MAX_RECORDING_TIME);
@@ -625,7 +625,7 @@ const { apiBaseUrl = '' } = Astro.props;
     // 音声認識
     async function transcribeAudio(audioBlob: Blob) {
       try {
-        voiceStatus.textContent = '🔄 音声認識中...';
+        voiceStatus.innerHTML = '&#128260; 音声認識中...';
         voiceStatus.className = 'voice-status';
 
         const reader = new FileReader();
@@ -647,24 +647,24 @@ const { apiBaseUrl = '' } = Astro.props;
 
           if (data.success && data.transcript) {
             userInput.value = data.transcript;
-            voiceStatus.textContent = '✅ 認識完了 - 送信中...';
+            voiceStatus.innerHTML = '&#9989; 認識完了 - 送信中...';
             voiceStatus.className = 'voice-status';
 
             // 自動送信（即座に実行）
             if (!isRecording && userInput.value.trim()) {
               await sendMessage();
             }
-            voiceStatus.textContent = '🎤 音声認識: 停止中';
+            voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
             voiceStatus.className = 'voice-status stopped';
           } else {
-            voiceStatus.textContent = '音声が認識されませんでした';
+            voiceStatus.innerHTML = '音声が認識されませんでした';
           }
         };
 
       } catch (error) {
         console.error('[STT] Error:', error);
         addMessage('system', `音声認識エラー: ${(error as Error).message}`);
-        voiceStatus.textContent = '🎤 音声認識: 停止中';
+        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
         voiceStatus.className = 'voice-status stopped';
       }
     }
@@ -678,7 +678,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
       enableAudioPlayback();
       isTTSEnabled = !isTTSEnabled;
-      speakerBtn.textContent = isTTSEnabled ? '🔊' : '🔇';
+      speakerBtn.innerHTML = isTTSEnabled ? '&#128266;' : '&#128263;';
       speakerBtn.title = isTTSEnabled ? '音声読み上げON' : '音声読み上げOFF';
       speakerBtn.className = isTTSEnabled ? 'btn btn-icon btn-speaker' : 'btn btn-icon btn-speaker disabled';
 
@@ -904,7 +904,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
       const avatar = document.createElement('div');
       avatar.className = 'message-avatar';
-      avatar.textContent = role === 'assistant' ? '🍽️' : role === 'user' ? '👤' : '⚠️';
+      avatar.innerHTML = role === 'assistant' ? '&#127869;' : role === 'user' ? '&#128100;' : '&#9888;';
 
       const contentDiv = document.createElement('div');
       contentDiv.className = 'message-content';
@@ -918,7 +918,7 @@ const { apiBaseUrl = '' } = Astro.props;
       if (summary) {
         const summaryDiv = document.createElement('div');
         summaryDiv.className = 'summary-box';
-        summaryDiv.innerHTML = `<strong>📝 内容確認</strong>${summary}`;
+        summaryDiv.innerHTML = `<strong>&#128221; 内容確認</strong>${summary}`;
         wrapper.appendChild(summaryDiv);
       }
 
@@ -936,7 +936,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
       const avatar = document.createElement('div');
       avatar.className = 'message-avatar';
-      avatar.textContent = '🍽️';
+      avatar.innerHTML = '&#127869;';
 
       const contentDiv = document.createElement('div');
       contentDiv.className = 'message-content';
@@ -965,7 +965,7 @@ const { apiBaseUrl = '' } = Astro.props;
       const summaryDiv = document.createElement('div');
       summaryDiv.className = 'final-summary';
       summaryDiv.innerHTML = `
-        <h3>📋 質問要約書</h3>
+        <h3>&#128203; 質問要約書</h3>
         <div class="final-summary-content">${summary}</div>
         <p style="margin-top: 12px; font-size: 12px; color: #6b7280;">
           担当スタッフが内容を確認し、追ってご連絡いたします。
