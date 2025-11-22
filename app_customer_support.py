@@ -772,17 +772,37 @@ def chat():
         # ========== ショップデータ処理 ==========
         # JSONパース済みのショップデータを取得
         shops = result.get('shops', [])
-        
+        response_text = result['response']
+
         if shops:
+            original_count = len(shops)
             # エリア名を抽出
             area = extract_area_from_text(user_message)
             # Places APIで写真を取得（存在しない店舗は除外）
             shops = enrich_shops_with_photos(shops, area)
-            logger.info(f"[Chat] {len(shops)}件のショップデータを返却")
+
+            # 確認済みのお店のみでレスポンステキストを再構成
+            if shops:
+                shop_list = []
+                for i, shop in enumerate(shops, 1):
+                    name = shop.get('name', '')
+                    shop_area = shop.get('area', '')
+                    description = shop.get('description', '')
+                    if shop_area:
+                        shop_list.append(f"{i}. **{name}**（{shop_area}）: {description}")
+                    else:
+                        shop_list.append(f"{i}. **{name}**: {description}")
+
+                response_text = f"ご希望に合うお店を{len(shops)}件ご紹介します。\n\n" + "\n\n".join(shop_list)
+                logger.info(f"[Chat] {len(shops)}件のショップデータを返却（元: {original_count}件）")
+            else:
+                # 全て除外された場合
+                response_text = "申し訳ございません。条件に合うお店が見つかりませんでした。別の条件でお探しいただけますか？"
+                logger.warning(f"[Chat] 全店舗が除外されました（元: {original_count}件）")
         # ========================================
-        
+
         return jsonify({
-            'response': result['response'],
+            'response': response_text,
             'summary': result['summary'],
             'shops': shops,
             'should_confirm': result['should_confirm']

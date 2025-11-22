@@ -415,19 +415,51 @@ const { apiBaseUrl = '' } = Astro.props;
 </style>
 
 <script>
-  // 食べログGoogle検索の自動処理
-  window.handleTabelogSearch = function(event, searchUrl) {
-    event.preventDefault();
-    
-    // 新しいウィンドウでGoogle検索を開く
-    const searchWindow = window.open(searchUrl, '_blank');
-    
-    if (searchWindow) {
-      // ウィンドウが開けたら、食べログリンクを探してクリック（試行）
-      // 注: クロスオリジンのため直接操作はできないが、ユーザーには検索結果が表示される
-      console.log('[Tabelog] Google検索結果を開きました');
+  // デバイス判定
+  const isMobile = () => {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) ||
+           (window.innerWidth <= 768);
+  };
+
+  // PC版: ポップアップで開く / モバイル版: 別タブで開く
+  window.openLinkPopup = function(event: Event, url: string) {
+    // モバイルの場合は通常の動作（別タブで開く）
+    if (isMobile()) {
+      return true;
     }
-    
+
+    // PCの場合はポップアップで開く
+    event.preventDefault();
+    const width = 900;
+    const height = 700;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    window.open(
+      url,
+      'shopInfoPopup',
+      `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+    );
+    return false;
+  };
+
+  // 食べログGoogle検索の自動処理
+  window.handleTabelogSearch = function(event: Event, searchUrl: string) {
+    // モバイルの場合は通常の動作（別タブで開く）
+    if (isMobile()) {
+      return true;
+    }
+
+    // PCの場合はポップアップで開く
+    event.preventDefault();
+    const width = 900;
+    const height = 700;
+    const left = (screen.width - width) / 2;
+    const top = (screen.height - height) / 2;
+    window.open(
+      searchUrl,
+      'shopInfoPopup',
+      `width=${width},height=${height},left=${left},top=${top},scrollbars=yes,resizable=yes`
+    );
     return false;
   };
 
@@ -506,8 +538,13 @@ const { apiBaseUrl = '' } = Astro.props;
       // リンクボタンの生成
       const linksHtml = this.createLinksHtml(shop);
 
+      const mapsUrl = shop.maps_url || '#';
+      const mapsOnclick = shop.maps_url
+        ? `onclick="return openLinkPopup(event, '${shop.maps_url.replace(/'/g, "\\'")}')"`
+        : '';
+
       card.innerHTML = `
-        <a href="${shop.maps_url || '#'}" target="_blank" rel="noopener noreferrer" class="hero-image-link">
+        <a href="${mapsUrl}" target="_blank" rel="noopener noreferrer" class="hero-image-link" ${mapsOnclick}>
           <div class="hero-image">
             <img src="${imageUrl}" alt="${shop.name}" loading="lazy" />
             ${shop.category ? `<span class="category-badge">${shop.category}</span>` : ''}
@@ -623,11 +660,12 @@ const { apiBaseUrl = '' } = Astro.props;
 
       // 1. 食べログ
       if (shop.tabelog_url) {
+        const escapedUrl = shop.tabelog_url.replace(/'/g, "\\'");
         const isGoogleSearch = shop.tabelog_url.includes('google.com/search');
-        const onclickAttr = isGoogleSearch 
-          ? `onclick="return handleTabelogSearch(event, '${shop.tabelog_url.replace(/'/g, "\\'")}')"`
-          : '';
-        
+        const onclickAttr = isGoogleSearch
+          ? `onclick="return handleTabelogSearch(event, '${escapedUrl}')"`
+          : `onclick="return openLinkPopup(event, '${escapedUrl}')"`;
+
         links.push(`
           <a href="${shop.tabelog_url}" target="_blank" rel="noopener noreferrer" class="link-btn tabelog" ${onclickAttr}>
             <div class="link-btn-content">
@@ -650,8 +688,9 @@ const { apiBaseUrl = '' } = Astro.props;
 
       // 2. ぐるなび
       if (shop.gnavi_url) {
+        const escapedUrl = shop.gnavi_url.replace(/'/g, "\\'");
         links.push(`
-          <a href="${shop.gnavi_url}" target="_blank" rel="noopener noreferrer" class="link-btn gnavi">
+          <a href="${shop.gnavi_url}" target="_blank" rel="noopener noreferrer" class="link-btn gnavi" onclick="return openLinkPopup(event, '${escapedUrl}')">
             <div class="link-btn-content">
               <div class="link-icon">
                 <svg fill="currentColor" viewBox="0 0 24 24">
@@ -672,8 +711,9 @@ const { apiBaseUrl = '' } = Astro.props;
 
       // 3. ホットペッパー
       if (shop.hotpepper_url) {
+        const escapedUrl = shop.hotpepper_url.replace(/'/g, "\\'");
         links.push(`
-          <a href="${shop.hotpepper_url}" target="_blank" rel="noopener noreferrer" class="link-btn hotpepper">
+          <a href="${shop.hotpepper_url}" target="_blank" rel="noopener noreferrer" class="link-btn hotpepper" onclick="return openLinkPopup(event, '${escapedUrl}')">
             <div class="link-btn-content">
               <div class="link-icon">
                 <svg fill="currentColor" viewBox="0 0 20 20">
