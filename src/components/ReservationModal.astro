@@ -141,6 +141,20 @@ const { apiBaseUrl = '' } = Astro.props;
       <div class="selected-shops-detail" id="selectedShopsDetail">
         <!-- 選択した店舗の詳細設定がここに表示される -->
       </div>
+
+      <!-- 予約者情報 -->
+      <div class="reserver-info">
+        <h3>&#128100; 予約者情報</h3>
+        <div class="form-row">
+          <label>お名前</label>
+          <input type="text" id="reserverName" value="山田太郎" placeholder="予約者のお名前" />
+        </div>
+        <div class="form-row">
+          <label>&#128241; 携帯番号</label>
+          <input type="tel" id="reserverPhone" value="09012345678" placeholder="090xxxxxxxx" />
+          <p class="field-hint">※ 店舗への連絡先として伝えます</p>
+        </div>
+      </div>
     </div>
 
     <div class="modal-footer">
@@ -548,6 +562,60 @@ const { apiBaseUrl = '' } = Astro.props;
     color: #1d4ed8;
   }
 
+  /* 予約者情報 */
+  .reserver-info {
+    background: #fef3c7;
+    border: 1px solid #f59e0b;
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 20px;
+  }
+
+  .reserver-info h3 {
+    margin: 0 0 16px;
+    font-size: 16px;
+    font-weight: 700;
+    color: #92400e;
+  }
+
+  .reserver-info input[type="text"],
+  .reserver-info input[type="tel"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    font-size: 14px;
+    background: white;
+  }
+
+  .reserver-info input:focus {
+    outline: none;
+    border-color: #f59e0b;
+    box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.1);
+  }
+
+  .field-hint {
+    margin: 6px 0 0;
+    font-size: 11px;
+    color: #92400e;
+  }
+
+  :global(.field-hint-sm) {
+    margin: 4px 0 0;
+    font-size: 10px;
+    color: #6b7280;
+  }
+
+  :global(.shop-phone-row input) {
+    background: #fffbeb !important;
+    border-color: #fcd34d !important;
+  }
+
+  .shop-phone {
+    color: #059669;
+    font-weight: 500;
+  }
+
   /* 選択済み店舗詳細 */
   :global(.selected-shops-detail) {
     display: none;
@@ -808,11 +876,14 @@ const { apiBaseUrl = '' } = Astro.props;
     location?: string;
     priceRange?: string;
     image?: string;
+    phone?: string;      // 電話番号（Places APIから取得）
+    place_id?: string;   // Google Place ID
   }
 
   interface SelectedShop extends ShopData {
     priority: number;
     useCommonSettings: boolean;
+    editedPhone?: string;  // ユーザーが編集した電話番号
     customSettings?: {
       guestCount?: number;
       date?: string;
@@ -927,6 +998,7 @@ const { apiBaseUrl = '' } = Astro.props;
               ${shop.rating ? `<span>⭐${shop.rating}</span>` : ''}
               ${shop.location ? `<span>${this.truncateLocation(shop.location)}</span>` : ''}
               ${shop.priceRange ? `<span>${shop.priceRange}</span>` : ''}
+              ${shop.phone ? `<span class="shop-phone">📞${shop.phone}</span>` : ''}
             </div>
           </div>
         `;
@@ -1026,6 +1098,7 @@ const { apiBaseUrl = '' } = Astro.props;
       this.selectedShopsDetail.innerHTML = this.selectedShops.map((shop, index) => {
         const settings = shop.customSettings || commonData;
         const seatTypes = settings.seatTypes || [];
+        const currentPhone = shop.editedPhone || shop.phone || '';
         return `
           <div class="shop-detail-card" data-shop-index="${index}">
             <div class="shop-detail-header">
@@ -1033,6 +1106,11 @@ const { apiBaseUrl = '' } = Astro.props;
               <div class="shop-detail-name">${shop.name}</div>
             </div>
             <div class="shop-detail-form">
+              <div class="form-row shop-phone-row">
+                <label>📞 電話番号</label>
+                <input type="tel" class="shop-phone-input" value="${currentPhone}" placeholder="03-xxxx-xxxx" />
+                <p class="field-hint-sm">※ Places APIから取得。修正可能</p>
+              </div>
               <div class="form-row">
                 <label>👥 人数</label>
                 <select class="shop-guest-count">
@@ -1113,6 +1191,12 @@ const { apiBaseUrl = '' } = Astro.props;
           if ((card.querySelector('.shop-seat-table') as HTMLInputElement)?.checked) seatTypes.push('table');
           if ((card.querySelector('.shop-seat-counter') as HTMLInputElement)?.checked) seatTypes.push('counter');
           if ((card.querySelector('.shop-seat-private') as HTMLInputElement)?.checked) seatTypes.push('private');
+
+          // 電話番号の更新
+          const phoneInput = card.querySelector('.shop-phone-input') as HTMLInputElement;
+          if (phoneInput) {
+            this.selectedShops[index].editedPhone = phoneInput.value;
+          }
 
           this.selectedShops[index].useCommonSettings = false;
           this.selectedShops[index].customSettings = {
@@ -1219,18 +1303,47 @@ const { apiBaseUrl = '' } = Astro.props;
       };
     }
 
+    private getReserverInfo() {
+      return {
+        name: (document.getElementById('reserverName') as HTMLInputElement).value,
+        phone: (document.getElementById('reserverPhone') as HTMLInputElement).value
+      };
+    }
+
     private submitReservation() {
       const formData = this.getFormData();
+      const reserverInfo = this.getReserverInfo();
+
+      // 電話API用のJSONペイロード形式
       const reservationData = {
-        shops: this.selectedShops.map((shop, index) => ({
-          ...shop,
-          priority: index + 1,
-          settings: shop.useCommonSettings ? formData : shop.customSettings
-        })),
+        // 予約者情報
+        reserver: {
+          name: reserverInfo.name,
+          contact_phone: reserverInfo.phone
+        },
+        // 店舗リスト（優先順位順）
+        shops: this.selectedShops.map((shop, index) => {
+          const settings = shop.useCommonSettings ? formData : shop.customSettings;
+          return {
+            name: shop.name,
+            phone: shop.editedPhone || shop.phone || '',
+            priority: index + 1,
+            place_id: shop.place_id || null,
+            settings: {
+              guests: parseInt(settings?.guestCount || '2'),
+              date: settings?.date || '',
+              time: settings?.startTime || '',
+              flexibility: settings?.timeFlexibility || 'exact',
+              seat_types: settings?.seatTypes || [],
+              notes: settings?.otherRequests || ''
+            }
+          };
+        }),
+        // 共通設定（参考用）
         commonSettings: formData
       };
 
-      console.log('[ReservationModal] 予約依頼データ:', reservationData);
+      console.log('[ReservationModal] 予約依頼JSON:', JSON.stringify(reservationData, null, 2));
 
       // カスタムイベントを発火
       const event = new CustomEvent('reservationSubmit', {
@@ -1241,9 +1354,16 @@ const { apiBaseUrl = '' } = Astro.props;
       // モーダルを閉じる
       this.close();
 
-      // TODO: 実際の予約処理を実装
-      alert('予約依頼を受け付けました。\n\n選択されたお店:\n' +
-        this.selectedShops.map((s, i) => `${i + 1}. ${s.name}`).join('\n') +
+      // TODO: 実際の予約APIを呼び出す
+      // fetch('/api/reservation/start', {
+      //   method: 'POST',
+      //   headers: { 'Content-Type': 'application/json' },
+      //   body: JSON.stringify(reservationData)
+      // });
+
+      alert('予約依頼を受け付けました。\n\n予約者: ' + reserverInfo.name + '\n連絡先: ' + reserverInfo.phone +
+        '\n\n選択されたお店:\n' +
+        this.selectedShops.map((s, i) => `${i + 1}. ${s.name} (${s.editedPhone || s.phone || '電話番号なし'})`).join('\n') +
         '\n\n（この機能は現在開発中です）');
     }
   }
