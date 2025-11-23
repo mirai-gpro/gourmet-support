@@ -39,7 +39,7 @@ active_calls = {}
 async def handle_answer(request: Request):
     """
     Twilioが通話に応答した時に呼ばれる
-    TwiMLで音声ストリームを開始する
+    シンプル版：日本語音声テスト用
     """
     form_data = await request.form()
     call_sid = form_data.get('CallSid')
@@ -58,26 +58,15 @@ async def handle_answer(request: Request):
         'transcript': []
     }
 
-    # TwiMLレスポンスを生成
+    # TwiMLレスポンスを生成（シンプル版 - Streamなし）
     response = VoiceResponse()
-
-    # 最初の挨拶
     response.say(
-        'お忙しいところ恐れ入ります。予約のお電話です。',
+        'お忙しいところ恐れ入ります。グルメサポートの予約システムです。'
+        'このメッセージが聞こえていれば、日本語音声テストは成功です。'
+        'ありがとうございました。',
         language='ja-JP',
-        voice='Polly.Mizuki'  # Amazon Polly日本語音声
+        voice='Polly.Mizuki'
     )
-
-    # 双方向音声ストリームを開始
-    stream = Stream(
-        url=f"wss://{BASE_URL.replace('https://', '')}/api/twilio/stream",
-        name='reservation_stream'
-    )
-    stream.parameter(name='call_sid', value=call_sid)
-    response.append(stream)
-
-    # 一時停止（ストリーム処理中）
-    response.pause(length=60)  # 最大60秒
 
     return Response(
         content=str(response),
