@@ -304,8 +304,9 @@ def test_tts():
     if audio:
         print(f"✅ 音声生成成功: {len(audio)} bytes")
 
-        # WAVファイルとして保存
-        output_path = "/tmp/test_tts_output.wav"
+        # WAVファイルとして保存（クロスプラットフォーム対応）
+        import tempfile
+        output_path = os.path.join(tempfile.gettempdir(), "test_tts_output.wav")
         with wave.open(output_path, 'wb') as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)  # 16-bit
