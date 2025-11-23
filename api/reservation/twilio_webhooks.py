@@ -28,20 +28,30 @@ BASE_URL = os.environ.get('BASE_URL', 'https://your-app.run.app')
 tts_client = texttospeech.TextToSpeechClient()
 
 
-def synthesize_speech_google(text: str) -> bytes:
-    """Google Cloud TTS で音声を生成"""
+def synthesize_speech_google(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda") -> bytes:
+    """
+    Google Cloud TTS で音声を生成
+    既存の app_customer_support.py と同じ設定を使用
+    """
     synthesis_input = texttospeech.SynthesisInput(text=text)
 
-    voice = texttospeech.VoiceSelectionParams(
-        language_code="ja-JP",
-        name="ja-JP-Neural2-B",  # 高品質な日本語音声
-        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
-    )
+    try:
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="ja-JP",
+            name=voice_name  # ja-JP-Chirp3-HD-Leda（高品質）
+        )
+    except Exception as e:
+        logger.warning(f"[TTS] 指定音声が無効、デフォルトに変更: {e}")
+        voice = texttospeech.VoiceSelectionParams(
+            language_code="ja-JP",
+            name="ja-JP-Neural2-B"
+        )
 
-    # Twilio用にmulaw 8kHz
+    # Twilio電話用: MP3形式（Twilioが対応）
     audio_config = texttospeech.AudioConfig(
-        audio_encoding=texttospeech.AudioEncoding.MULAW,
-        sample_rate_hertz=8000
+        audio_encoding=texttospeech.AudioEncoding.MP3,
+        speaking_rate=1.0,
+        pitch=0.0
     )
 
     response = tts_client.synthesize_speech(
@@ -103,6 +113,7 @@ async def handle_answer(request: Request):
 async def get_greeting_audio():
     """
     Google Cloud TTS で挨拶音声を生成して返す
+    ja-JP-Chirp3-HD-Leda（高品質音声）を使用
     """
     text = "お忙しいところ恐れ入ります。グルメサポートの予約システムです。このメッセージが聞こえていれば、日本語音声テストは成功です。ありがとうございました。"
 
@@ -112,7 +123,7 @@ async def get_greeting_audio():
 
         return Response(
             content=audio_content,
-            media_type="audio/basic"  # mulaw format
+            media_type="audio/mpeg"  # MP3 format
         )
     except Exception as e:
         logger.error(f"[Google TTS] エラー: {e}")
