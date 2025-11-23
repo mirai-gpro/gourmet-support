@@ -244,6 +244,52 @@ def get_region_from_area(area: str) -> dict:
 # Google Places API 連携
 # ========================================
 
+def get_place_phone(place_id: str) -> str:
+    """
+    Place Details APIで電話番号を取得
+
+    Args:
+        place_id: Google Place ID
+
+    Returns:
+        電話番号（formatted_phone_number）、または None
+    """
+    if not GOOGLE_PLACES_API_KEY or not place_id:
+        return None
+
+    try:
+        details_url = 'https://maps.googleapis.com/maps/api/place/details/json'
+        params = {
+            'place_id': place_id,
+            'fields': 'formatted_phone_number,international_phone_number',
+            'key': GOOGLE_PLACES_API_KEY,
+            'language': 'ja'
+        }
+
+        response = requests.get(details_url, params=params, timeout=10)
+        data = response.json()
+
+        if data.get('status') != 'OK':
+            logger.warning(f"[Place Details API] 取得失敗: {data.get('status')} - {place_id}")
+            return None
+
+        result = data.get('result', {})
+        # 国内形式を優先、なければ国際形式
+        phone = result.get('formatted_phone_number') or result.get('international_phone_number')
+
+        if phone:
+            logger.info(f"[Place Details API] 電話番号取得: {phone}")
+
+        return phone
+
+    except requests.exceptions.Timeout:
+        logger.error(f"[Place Details API] タイムアウト: {place_id}")
+        return None
+    except Exception as e:
+        logger.error(f"[Place Details API] エラー: {e}")
+        return None
+
+
 def search_place(shop_name: str, area: str = '', geo_info: dict = None) -> dict:
     """
     Google Places APIで店舗を検索
@@ -322,10 +368,16 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None) -> dict:
             'user_ratings_total': place.get('user_ratings_total'),
             'formatted_address': place.get('formatted_address'),
             'photo_url': photo_url,
-            'maps_url': maps_url
+            'maps_url': maps_url,
+            'phone': None  # Place Details APIで取得
         }
-        
-        logger.info(f"[Places API] 取得成功: {result['name']}")
+
+        # Place Details APIで電話番号を取得
+        phone = get_place_phone(place_id)
+        if phone:
+            result['phone'] = phone
+
+        logger.info(f"[Places API] 取得成功: {result['name']} (電話: {result['phone']})")
         return result
         
     except requests.exceptions.Timeout:
@@ -399,18 +451,25 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
         # データを追加
         if place_data.get('photo_url'):
             shop['image'] = place_data['photo_url']
-        
+
         if not shop.get('rating') and place_data.get('rating'):
             shop['rating'] = place_data['rating']
-        
+
         if not shop.get('reviewCount') and place_data.get('user_ratings_total'):
             shop['reviewCount'] = place_data['user_ratings_total']
-        
+
         if not shop.get('location') and place_data.get('formatted_address'):
             shop['location'] = place_data['formatted_address']
-        
+
         if place_data.get('maps_url'):
             shop['maps_url'] = place_data['maps_url']
+
+        # 電話番号と Place ID を追加（予約機能用）
+        if place_data.get('phone'):
+            shop['phone'] = place_data['phone']
+
+        if place_data.get('place_id'):
+            shop['place_id'] = place_data['place_id']
         
         # ホットペッパーAPIで検索
         hotpepper_url = search_hotpepper(shop_name, area, geo_info)
