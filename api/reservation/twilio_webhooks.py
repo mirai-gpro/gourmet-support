@@ -15,6 +15,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
 from twilio.twiml.voice_response import VoiceResponse, Stream, Say
+from google.cloud import texttospeech
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +23,34 @@ router = APIRouter(prefix="/api/twilio", tags=["twilio"])
 
 # 環境変数
 BASE_URL = os.environ.get('BASE_URL', 'https://your-app.run.app')
+
+# Google Cloud TTS クライアント
+tts_client = texttospeech.TextToSpeechClient()
+
+
+def synthesize_speech_google(text: str) -> bytes:
+    """Google Cloud TTS で音声を生成"""
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="ja-JP",
+        name="ja-JP-Neural2-B",  # 高品質な日本語音声
+        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE
+    )
+
+    # Twilio用にmulaw 8kHz
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.MULAW,
+        sample_rate_hertz=8000
+    )
+
+    response = tts_client.synthesize_speech(
+        input=synthesis_input,
+        voice=voice,
+        audio_config=audio_config
+    )
+
+    return response.audio_content
 
 
 # ========================================
@@ -39,7 +68,7 @@ active_calls = {}
 async def handle_answer(request: Request):
     """
     Twilioが通話に応答した時に呼ばれる
-    シンプル版：日本語音声テスト用
+    Google Cloud TTS で日本語音声を生成
     """
     form_data = await request.form()
     call_sid = form_data.get('CallSid')
@@ -58,20 +87,37 @@ async def handle_answer(request: Request):
         'transcript': []
     }
 
-    # TwiMLレスポンスを生成（シンプル版 - Streamなし）
+    # TwiMLレスポンスを生成
+    # Google Cloud TTS の音声を再生
     response = VoiceResponse()
-    response.say(
-        'お忙しいところ恐れ入ります。グルメサポートの予約システムです。'
-        'このメッセージが聞こえていれば、日本語音声テストは成功です。'
-        'ありがとうございました。',
-        language='ja-JP',
-        voice='Polly.Mizuki'
-    )
+    audio_url = f"{BASE_URL}/api/twilio/audio/greeting"
+    response.play(audio_url)
 
     return Response(
         content=str(response),
         media_type="application/xml"
     )
+
+
+@router.get("/audio/greeting")
+async def get_greeting_audio():
+    """
+    Google Cloud TTS で挨拶音声を生成して返す
+    """
+    text = "お忙しいところ恐れ入ります。グルメサポートの予約システムです。このメッセージが聞こえていれば、日本語音声テストは成功です。ありがとうございました。"
+
+    try:
+        audio_content = synthesize_speech_google(text)
+        logger.info(f"[Google TTS] 音声生成成功: {len(audio_content)} bytes")
+
+        return Response(
+            content=audio_content,
+            media_type="audio/basic"  # mulaw format
+        )
+    except Exception as e:
+        logger.error(f"[Google TTS] エラー: {e}")
+        # フォールバック: 空の応答
+        return Response(status_code=500)
 
 
 @router.post("/status")
