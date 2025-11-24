@@ -6,7 +6,7 @@ Twilio Webhook ハンドラー
 - Google Cloud STT でリアルタイム音声認識
 - Gemini で会話応答生成
 - Google Cloud TTS で音声合成
-- WebSocket で音声を送り返す
+- HTTP経由で音声を再生（Twilio REST API使用）
 """
 
 import os
@@ -14,11 +14,13 @@ import json
 import base64
 import asyncio
 import logging
+import uuid
+import httpx
 from datetime import datetime
 from typing import Optional
 from fastapi import APIRouter, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import Response
-from twilio.twiml.voice_response import VoiceResponse, Start, Stream
+from twilio.twiml.voice_response import VoiceResponse, Start, Stream, Pause
 from google.cloud import texttospeech
 from google.cloud import speech
 import google.generativeai as genai
@@ -30,6 +32,8 @@ router = APIRouter(prefix="/api/twilio", tags=["twilio"])
 # 環境変数
 BASE_URL = os.environ.get('BASE_URL', 'https://your-app.run.app')
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
+TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
+TWILIO_AUTH_TOKEN = os.environ.get('TWILIO_AUTH_TOKEN', '')
 
 # Google Cloud クライアント
 tts_client = texttospeech.TextToSpeechClient()
@@ -61,6 +65,9 @@ active_calls = {}
 
 # 音声送信用のロック（通話ごと）
 audio_locks = {}
+
+# 音声キャッシュ（audio_id -> MP3バイナリ）
+audio_cache = {}
 
 
 # ========================================
@@ -403,19 +410,24 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'timestamp': datetime.now().isoformat()
                     })
 
-                # Google TTS で音声生成（非同期化）
+                # Google TTS で音声生成（MP3形式）
                 logger.info(f"[TTS] 音声生成開始: {len(ai_response)}文字")
-                tts_audio = await asyncio.to_thread(synthesize_speech_google, ai_response)
+                tts_audio = await asyncio.to_thread(synthesize_speech_mp3, ai_response)
                 logger.info(f"[TTS] 音声生成完了: {len(tts_audio)} bytes")
 
-                # Twilioに音声送信（排他制御で重複送信を防ぐ）
+                # 音声をキャッシュに保存
+                audio_id = str(uuid.uuid4())
+                audio_cache[audio_id] = tts_audio
+                logger.info(f"[Audio Cache] 保存: {audio_id}")
+
+                # Twilio REST API で通話を更新して音声再生
                 lock = audio_locks.get(call_sid)
                 if lock:
                     async with lock:
-                        logger.info(f"[Send Audio] ロック取得: {call_sid}")
-                        await send_audio_to_twilio(websocket, stream_sid, tts_audio)
+                        logger.info(f"[Twilio API] 通話更新開始: {call_sid}")
+                        await update_call_with_audio(call_sid, audio_id)
                 else:
-                    await send_audio_to_twilio(websocket, stream_sid, tts_audio)
+                    await update_call_with_audio(call_sid, audio_id)
 
     except Exception as e:
         import traceback
@@ -423,49 +435,34 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
         logger.error(f"[Process Audio] トレースバック: {traceback.format_exc()}")
 
 
-async def send_audio_to_twilio(websocket: WebSocket, stream_sid: str, audio_data: bytes):
+async def update_call_with_audio(call_sid: str, audio_id: str):
     """
-    Twilioに音声データを送信
-    mulaw 8kHz 形式
+    Twilio REST API を使って通話を更新し、音声を再生する
     """
-    logger.info(f"[Send Audio] 送信開始: {len(audio_data)} bytes")
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
+        logger.error("[Twilio API] 認証情報が未設定")
+        return
 
-    # チャンクに分割して送信（20msごと = 160バイト）
-    chunk_size = 160
-    chunks_sent = 0
+    # TwiML URL を生成
+    twiml_url = f"{BASE_URL}/api/twilio/play-audio/{audio_id}"
+    logger.info(f"[Twilio API] TwiML URL: {twiml_url}")
+
+    # Twilio REST API で通話を更新
+    url = f"https://api.twilio.com/2010-04-01/Accounts/{TWILIO_ACCOUNT_SID}/Calls/{call_sid}.json"
 
     try:
-        for i in range(0, len(audio_data), chunk_size):
-            chunk = audio_data[i:i + chunk_size]
-            payload = base64.b64encode(chunk).decode('utf-8')
-
-            message = {
-                "event": "media",
-                "streamSid": stream_sid,
-                "media": {
-                    "payload": payload
-                }
-            }
-
-            await websocket.send_text(json.dumps(message))
-            chunks_sent += 1
-
-            # 送信間隔を短縮（5ms）
-            await asyncio.sleep(0.005)
-
-        # マーカー送信（音声再生完了通知）
-        mark_message = {
-            "event": "mark",
-            "streamSid": stream_sid,
-            "mark": {
-                "name": "audio_complete"
-            }
-        }
-        await websocket.send_text(json.dumps(mark_message))
-        logger.info(f"[Send Audio] 送信完了: {chunks_sent} chunks")
-
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                auth=(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN),
+                data={"Url": twiml_url}
+            )
+            if response.status_code == 200:
+                logger.info(f"[Twilio API] 通話更新成功: {call_sid}")
+            else:
+                logger.error(f"[Twilio API] 通話更新失敗: {response.status_code} - {response.text}")
     except Exception as e:
-        logger.warning(f"[Send Audio] 接続切断（{chunks_sent} chunks送信済）: {e}")
+        logger.error(f"[Twilio API] エラー: {e}")
 
 
 @router.post("/status")
@@ -511,17 +508,77 @@ async def get_dynamic_audio(text: str = ""):
         return Response(status_code=500)
 
 
+@router.post("/play-audio/{audio_id}")
+async def play_audio_twiml(audio_id: str, request: Request):
+    """
+    音声を再生してMedia Streamを再開するTwiML
+    Twilio REST API から呼ばれる
+    """
+    form_data = await request.form()
+    call_sid = form_data.get('CallSid')
+    logger.info(f"[Play Audio] TwiML生成: audio_id={audio_id}, call_sid={call_sid}")
+
+    response = VoiceResponse()
+
+    # キャッシュから音声があるか確認
+    if audio_id in audio_cache:
+        # 音声を再生
+        audio_url = f"{BASE_URL}/api/twilio/audio/{audio_id}"
+        response.play(audio_url)
+        logger.info(f"[Play Audio] 音声再生: {audio_url}")
+    else:
+        logger.warning(f"[Play Audio] 音声キャッシュなし: {audio_id}")
+
+    # Media Streamを再開
+    start = Start()
+    stream = Stream(
+        url=f"wss://{BASE_URL.replace('https://', '').replace('http://', '')}/api/twilio/media-stream",
+        track="both_tracks"
+    )
+    if call_sid:
+        stream.parameter(name="call_sid", value=call_sid)
+    start.append(stream)
+    response.append(start)
+
+    # 通話を継続
+    response.pause(length=120)
+
+    return Response(
+        content=str(response),
+        media_type="application/xml"
+    )
+
+
+@router.get("/audio/{audio_id}")
+async def get_cached_audio(audio_id: str):
+    """キャッシュされた音声を返す"""
+    if audio_id in audio_cache:
+        audio_content = audio_cache[audio_id]
+        # 使用後にキャッシュから削除（メモリ節約）
+        del audio_cache[audio_id]
+        logger.info(f"[Audio Cache] 取得・削除: {audio_id}, {len(audio_content)} bytes")
+        return Response(
+            content=audio_content,
+            media_type="audio/mpeg"
+        )
+    else:
+        logger.warning(f"[Audio Cache] 見つからない: {audio_id}")
+        return Response(status_code=404)
+
+
 @router.get("/test")
 async def test_endpoint():
     """Webhook疎通確認用"""
     return {
         "status": "ok",
-        "message": "Twilio webhook endpoint is ready (Google Cloud STT/TTS)",
+        "message": "Twilio webhook endpoint is ready (HTTP Audio Playback)",
         "active_calls": len(active_calls),
+        "audio_cache_size": len(audio_cache),
         "architecture": {
             "stt": "Google Cloud Speech-to-Text",
             "llm": "Gemini 2.0 Flash",
-            "tts": "Google Cloud Text-to-Speech"
+            "tts": "Google Cloud Text-to-Speech",
+            "audio_playback": "HTTP via Twilio REST API"
         }
     }
 
