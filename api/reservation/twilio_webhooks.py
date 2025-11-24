@@ -292,13 +292,12 @@ async def handle_media_stream(websocket: WebSocket):
                     # 一定量たまったらSTT処理（50チャンク = 約1秒分）
                     if len(audio_buffer) >= 50:
                         logger.info(f"[Media Stream] STT処理開始: {len(audio_buffer)} chunks")
-                        await process_audio_chunk(
-                            websocket,
-                            stream_sid,
-                            call_sid,
-                            b''.join(audio_buffer)
-                        )
+                        # バックグラウンドタスクとして実行（ブロッキングを避ける）
+                        audio_to_process = b''.join(audio_buffer)
                         audio_buffer.clear()
+                        asyncio.create_task(
+                            process_audio_chunk(websocket, stream_sid, call_sid, audio_to_process)
+                        )
 
             elif event == 'mark':
                 # マーカーイベント
@@ -386,39 +385,44 @@ async def send_audio_to_twilio(websocket: WebSocket, stream_sid: str, audio_data
     Twilioに音声データを送信
     mulaw 8kHz 形式
     """
+    logger.info(f"[Send Audio] 送信開始: {len(audio_data)} bytes")
+
     # チャンクに分割して送信（20msごと = 160バイト）
     chunk_size = 160
+    chunks_sent = 0
 
-    for i in range(0, len(audio_data), chunk_size):
-        chunk = audio_data[i:i + chunk_size]
-        payload = base64.b64encode(chunk).decode('utf-8')
+    try:
+        for i in range(0, len(audio_data), chunk_size):
+            chunk = audio_data[i:i + chunk_size]
+            payload = base64.b64encode(chunk).decode('utf-8')
 
-        message = {
-            "event": "media",
+            message = {
+                "event": "media",
+                "streamSid": stream_sid,
+                "media": {
+                    "payload": payload
+                }
+            }
+
+            await websocket.send_text(json.dumps(message))
+            chunks_sent += 1
+
+            # 送信間隔を短縮（5ms）
+            await asyncio.sleep(0.005)
+
+        # マーカー送信（音声再生完了通知）
+        mark_message = {
+            "event": "mark",
             "streamSid": stream_sid,
-            "media": {
-                "payload": payload
+            "mark": {
+                "name": "audio_complete"
             }
         }
+        await websocket.send_text(json.dumps(mark_message))
+        logger.info(f"[Send Audio] 送信完了: {chunks_sent} chunks")
 
-        try:
-            await websocket.send_text(json.dumps(message))
-        except Exception as e:
-            logger.error(f"[Send Audio] エラー: {e}")
-            break
-
-        # 送信間隔（20ms）
-        await asyncio.sleep(0.02)
-
-    # マーカー送信（音声再生完了通知）
-    mark_message = {
-        "event": "mark",
-        "streamSid": stream_sid,
-        "mark": {
-            "name": "audio_complete"
-        }
-    }
-    await websocket.send_text(json.dumps(mark_message))
+    except Exception as e:
+        logger.warning(f"[Send Audio] 接続切断（{chunks_sent} chunks送信済）: {e}")
 
 
 @router.post("/status")
