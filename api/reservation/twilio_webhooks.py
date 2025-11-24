@@ -329,7 +329,7 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
     try:
         logger.info(f"[Process Audio] 処理開始: {len(audio_data)} bytes")
 
-        # Google Cloud STT で音声認識
+        # Google Cloud STT で音声認識（非同期化）
         audio = speech.RecognitionAudio(content=audio_data)
         config = speech.RecognitionConfig(
             encoding=speech.RecognitionConfig.AudioEncoding.MULAW,
@@ -338,7 +338,8 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
             model="phone_call",
         )
 
-        response = stt_client.recognize(config=config, audio=audio)
+        # 同期関数をスレッドプールで実行
+        response = await asyncio.to_thread(stt_client.recognize, config=config, audio=audio)
         logger.info(f"[STT] 結果数: {len(response.results)}")
 
         if response.results:
@@ -347,7 +348,7 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
 
             logger.info(f"[STT] 認識: '{transcript}' (confidence: {confidence:.2f})")
 
-            if transcript and confidence > 0.5:  # 閾値を0.7から0.5に下げる
+            if transcript and confidence > 0.5:
                 # 会話履歴に追加
                 if call_sid in active_calls:
                     active_calls[call_sid]['transcript'].append({
@@ -356,8 +357,8 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'timestamp': datetime.now().isoformat()
                     })
 
-                # Gemini で応答生成
-                ai_response = get_gemini_response(transcript, call_sid)
+                # Gemini で応答生成（非同期化）
+                ai_response = await asyncio.to_thread(get_gemini_response, transcript, call_sid)
                 logger.info(f"[Gemini] 応答: {ai_response}")
 
                 # 会話履歴に追加
@@ -368,8 +369,10 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'timestamp': datetime.now().isoformat()
                     })
 
-                # Google TTS で音声生成
-                tts_audio = synthesize_speech_google(ai_response)
+                # Google TTS で音声生成（非同期化）
+                logger.info(f"[TTS] 音声生成開始: {len(ai_response)}文字")
+                tts_audio = await asyncio.to_thread(synthesize_speech_google, ai_response)
+                logger.info(f"[TTS] 音声生成完了: {len(tts_audio)} bytes")
 
                 # Twilioに音声送信
                 await send_audio_to_twilio(websocket, stream_sid, tts_audio)
