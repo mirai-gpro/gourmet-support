@@ -206,13 +206,17 @@ async def handle_answer(request: Request):
     }
 
     # 最初の挨拶
+    from urllib.parse import quote
     greeting = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['reserver_name']}と申します。{RESERVATION_INFO['date']}の{RESERVATION_INFO['time']}から{RESERVATION_INFO['guests']}名で予約をお願いしたいのですが、よろしいでしょうか。"
 
     # TwiMLレスポンス
     response = VoiceResponse()
 
-    # 挨拶を再生
-    response.play(f"{BASE_URL}/api/twilio/audio/dynamic?text={greeting}")
+    # 挨拶を再生（日本語をURLエンコード）
+    encoded_greeting = quote(greeting, safe='')
+    audio_url = f"{BASE_URL}/api/twilio/audio/dynamic?text={encoded_greeting}"
+    logger.info(f"[Twilio Answer] Audio URL: {audio_url}")
+    response.play(audio_url)
 
     # Media Streams (WebSocket) を開始
     start = Start()
