@@ -428,7 +428,14 @@ async def send_audio_to_twilio(websocket: WebSocket, stream_sid: str, audio_data
     Twilioに音声データを送信
     mulaw 8kHz 形式
     """
-    logger.info(f"[Send Audio] 送信開始: {len(audio_data)} bytes")
+    # WAVヘッダーをスキップ（もしあれば）
+    # Google TTS mulaw出力にはヘッダーがない場合もあるが、念のためチェック
+    if audio_data[:4] == b'RIFF':
+        # WAVヘッダーは通常44バイト
+        audio_data = audio_data[44:]
+        logger.info(f"[Send Audio] WAVヘッダーをスキップ")
+
+    logger.info(f"[Send Audio] 送信開始: {len(audio_data)} bytes, 先頭バイト: {list(audio_data[:10])}")
 
     # チャンクに分割して送信（20msごと = 160バイト）
     chunk_size = 160
@@ -439,10 +446,12 @@ async def send_audio_to_twilio(websocket: WebSocket, stream_sid: str, audio_data
             chunk = audio_data[i:i + chunk_size]
             payload = base64.b64encode(chunk).decode('utf-8')
 
+            # Twilio Media Streams 送信フォーマット
             message = {
                 "event": "media",
                 "streamSid": stream_sid,
                 "media": {
+                    "track": "outbound",  # 送信方向を明示
                     "payload": payload
                 }
             }
@@ -450,8 +459,8 @@ async def send_audio_to_twilio(websocket: WebSocket, stream_sid: str, audio_data
             await websocket.send_text(json.dumps(message))
             chunks_sent += 1
 
-            # 送信間隔を短縮（5ms）
-            await asyncio.sleep(0.005)
+            # リアルタイム速度で送信（20ms = 160バイト @ 8kHz）
+            await asyncio.sleep(0.02)
 
         # マーカー送信（音声再生完了通知）
         mark_message = {
@@ -462,7 +471,7 @@ async def send_audio_to_twilio(websocket: WebSocket, stream_sid: str, audio_data
             }
         }
         await websocket.send_text(json.dumps(mark_message))
-        logger.info(f"[Send Audio] 送信完了: {chunks_sent} chunks")
+        logger.info(f"[Send Audio] 送信完了: {chunks_sent} chunks, 予想再生時間: {chunks_sent * 0.02:.1f}秒")
 
     except Exception as e:
         logger.warning(f"[Send Audio] 接続切断（{chunks_sent} chunks送信済）: {e}")
