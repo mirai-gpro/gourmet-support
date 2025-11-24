@@ -296,10 +296,34 @@ async def handle_media_stream(websocket: WebSocket):
                     audio_data = base64.b64decode(payload)
                     audio_buffer.append(audio_data)
 
-                    # 一定量たまったらSTT処理（50チャンク = 約1秒分）
-                    if len(audio_buffer) >= 50:
-                        logger.info(f"[Media Stream] STT処理開始: {len(audio_buffer)} chunks")
-                        # バックグラウンドタスクとして実行（ブロッキングを避ける）
+                    # 音声エネルギーで発話検知（mulaw: 128が無音、差が大きいほど音声あり）
+                    energy = sum(abs(b - 128) for b in audio_data) / len(audio_data)
+
+                    # 発話中かどうかを判定（通話ごとの無音カウンター）
+                    if call_sid and call_sid in active_calls:
+                        if energy > 5:  # 閾値: 発話中
+                            active_calls[call_sid]['silence_chunks'] = 0
+                        else:
+                            active_calls[call_sid]['silence_chunks'] = active_calls[call_sid].get('silence_chunks', 0) + 1
+                        silence_chunks = active_calls[call_sid].get('silence_chunks', 0)
+                    else:
+                        silence_chunks = 0
+
+                    # 発話終了を検知（無音が15チャンク=約300ms続いた場合）
+                    # かつ、バッファに十分なデータがある場合（最低0.5秒）
+                    if len(audio_buffer) >= 25 and silence_chunks >= 15:
+                        logger.info(f"[Media Stream] 発話終了検知: {len(audio_buffer)} chunks, silence={silence_chunks}")
+                        # バックグラウンドタスクとして実行
+                        audio_to_process = b''.join(audio_buffer)
+                        audio_buffer.clear()
+                        if call_sid in active_calls:
+                            active_calls[call_sid]['silence_chunks'] = 0
+                        asyncio.create_task(
+                            process_audio_chunk(websocket, stream_sid, call_sid, audio_to_process)
+                        )
+                    # 最大バッファサイズに達した場合も処理（5秒分）
+                    elif len(audio_buffer) >= 250:
+                        logger.info(f"[Media Stream] 最大バッファ: {len(audio_buffer)} chunks")
                         audio_to_process = b''.join(audio_buffer)
                         audio_buffer.clear()
                         asyncio.create_task(
