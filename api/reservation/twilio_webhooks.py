@@ -328,6 +328,8 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
     Google STT → Gemini → Google TTS → Twilio送信
     """
     try:
+        logger.info(f"[Process Audio] 処理開始: {len(audio_data)} bytes")
+
         # Google Cloud STT で音声認識
         audio = speech.RecognitionAudio(content=audio_data)
         config = speech.RecognitionConfig(
@@ -338,14 +340,15 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
         )
 
         response = stt_client.recognize(config=config, audio=audio)
+        logger.info(f"[STT] 結果数: {len(response.results)}")
 
         if response.results:
             transcript = response.results[0].alternatives[0].transcript
             confidence = response.results[0].alternatives[0].confidence
 
-            if transcript and confidence > 0.7:
-                logger.info(f"[STT] 認識結果: {transcript} (confidence: {confidence:.2f})")
+            logger.info(f"[STT] 認識: '{transcript}' (confidence: {confidence:.2f})")
 
+            if transcript and confidence > 0.5:  # 閾値を0.7から0.5に下げる
                 # 会話履歴に追加
                 if call_sid in active_calls:
                     active_calls[call_sid]['transcript'].append({
@@ -373,7 +376,9 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 await send_audio_to_twilio(websocket, stream_sid, tts_audio)
 
     except Exception as e:
+        import traceback
         logger.error(f"[Process Audio] エラー: {e}")
+        logger.error(f"[Process Audio] トレースバック: {traceback.format_exc()}")
 
 
 async def send_audio_to_twilio(websocket: WebSocket, stream_sid: str, audio_data: bytes):
