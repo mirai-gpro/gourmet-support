@@ -59,6 +59,9 @@ RESERVATION_INFO = {
 # インメモリ状態管理（テスト用）
 active_calls = {}
 
+# 音声送信用のロック（通話ごと）
+audio_locks = {}
+
 
 # ========================================
 # Google Cloud TTS
@@ -271,6 +274,10 @@ async def handle_media_stream(websocket: WebSocket):
                 custom_params = start_data.get('customParameters', {})
                 call_sid = custom_params.get('call_sid')
 
+                # 音声送信用ロックを初期化
+                if call_sid:
+                    audio_locks[call_sid] = asyncio.Lock()
+
                 logger.info(f"[Media Stream] 開始: streamSid={stream_sid}, callSid={call_sid}")
 
             elif event == 'media':
@@ -319,6 +326,9 @@ async def handle_media_stream(websocket: WebSocket):
             active_calls[call_sid]['status'] = 'completed'
             active_calls[call_sid]['ended_at'] = datetime.now().isoformat()
             logger.info(f"[Media Stream] 通話完了: {active_calls[call_sid]}")
+        # ロックをクリーンアップ
+        if call_sid and call_sid in audio_locks:
+            del audio_locks[call_sid]
 
 
 async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: str, audio_data: bytes):
@@ -374,8 +384,14 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 tts_audio = await asyncio.to_thread(synthesize_speech_google, ai_response)
                 logger.info(f"[TTS] 音声生成完了: {len(tts_audio)} bytes")
 
-                # Twilioに音声送信
-                await send_audio_to_twilio(websocket, stream_sid, tts_audio)
+                # Twilioに音声送信（排他制御で重複送信を防ぐ）
+                lock = audio_locks.get(call_sid)
+                if lock:
+                    async with lock:
+                        logger.info(f"[Send Audio] ロック取得: {call_sid}")
+                        await send_audio_to_twilio(websocket, stream_sid, tts_audio)
+                else:
+                    await send_audio_to_twilio(websocket, stream_sid, tts_audio)
 
     except Exception as e:
         import traceback
