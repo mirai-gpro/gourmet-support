@@ -279,13 +279,19 @@ async def handle_media_stream(websocket: WebSocket):
                 payload = media.get('payload')  # Base64エンコードされた mulaw 音声
                 track = media.get('track')  # inbound or outbound
 
-                if payload and track == 'inbound':  # 店員の声
+                # デバッグ: 最初の数回だけtrackをログ出力
+                if len(audio_buffer) < 3:
+                    logger.info(f"[Media Stream] 受信 track={track}, payload_len={len(payload) if payload else 0}")
+
+                # inbound（相手の声）を処理
+                if payload and track == 'inbound':
                     # Base64デコード
                     audio_data = base64.b64decode(payload)
                     audio_buffer.append(audio_data)
 
-                    # 一定量たまったらSTT処理
-                    if len(audio_buffer) >= 10:  # 約200ms分
+                    # 一定量たまったらSTT処理（50チャンク = 約1秒分）
+                    if len(audio_buffer) >= 50:
+                        logger.info(f"[Media Stream] STT処理開始: {len(audio_buffer)} chunks")
                         await process_audio_chunk(
                             websocket,
                             stream_sid,
