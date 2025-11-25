@@ -1,14 +1,3 @@
-"""
-Twilio Webhook ハンドラー
-
-仕様書準拠アーキテクチャ:
-- Twilio Media Streams (WebSocket) で生音声を受信
-- Google Cloud STT でリアルタイム音声認識
-- Gemini で会話応答生成
-- Google Cloud TTS で音声合成
-- HTTP経由で音声を再生（Twilio REST API使用）
-"""
-
 import os
 import json
 import base64
@@ -47,7 +36,6 @@ else:
     gemini_model = None
     logger.warning("[Gemini] GOOGLE_API_KEY が未設定")
 
-
 # 予約情報（テスト用）
 RESERVATION_INFO = {
     "restaurant_name": "レストラン岡部",
@@ -73,7 +61,6 @@ audio_cache = {}
 
 # 即座の相槌音声（事前生成）
 acknowledgment_audio = None
-
 
 # ========================================
 # Google Cloud TTS
@@ -105,7 +92,6 @@ def synthesize_speech_google(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda"
 
     return response.audio_content
 
-
 def synthesize_speech_mp3(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda") -> bytes:
     """MP3形式で音声生成（<Play>用）"""
     synthesis_input = texttospeech.SynthesisInput(text=text)
@@ -128,7 +114,6 @@ def synthesize_speech_mp3(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda") -
 
     return response.audio_content
 
-
 def initialize_acknowledgment_audio():
     """即座の相槌音声を事前生成"""
     global acknowledgment_audio
@@ -140,7 +125,6 @@ def initialize_acknowledgment_audio():
 
 # アプリ起動時に相槌音声を生成
 initialize_acknowledgment_audio()
-
 
 # ========================================
 # Google Cloud STT (Streaming)
@@ -163,7 +147,6 @@ def get_stt_streaming_config():
     )
 
     return streaming_config
-
 
 # ========================================
 # Gemini 会話
@@ -204,7 +187,6 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
     except Exception as e:
         logger.error(f"[Gemini] エラー: {e}")
         return "少々お待ちください。"
-
 
 # ========================================
 # Webhook エンドポイント
@@ -263,7 +245,6 @@ async def handle_answer(request: Request):
         content=str(response),
         media_type="application/xml"
     )
-
 
 @router.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
@@ -370,7 +351,7 @@ async def handle_media_stream(websocket: WebSocket):
                         audio_to_process = b''.join(audio_buffer)
                         audio_buffer.clear()
                         # 復唱モード解除
-                        if call_sid in active_calls and active_calls.get(call_sid, {}).get('in_recitation_mode', False):
+                        if call_sid and active_calls.get(call_sid, {}).get('in_recitation_mode', False):
                             active_calls[call_sid]['in_recitation_mode'] = False
                             logger.info(f"[Recitation Mode] 復唱モード終了（最大バッファ）")
                         asyncio.create_task(
@@ -400,7 +381,6 @@ async def handle_media_stream(websocket: WebSocket):
         # ロックをクリーンアップ
         if call_sid and call_sid in audio_locks:
             del audio_locks[call_sid]
-
 
 async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: str, audio_data: bytes):
     """
@@ -448,7 +428,7 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         active_calls[call_sid]['in_recitation_mode'] = True
                         logger.info(f"[Recitation Mode] 復唱モード開始")
 
-                # 頻出フレーズには即座に「かしこまりました」を再生してGeminiスキップ
+                # 即答ルーティンの実行（音声認識前に実行）
                 if needs_quick_response and acknowledgment_audio:
                     ack_id = str(uuid.uuid4())
                     audio_cache[ack_id] = acknowledgment_audio
@@ -518,14 +498,12 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
         logger.error(f"[Process Audio] エラー: {e}")
         logger.error(f"[Process Audio] トレースバック: {traceback.format_exc()}")
 
-
 async def reset_playing_flag(call_sid: str, delay: float):
     """音声再生完了後にフラグを解除"""
     await asyncio.sleep(delay)
     if call_sid in active_calls:
         active_calls[call_sid]['is_playing_audio'] = False
         logger.info(f"[Audio Playback] 終了フラグ解除: {call_sid}")
-
 
 async def update_call_with_audio(call_sid: str, audio_id: str):
     """
@@ -556,7 +534,6 @@ async def update_call_with_audio(call_sid: str, audio_id: str):
     except Exception as e:
         logger.error(f"[Twilio API] エラー: {e}")
 
-
 @router.post("/status")
 async def handle_status(request: Request):
     """通話ステータス更新"""
@@ -576,7 +553,6 @@ async def handle_status(request: Request):
             active_calls[call_sid]['ended_at'] = datetime.now().isoformat()
 
     return Response(status_code=200)
-
 
 @router.get("/audio/dynamic")
 async def get_dynamic_audio(text: str = ""):
@@ -598,7 +574,6 @@ async def get_dynamic_audio(text: str = ""):
     except Exception as e:
         logger.error(f"[Google TTS] エラー: {e}")
         return Response(status_code=500)
-
 
 @router.post("/play-audio/{audio_id}")
 async def play_audio_twiml(audio_id: str, request: Request):
@@ -640,7 +615,6 @@ async def play_audio_twiml(audio_id: str, request: Request):
         media_type="application/xml"
     )
 
-
 @router.get("/audio/{audio_id}")
 async def get_cached_audio(audio_id: str):
     """キャッシュされた音声を返す"""
@@ -657,7 +631,6 @@ async def get_cached_audio(audio_id: str):
         logger.warning(f"[Audio Cache] 見つからない: {audio_id}")
         return Response(status_code=404)
 
-
 @router.get("/test")
 async def test_endpoint():
     """Webhook疎通確認用"""
@@ -673,7 +646,6 @@ async def test_endpoint():
             "audio_playback": "HTTP via Twilio REST API"
         }
     }
-
 
 @router.get("/calls")
 async def get_active_calls():
