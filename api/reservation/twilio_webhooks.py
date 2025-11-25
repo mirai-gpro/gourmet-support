@@ -53,6 +53,7 @@ RESERVATION_INFO = {
     "reserver_name": "山田太郎",
     "contact_phone": "090-1234-5678",
     "date": "12月25日",
+    "day_of_week": "日曜日",
     "time": "19時",
     "guests": 4,
     "seat_type": "テーブル席",
@@ -68,6 +69,9 @@ audio_locks = {}
 
 # 音声キャッシュ（audio_id -> MP3バイナリ）
 audio_cache = {}
+
+# 即座の相槌音声（事前生成）
+acknowledgment_audio = None
 
 
 # ========================================
@@ -122,6 +126,19 @@ def synthesize_speech_mp3(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda") -
     )
 
     return response.audio_content
+
+
+def initialize_acknowledgment_audio():
+    """即座の相槌音声を事前生成"""
+    global acknowledgment_audio
+    try:
+        acknowledgment_audio = synthesize_speech_mp3("はい、かしこまりました。")
+        logger.info(f"[Init] 相槌音声生成完了: {len(acknowledgment_audio)} bytes")
+    except Exception as e:
+        logger.error(f"[Init] 相槌音声生成エラー: {e}")
+
+# アプリ起動時に相槌音声を生成
+initialize_acknowledgment_audio()
 
 
 # ========================================
@@ -217,7 +234,7 @@ async def handle_answer(request: Request):
 
     # 最初の挨拶
     from urllib.parse import quote
-    greeting = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['reserver_name']}と申します。{RESERVATION_INFO['date']}の{RESERVATION_INFO['time']}から{RESERVATION_INFO['guests']}名で予約をお願いしたいのですが、よろしいでしょうか。"
+    greeting = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシストです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
 
     # TwiMLレスポンス
     response = VoiceResponse()
@@ -397,6 +414,14 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'text': transcript,
                         'timestamp': datetime.now().isoformat()
                     })
+
+                # 即座に相槌を再生（Gemini処理中の待ち時間を埋める）
+                if acknowledgment_audio:
+                    ack_id = str(uuid.uuid4())
+                    audio_cache[ack_id] = acknowledgment_audio
+                    logger.info(f"[Acknowledgment] 相槌再生開始: {ack_id}")
+                    # ロックを使わずに即座に再生
+                    asyncio.create_task(update_call_with_audio(call_sid, ack_id))
 
                 # Gemini で応答生成（非同期化）
                 ai_response = await asyncio.to_thread(get_gemini_response, transcript, call_sid)
