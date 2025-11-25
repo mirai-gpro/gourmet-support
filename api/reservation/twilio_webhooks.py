@@ -50,6 +50,7 @@ else:
 
 # 予約情報（テスト用）
 RESERVATION_INFO = {
+    "restaurant_name": "レストラン岡部",
     "reserver_name": "山田太郎",
     "contact_phone": "090-1234-5678",
     "date": "12月25日",
@@ -174,16 +175,17 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
         return "申し訳ございません。システムエラーが発生しました。"
 
     history = active_calls.get(call_sid, {}).get('transcript', [])
-    history_text = "\n".join([f"{h['role']}: {h['text']}" for h in history[-5:]])
+    history_text = "\n".join([f"{h['role']}: {h['text']}" for h in history[-10:]])
 
     prompt = f"""あなたはレストラン予約の電話をかけている予約代行AIです。
 以下の予約情報で予約を取ってください。
 
 【重要な指示】
-- 1文のみで簡潔に応答してください（長くても15文字以内）
+- 簡潔に応答してください（1-2文、30文字以内）
 - 既に伝えた情報は繰り返さないでください
 - 店員が「それでは」「失礼します」など終了を示唆したら、「ありがとうございました」で終了してください
-- 不要な確認や挨拶は省略してください
+- 店員の発言が不明瞭や誤認識の可能性がある場合は、会話の文脈から適切に推測して応答してください
+- 店員が確認している内容には「はい」「そうです」など肯定で答えてください
 
 【予約情報】
 - 予約者名: {RESERVATION_INFO['reserver_name']}
@@ -201,7 +203,7 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
 【店員の発言】
 {user_input}
 
-【あなたの応答】（1文、15文字以内）:"""
+【あなたの応答】（1-2文、30文字以内）:"""
 
     try:
         response = gemini_model.generate_content(prompt)
@@ -240,7 +242,7 @@ async def handle_answer(request: Request):
 
     # 最初の挨拶
     from urllib.parse import quote
-    greeting = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
+    greeting = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
 
     # TwiMLレスポンス
     response = VoiceResponse()
