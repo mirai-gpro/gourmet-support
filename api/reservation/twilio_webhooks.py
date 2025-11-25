@@ -321,11 +321,15 @@ async def handle_media_stream(websocket: WebSocket):
 
                     # 発話中かどうかを判定（通話ごとの無音カウンター）
                     if call_sid and call_sid in active_calls:
-                        if energy > 3:  # 閾値: 発話中（より敏感に検知）
+                        if energy > 20:  # 閾値: 発話中（店舗の騒音を考慮して20に設定）
                             active_calls[call_sid]['silence_chunks'] = 0
                         else:
                             active_calls[call_sid]['silence_chunks'] = active_calls[call_sid].get('silence_chunks', 0) + 1
                         silence_chunks = active_calls[call_sid].get('silence_chunks', 0)
+                        
+                        # デバッグ: エネルギー値をログ出力（最初の100チャンクのみ）
+                        if len(audio_buffer) < 100:
+                            logger.info(f"[Energy] energy={energy:.2f}, 閾値=20, 判定={'発話中' if energy > 20 else '無音'}, silence_chunks={silence_chunks}, buffer={len(audio_buffer)}")
                     else:
                         silence_chunks = 0
 
