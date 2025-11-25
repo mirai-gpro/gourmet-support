@@ -421,12 +421,19 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
 
             logger.info(f"[STT] 認識: '{transcript}' (confidence: {confidence:.2f})")
 
+            # 🔥 デバッグ: confidence チェック前
+            logger.info(f"[DEBUG] confidence={confidence}, 閾値チェック: {confidence > 0.5}")
+
             if transcript and confidence > 0.5:
+                logger.info(f"[DEBUG] 条件通過: transcript='{transcript}', confidence={confidence}")
+                
                 # 🔥 会話履歴に追加する前に店員の発話回数をカウント
                 staff_count = sum(1 for item in active_calls.get(call_sid, {}).get('transcript', []) if item['role'] == '店員')
                 is_first_response = staff_count == 0  # 店員の1回目
                 
                 logger.info(f"[Response Check] 店員発話回数={staff_count}, 初回={is_first_response}")
+                logger.info(f"[DEBUG] acknowledgment_audio存在: {acknowledgment_audio is not None}")
+                logger.info(f"[DEBUG] quick_hai_audio存在: {quick_hai_audio is not None}")
 
                 # 会話履歴に追加
                 if call_sid in active_calls:
@@ -435,6 +442,7 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'text': transcript,
                         'timestamp': datetime.now().isoformat()
                     })
+                    logger.info(f"[DEBUG] 履歴追加完了")
 
                 # 即答モード（全ての発話に対して相槌を入れる）
                 quick_audio = None
@@ -444,36 +452,43 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 if is_first_response and acknowledgment_audio:
                     # 初回: 丁寧な時間稼ぎ
                     quick_audio = acknowledgment_audio
-                    quick_delay = 2.5  # 🔥 少し長めに設定
+                    quick_delay = 2.0
                     quick_text = "はい、少々お待ちください。"
                     logger.info(f"[Quick Response] 初回応答 → 「{quick_text}」")
                 elif quick_hai_audio:
                     # 2回目以降: 短い相槌
                     quick_audio = quick_hai_audio
-                    quick_delay = 1.0  # 🔥 0.8→1.0に延長
+                    quick_delay = 0.6
                     quick_text = "はい。"
                     logger.info(f"[Quick Response] 通常応答 → 「{quick_text}」")
+                else:
+                    logger.warning(f"[Quick Response] 相槌音声が利用不可")
 
                 # 即答音声を再生
                 if quick_audio:
+                    logger.info(f"[DEBUG] 即答音声再生開始")
                     quick_id = str(uuid.uuid4())
                     audio_cache[quick_id] = quick_audio
                     
-                    # 🔥 フラグを先に設定（確実に）
+                    # フラグを先に設定
                     if call_sid in active_calls:
                         active_calls[call_sid]['is_playing_audio'] = True
-                        logger.info(f"[Audio Playback] フラグ設定: 即答音声")
+                        logger.info(f"[Audio Playback] フラグ設定: 即答音声 {quick_delay}秒")
                     
                     # 即座に再生開始
                     await update_call_with_audio(call_sid, quick_id)
+                    logger.info(f"[DEBUG] update_call_with_audio完了")
                     
-                    # 🔥 フラグリセットを予約
-                    asyncio.create_task(reset_playing_flag(call_sid, quick_delay))
+                    # 即座にフラグを解除（LLM処理を妨げない）
+                    logger.info(f"[Quick Response] 即答完了、フラグ解除してLLM処理継続")
+                    if call_sid in active_calls:
+                        active_calls[call_sid]['is_playing_audio'] = False
                     
-                    # 🔥 相槌終了を待つ（確実に待機）
-                    logger.info(f"[Quick Response] 待機開始: {quick_delay}秒")
+                    # 相槌の長さ分だけ待機（次の音声が被らないように）
                     await asyncio.sleep(quick_delay)
-                    logger.info(f"[Quick Response] 待機終了")
+                    logger.info(f"[DEBUG] 待機完了")
+                else:
+                    logger.warning(f"[DEBUG] quick_audio が None のため即答スキップ")
 
                 # 復唱モード検知
                 if "復唱" in transcript:
@@ -481,13 +496,8 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         active_calls[call_sid]['in_recitation_mode'] = True
                         logger.info(f"[Recitation Mode] 復唱モード開始")
 
-                # 🔥 再度、音声再生中かチェック（念のため）
-                if call_sid and call_sid in active_calls:
-                    if active_calls[call_sid].get('is_playing_audio', False):
-                        logger.info(f"[Process Audio] LLM処理前に音声再生中を検知 → スキップ")
-                        return
-
                 # Gemini で応答生成（非同期化）
+                logger.info(f"[LLM] Gemini処理開始")
                 ai_response = await asyncio.to_thread(get_gemini_response, transcript, call_sid)
                 logger.info(f"[Gemini] 応答: {ai_response}")
 
@@ -510,7 +520,7 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 logger.info(f"[Audio Cache] 保存: {audio_id}")
 
                 # 音声の長さを推定（日本語: 1文字あたり0.25秒 + バッファ）
-                estimated_duration = len(ai_response) * 0.25 + 2.0  # 🔥 バッファ増加
+                estimated_duration = len(ai_response) * 0.25 + 2.0
 
                 # AI音声再生中フラグを設定
                 if call_sid in active_calls:
@@ -528,6 +538,8 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
 
                 # 推定時間後にフラグを解除
                 asyncio.create_task(reset_playing_flag(call_sid, estimated_duration))
+            else:
+                logger.info(f"[DEBUG] 条件不通過: transcript='{transcript}', confidence={confidence}")
 
     except Exception as e:
         import traceback
