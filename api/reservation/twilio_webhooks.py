@@ -61,6 +61,7 @@ audio_cache = {}
 
 # 即座の相槌音声（事前生成）
 acknowledgment_audio = None
+quick_hai_audio = None  # 短い相槌「はい。」
 
 # ========================================
 # Google Cloud TTS
@@ -116,10 +117,15 @@ def synthesize_speech_mp3(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda") -
 
 def initialize_acknowledgment_audio():
     """即座の相槌音声を事前生成"""
-    global acknowledgment_audio
+    global acknowledgment_audio, quick_hai_audio
     try:
-        acknowledgment_audio = synthesize_speech_mp3("はい、了解しました。")
-        logger.info(f"[Init] 相槌音声生成完了: {len(acknowledgment_audio)} bytes")
+        # 初回用の丁寧な時間稼ぎ
+        acknowledgment_audio = synthesize_speech_mp3("はい、少々お待ちください。")
+        logger.info(f"[Init] 初回相槌音声生成完了: {len(acknowledgment_audio)} bytes")
+        
+        # 2回目以降用の短い相槌
+        quick_hai_audio = synthesize_speech_mp3("はい。")
+        logger.info(f"[Init] 短い相槌音声生成完了: {len(quick_hai_audio)} bytes")
     except Exception as e:
         logger.error(f"[Init] 相槌音声生成エラー: {e}")
 
@@ -385,9 +391,15 @@ async def handle_media_stream(websocket: WebSocket):
 async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: str, audio_data: bytes):
     """
     音声チャンクを処理
-    Google STT → Gemini → Google TTS → Twilio送信
+    Google STT → 即答相槌 → Gemini → Google TTS → Twilio送信
     """
     try:
+        # 音声再生中は処理をスキップ
+        if call_sid and call_sid in active_calls:
+            if active_calls[call_sid].get('is_playing_audio', False):
+                logger.info(f"[Process Audio] 音声再生中のためスキップ: {call_sid}")
+                return
+        
         logger.info(f"[Process Audio] 処理開始: {len(audio_data)} bytes")
 
         # Google Cloud STT で音声認識（非同期化）
@@ -418,38 +430,49 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'timestamp': datetime.now().isoformat()
                     })
 
-                # 頻出フレーズ検知（「確認」「待って」「復唱」など）
-                quick_response_keywords = ["確認", "待って", "お待ち", "少々"]
-                needs_quick_response = any(keyword in transcript for keyword in quick_response_keywords)
+                # 通話開始からの発話回数でチェック
+                response_count = len(active_calls.get(call_sid, {}).get('transcript', []))
+                is_first_response = response_count <= 2  # 店員の1回目の発話
+
+                # 即答モード（全ての発話に対して相槌を入れる）
+                if is_first_response and acknowledgment_audio:
+                    # 初回: 丁寧な時間稼ぎ
+                    quick_audio = acknowledgment_audio
+                    quick_delay = 1.5
+                    quick_text = "はい、少々お待ちください。"
+                    logger.info(f"[Quick Response] 初回応答 → 「{quick_text}」")
+                elif quick_hai_audio:
+                    # 2回目以降: 短い相槌
+                    quick_audio = quick_hai_audio
+                    quick_delay = 0.8
+                    quick_text = "はい。"
+                    logger.info(f"[Quick Response] 通常応答 → 「{quick_text}」")
+                else:
+                    quick_audio = None
+
+                # 即答音声を再生
+                if quick_audio:
+                    quick_id = str(uuid.uuid4())
+                    audio_cache[quick_id] = quick_audio
+                    
+                    # フラグを設定して即座に再生
+                    if call_sid in active_calls:
+                        active_calls[call_sid]['is_playing_audio'] = True
+                    
+                    # 即座に再生開始
+                    await update_call_with_audio(call_sid, quick_id)
+                    
+                    # 相槌が終わるのを待つ（フラグは自動でリセット）
+                    asyncio.create_task(reset_playing_flag(call_sid, quick_delay))
+                    
+                    # 相槌終了を待ってからLLM処理
+                    await asyncio.sleep(quick_delay)
 
                 # 復唱モード検知
                 if "復唱" in transcript:
                     if call_sid in active_calls:
                         active_calls[call_sid]['in_recitation_mode'] = True
                         logger.info(f"[Recitation Mode] 復唱モード開始")
-
-                # 即答ルーティンの実行（音声認識前に実行）
-                if needs_quick_response and acknowledgment_audio:
-                    ack_id = str(uuid.uuid4())
-                    audio_cache[ack_id] = acknowledgment_audio
-                    logger.info(f"[Quick Response] 頻出フレーズ検知: '{transcript}' → 即座に相槌")
-                    # 即座に再生
-                    asyncio.create_task(update_call_with_audio(call_sid, ack_id))
-                    # 相槌再生中フラグ
-                    if call_sid in active_calls:
-                        active_calls[call_sid]['is_playing_audio'] = True
-                    asyncio.create_task(reset_playing_flag(call_sid, 1.5))
-
-                    # 会話履歴に追加
-                    if call_sid in active_calls:
-                        active_calls[call_sid]['transcript'].append({
-                            'role': 'AI',
-                            'text': 'かしこまりました。',
-                            'timestamp': datetime.now().isoformat()
-                        })
-
-                    # Gemini処理をスキップ
-                    return
 
                 # Gemini で応答生成（非同期化）
                 ai_response = await asyncio.to_thread(get_gemini_response, transcript, call_sid)
