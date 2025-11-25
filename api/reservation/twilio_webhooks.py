@@ -422,6 +422,12 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
             logger.info(f"[STT] 認識: '{transcript}' (confidence: {confidence:.2f})")
 
             if transcript and confidence > 0.5:
+                # 🔥 会話履歴に追加する前に店員の発話回数をカウント
+                staff_count = sum(1 for item in active_calls.get(call_sid, {}).get('transcript', []) if item['role'] == '店員')
+                is_first_response = staff_count == 0  # 店員の1回目
+                
+                logger.info(f"[Response Check] 店員発話回数={staff_count}, 初回={is_first_response}")
+
                 # 会話履歴に追加
                 if call_sid in active_calls:
                     active_calls[call_sid]['transcript'].append({
@@ -430,49 +436,56 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'timestamp': datetime.now().isoformat()
                     })
 
-                # 通話開始からの発話回数でチェック
-                response_count = len(active_calls.get(call_sid, {}).get('transcript', []))
-                is_first_response = response_count <= 2  # 店員の1回目の発話
-
                 # 即答モード（全ての発話に対して相槌を入れる）
+                quick_audio = None
+                quick_delay = 0
+                quick_text = ""
+                
                 if is_first_response and acknowledgment_audio:
                     # 初回: 丁寧な時間稼ぎ
                     quick_audio = acknowledgment_audio
-                    quick_delay = 1.5
+                    quick_delay = 2.5  # 🔥 少し長めに設定
                     quick_text = "はい、少々お待ちください。"
                     logger.info(f"[Quick Response] 初回応答 → 「{quick_text}」")
                 elif quick_hai_audio:
                     # 2回目以降: 短い相槌
                     quick_audio = quick_hai_audio
-                    quick_delay = 0.8
+                    quick_delay = 1.0  # 🔥 0.8→1.0に延長
                     quick_text = "はい。"
                     logger.info(f"[Quick Response] 通常応答 → 「{quick_text}」")
-                else:
-                    quick_audio = None
 
                 # 即答音声を再生
                 if quick_audio:
                     quick_id = str(uuid.uuid4())
                     audio_cache[quick_id] = quick_audio
                     
-                    # フラグを設定して即座に再生
+                    # 🔥 フラグを先に設定（確実に）
                     if call_sid in active_calls:
                         active_calls[call_sid]['is_playing_audio'] = True
+                        logger.info(f"[Audio Playback] フラグ設定: 即答音声")
                     
                     # 即座に再生開始
                     await update_call_with_audio(call_sid, quick_id)
                     
-                    # 相槌が終わるのを待つ（フラグは自動でリセット）
+                    # 🔥 フラグリセットを予約
                     asyncio.create_task(reset_playing_flag(call_sid, quick_delay))
                     
-                    # 相槌終了を待ってからLLM処理
+                    # 🔥 相槌終了を待つ（確実に待機）
+                    logger.info(f"[Quick Response] 待機開始: {quick_delay}秒")
                     await asyncio.sleep(quick_delay)
+                    logger.info(f"[Quick Response] 待機終了")
 
                 # 復唱モード検知
                 if "復唱" in transcript:
                     if call_sid in active_calls:
                         active_calls[call_sid]['in_recitation_mode'] = True
                         logger.info(f"[Recitation Mode] 復唱モード開始")
+
+                # 🔥 再度、音声再生中かチェック（念のため）
+                if call_sid and call_sid in active_calls:
+                    if active_calls[call_sid].get('is_playing_audio', False):
+                        logger.info(f"[Process Audio] LLM処理前に音声再生中を検知 → スキップ")
+                        return
 
                 # Gemini で応答生成（非同期化）
                 ai_response = await asyncio.to_thread(get_gemini_response, transcript, call_sid)
@@ -496,8 +509,8 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 audio_cache[audio_id] = tts_audio
                 logger.info(f"[Audio Cache] 保存: {audio_id}")
 
-                # 音声の長さを推定（日本語: 1文字あたり0.2秒）
-                estimated_duration = len(ai_response) * 0.2 + 1.0  # +1秒バッファ
+                # 音声の長さを推定（日本語: 1文字あたり0.25秒 + バッファ）
+                estimated_duration = len(ai_response) * 0.25 + 2.0  # 🔥 バッファ増加
 
                 # AI音声再生中フラグを設定
                 if call_sid in active_calls:
