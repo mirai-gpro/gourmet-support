@@ -177,7 +177,13 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
     history_text = "\n".join([f"{h['role']}: {h['text']}" for h in history[-5:]])
 
     prompt = f"""あなたはレストラン予約の電話をかけている予約代行AIです。
-以下の予約情報で予約を取ってください。丁寧な日本語で簡潔に話してください。
+以下の予約情報で予約を取ってください。
+
+【重要な指示】
+- 1文のみで簡潔に応答してください（長くても15文字以内）
+- 既に伝えた情報は繰り返さないでください
+- 店員が「それでは」「失礼します」など終了を示唆したら、「ありがとうございました」で終了してください
+- 不要な確認や挨拶は省略してください
 
 【予約情報】
 - 予約者名: {RESERVATION_INFO['reserver_name']}
@@ -195,7 +201,7 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
 【店員の発言】
 {user_input}
 
-【あなたの応答】（1-2文で簡潔に）:"""
+【あなたの応答】（1文、15文字以内）:"""
 
     try:
         response = gemini_model.generate_content(prompt)
@@ -234,7 +240,7 @@ async def handle_answer(request: Request):
 
     # 最初の挨拶
     from urllib.parse import quote
-    greeting = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシストです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
+    greeting = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
 
     # TwiMLレスポンス
     response = VoiceResponse()
@@ -315,7 +321,15 @@ async def handle_media_stream(websocket: WebSocket):
                     logger.info(f"[Media Stream] 受信 track={track}, payload_len={len(payload) if payload else 0}")
 
                 # inbound（相手の声）を処理
+                # AI音声再生中はバッファリングをスキップ
                 if payload and track == 'inbound':
+                    # AI音声再生中かチェック
+                    if call_sid and call_sid in active_calls:
+                        is_playing = active_calls[call_sid].get('is_playing_audio', False)
+                        if is_playing:
+                            # AI音声再生中はバッファリングしない
+                            continue
+
                     # Base64デコード
                     audio_data = base64.b64decode(payload)
                     audio_buffer.append(audio_data)
@@ -333,9 +347,9 @@ async def handle_media_stream(websocket: WebSocket):
                     else:
                         silence_chunks = 0
 
-                    # 発話終了を検知（無音が15チャンク=約300ms続いた場合）
+                    # 発話終了を検知（無音が25チャンク=約500ms続いた場合）
                     # かつ、バッファに十分なデータがある場合（最低0.5秒）
-                    if len(audio_buffer) >= 25 and silence_chunks >= 15:
+                    if len(audio_buffer) >= 25 and silence_chunks >= 25:
                         logger.info(f"[Media Stream] 発話終了検知: {len(audio_buffer)} chunks, silence={silence_chunks}")
                         # バックグラウンドタスクとして実行
                         audio_to_process = b''.join(audio_buffer)
@@ -415,14 +429,6 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'timestamp': datetime.now().isoformat()
                     })
 
-                # 即座に相槌を再生（Gemini処理中の待ち時間を埋める）
-                if acknowledgment_audio:
-                    ack_id = str(uuid.uuid4())
-                    audio_cache[ack_id] = acknowledgment_audio
-                    logger.info(f"[Acknowledgment] 相槌再生開始: {ack_id}")
-                    # ロックを使わずに即座に再生
-                    asyncio.create_task(update_call_with_audio(call_sid, ack_id))
-
                 # Gemini で応答生成（非同期化）
                 ai_response = await asyncio.to_thread(get_gemini_response, transcript, call_sid)
                 logger.info(f"[Gemini] 応答: {ai_response}")
@@ -445,6 +451,14 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 audio_cache[audio_id] = tts_audio
                 logger.info(f"[Audio Cache] 保存: {audio_id}")
 
+                # 音声の長さを推定（日本語: 1文字あたり0.2秒）
+                estimated_duration = len(ai_response) * 0.2 + 1.0  # +1秒バッファ
+
+                # AI音声再生中フラグを設定
+                if call_sid in active_calls:
+                    active_calls[call_sid]['is_playing_audio'] = True
+                    logger.info(f"[Audio Playback] 開始フラグ設定: {estimated_duration:.1f}秒")
+
                 # Twilio REST API で通話を更新して音声再生
                 lock = audio_locks.get(call_sid)
                 if lock:
@@ -454,10 +468,21 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 else:
                     await update_call_with_audio(call_sid, audio_id)
 
+                # 推定時間後にフラグを解除
+                asyncio.create_task(reset_playing_flag(call_sid, estimated_duration))
+
     except Exception as e:
         import traceback
         logger.error(f"[Process Audio] エラー: {e}")
         logger.error(f"[Process Audio] トレースバック: {traceback.format_exc()}")
+
+
+async def reset_playing_flag(call_sid: str, delay: float):
+    """音声再生完了後にフラグを解除"""
+    await asyncio.sleep(delay)
+    if call_sid in active_calls:
+        active_calls[call_sid]['is_playing_audio'] = False
+        logger.info(f"[Audio Playback] 終了フラグ解除: {call_sid}")
 
 
 async def update_call_with_audio(call_sid: str, audio_id: str):
