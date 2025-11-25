@@ -133,7 +133,7 @@ def initialize_acknowledgment_audio():
     """即座の相槌音声を事前生成"""
     global acknowledgment_audio
     try:
-        acknowledgment_audio = synthesize_speech_mp3("はい、かしこまりました。")
+        acknowledgment_audio = synthesize_speech_mp3("はい、了解しました。")
         logger.info(f"[Init] 相槌音声生成完了: {len(acknowledgment_audio)} bytes")
     except Exception as e:
         logger.error(f"[Init] 相槌音声生成エラー: {e}")
