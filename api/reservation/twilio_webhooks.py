@@ -178,17 +178,7 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
     history_text = "\n".join([f"{h['role']}: {h['text']}" for h in history[-10:]])
 
     prompt = f"""あなたはレストラン予約の電話をかけている予約代行AIです。
-以下の予約情報で予約を取ってください。
-
-【重要な指示】
-- 簡潔に応答してください（1-2文、30文字以内）
-- 既に伝えた情報を何度も繰り返さないでください
-- 店員が「それでは」「失礼します」など終了を示唆したら、「ありがとうございました」で終了してください
-- 店員が「復唱します」「確認します」と言ったら、「はい、お願いします」のみ応答してください
-- 店員が「私は〇〇と言います」と自己紹介したら、「承知いたしました、〇〇様」と応答してください
-- 店員が予約内容を確認している時は、「はい」「その通りです」など短く肯定してください
-- 店員が質問した時のみ、必要な情報を簡潔に答えてください
-- 文脈から判断して、不要な応答は避けてください
+以下の予約情報で予約を取ってください。丁寧な日本語で簡潔に話してください（1-2文）。
 
 【予約情報】
 - 予約者名: {RESERVATION_INFO['reserver_name']}
@@ -206,7 +196,7 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
 【店員の発言】
 {user_input}
 
-【あなたの応答】（1-2文、30文字以内）:"""
+【あなたの応答】:"""
 
     try:
         response = gemini_model.generate_content(prompt)
@@ -352,15 +342,25 @@ async def handle_media_stream(websocket: WebSocket):
                     else:
                         silence_chunks = 0
 
-                    # 発話終了を検知（無音が30チャンク=約600ms続いた場合）
+                    # 復唱モード中かチェック
+                    in_recitation_mode = active_calls.get(call_sid, {}).get('in_recitation_mode', False)
+
+                    # 復唱モード中は無音検知を2秒（100チャンク）に延長、通常は600ms（30チャンク）
+                    silence_threshold = 100 if in_recitation_mode else 30
+
+                    # 発話終了を検知
                     # かつ、バッファに十分なデータがある場合（最低0.5秒）
-                    if len(audio_buffer) >= 25 and silence_chunks >= 30:
-                        logger.info(f"[Media Stream] 発話終了検知: {len(audio_buffer)} chunks, silence={silence_chunks}")
+                    if len(audio_buffer) >= 25 and silence_chunks >= silence_threshold:
+                        logger.info(f"[Media Stream] 発話終了検知: {len(audio_buffer)} chunks, silence={silence_chunks}, 復唱モード={in_recitation_mode}")
                         # バックグラウンドタスクとして実行
                         audio_to_process = b''.join(audio_buffer)
                         audio_buffer.clear()
                         if call_sid in active_calls:
                             active_calls[call_sid]['silence_chunks'] = 0
+                            # 復唱モード解除
+                            if in_recitation_mode:
+                                active_calls[call_sid]['in_recitation_mode'] = False
+                                logger.info(f"[Recitation Mode] 復唱モード終了")
                         asyncio.create_task(
                             process_audio_chunk(websocket, stream_sid, call_sid, audio_to_process)
                         )
@@ -369,6 +369,10 @@ async def handle_media_stream(websocket: WebSocket):
                         logger.info(f"[Media Stream] 最大バッファ: {len(audio_buffer)} chunks")
                         audio_to_process = b''.join(audio_buffer)
                         audio_buffer.clear()
+                        # 復唱モード解除
+                        if call_sid in active_calls and active_calls.get(call_sid, {}).get('in_recitation_mode', False):
+                            active_calls[call_sid]['in_recitation_mode'] = False
+                            logger.info(f"[Recitation Mode] 復唱モード終了（最大バッファ）")
                         asyncio.create_task(
                             process_audio_chunk(websocket, stream_sid, call_sid, audio_to_process)
                         )
@@ -434,17 +438,38 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'timestamp': datetime.now().isoformat()
                     })
 
-                # 即座の相槌を再生（店員の発話が長い場合のみ、待ち時間を埋める）
-                if len(transcript) >= 10 and acknowledgment_audio:
+                # 頻出フレーズ検知（「確認」「待って」「復唱」など）
+                quick_response_keywords = ["確認", "待って", "お待ち", "少々"]
+                needs_quick_response = any(keyword in transcript for keyword in quick_response_keywords)
+
+                # 復唱モード検知
+                if "復唱" in transcript:
+                    if call_sid in active_calls:
+                        active_calls[call_sid]['in_recitation_mode'] = True
+                        logger.info(f"[Recitation Mode] 復唱モード開始")
+
+                # 頻出フレーズには即座に「かしこまりました」を再生してGeminiスキップ
+                if needs_quick_response and acknowledgment_audio:
                     ack_id = str(uuid.uuid4())
                     audio_cache[ack_id] = acknowledgment_audio
-                    logger.info(f"[Acknowledgment] 相槌再生開始: {ack_id}")
-                    # ロックを使わずに即座に再生
+                    logger.info(f"[Quick Response] 頻出フレーズ検知: '{transcript}' → 即座に相槌")
+                    # 即座に再生
                     asyncio.create_task(update_call_with_audio(call_sid, ack_id))
-                    # 相槌再生中フラグ（短時間）
+                    # 相槌再生中フラグ
                     if call_sid in active_calls:
                         active_calls[call_sid]['is_playing_audio'] = True
-                    asyncio.create_task(reset_playing_flag(call_sid, 1.5))  # 1.5秒後に解除
+                    asyncio.create_task(reset_playing_flag(call_sid, 1.5))
+
+                    # 会話履歴に追加
+                    if call_sid in active_calls:
+                        active_calls[call_sid]['transcript'].append({
+                            'role': 'AI',
+                            'text': 'かしこまりました。',
+                            'timestamp': datetime.now().isoformat()
+                        })
+
+                    # Gemini処理をスキップ
+                    return
 
                 # Gemini で応答生成（非同期化）
                 ai_response = await asyncio.to_thread(get_gemini_response, transcript, call_sid)
