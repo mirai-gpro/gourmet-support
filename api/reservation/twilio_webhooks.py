@@ -316,54 +316,26 @@ async def handle_media_stream(websocket: WebSocket):
                     audio_data = base64.b64decode(payload)
                     audio_buffer.append(audio_data)
 
-                    # 音声エネルギーで発話検知（mulaw: 128が無音、差が大きいほど音声あり）
-                    energy = sum(abs(b - 128) for b in audio_data) / len(audio_data)
-
-                    # 発話中かどうかを判定（通話ごとの無音カウンター）
-                    if call_sid and call_sid in active_calls:
-                        if energy > 20:  # 閾値: 発話中（店舗の騒音を考慮して20に設定）
-                            active_calls[call_sid]['silence_chunks'] = 0
-                        else:
-                            active_calls[call_sid]['silence_chunks'] = active_calls[call_sid].get('silence_chunks', 0) + 1
-                        silence_chunks = active_calls[call_sid].get('silence_chunks', 0)
-                        
-                        # デバッグ: エネルギー値をログ出力（最初の100チャンクのみ）
-                        if len(audio_buffer) < 100:
-                            logger.info(f"[Energy] energy={energy:.2f}, 閾値=20, 判定={'発話中' if energy > 20 else '無音'}, silence_chunks={silence_chunks}, buffer={len(audio_buffer)}")
-                    else:
-                        silence_chunks = 0
-
+                    # 最小バッファサイズ（0.5秒 = 25チャンク）に達したら処理開始
+                    # VADはSTT側で判定するため、ここではバッファサイズのみで判定
+                    
                     # 復唱モード中かチェック
                     in_recitation_mode = active_calls.get(call_sid, {}).get('in_recitation_mode', False)
 
-                    # 復唱モード中は無音検知を2秒（100チャンク）に延長、通常は600ms（30チャンク）
-                    silence_threshold = 100 if in_recitation_mode else 30
-
-                    # 発話終了を検知
-                    # かつ、バッファに十分なデータがある場合（最低0.5秒）
-                    if len(audio_buffer) >= 25 and silence_chunks >= silence_threshold:
-                        logger.info(f"[Media Stream] 発話終了検知: {len(audio_buffer)} chunks, silence={silence_chunks}, 復唱モード={in_recitation_mode}")
-                        # バックグラウンドタスクとして実行
-                        audio_to_process = b''.join(audio_buffer)
-                        audio_buffer.clear()
-                        if call_sid in active_calls:
-                            active_calls[call_sid]['silence_chunks'] = 0
-                            # 復唱モード解除
-                            if in_recitation_mode:
-                                active_calls[call_sid]['in_recitation_mode'] = False
-                                logger.info(f"[Recitation Mode] 復唱モード終了")
-                        asyncio.create_task(
-                            process_audio_chunk(websocket, stream_sid, call_sid, audio_to_process)
-                        )
-                    # 最大バッファサイズに達した場合も処理（10秒分）
-                    elif len(audio_buffer) >= 500:
-                        logger.info(f"[Media Stream] 最大バッファ: {len(audio_buffer)} chunks")
+                    # 最小バッファ（25チャンク = 0.5秒）以上で処理
+                    # 復唱モードは長め（100チャンク = 2秒）に設定
+                    silence_threshold = 100 if in_recitation_mode else 25
+                    max_buffer_size = 250 if in_recitation_mode else 150  # 5秒 / 3秒
+                    
+                    # バッファサイズで処理開始を判定（VADはSTT側で行う）
+                    if len(audio_buffer) >= max_buffer_size:
+                        logger.info(f"[Media Stream] バッファ到達: {len(audio_buffer)} chunks")
                         audio_to_process = b''.join(audio_buffer)
                         audio_buffer.clear()
                         # 復唱モード解除
                         if call_sid and active_calls.get(call_sid, {}).get('in_recitation_mode', False):
                             active_calls[call_sid]['in_recitation_mode'] = False
-                            logger.info(f"[Recitation Mode] 復唱モード終了（最大バッファ）")
+                            logger.info(f"[Recitation Mode] 復唱モード終了（バッファ到達）")
                         asyncio.create_task(
                             process_audio_chunk(websocket, stream_sid, call_sid, audio_to_process)
                         )
@@ -408,11 +380,24 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
 
         # Google Cloud STT で音声認識（非同期化）
         audio = speech.RecognitionAudio(content=audio_data)
+        
+        # フレーズヒントの設定
+        phrases = [
+            "予約", "空席", "満席", "お取りできます", "承知いたしました",
+            "かしこまりました", "少々お待ちください", "確認いたします",
+            "テーブル席", "カウンター席", "個室", "お名前", "人数",
+            "日時", "時間", "お電話番号"
+        ]
+        
         config = speech.RecognitionConfig(
             encoding=speech.RecognitionConfig.AudioEncoding.MULAW,
             sample_rate_hertz=8000,
             language_code="ja-JP",
             model="phone_call",
+            enable_automatic_punctuation=True,
+            speech_contexts=[speech.SpeechContext(phrases=phrases)],
+            # VAD（Voice Activity Detection）を有効化
+            use_enhanced=True,  # 高精度モデルを使用
         )
 
         # 同期関数をスレッドプールで実行
