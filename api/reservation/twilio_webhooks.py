@@ -119,8 +119,8 @@ def initialize_acknowledgment_audio():
     """即座の相槌音声を事前生成"""
     global acknowledgment_audio, quick_hai_audio
     try:
-        # 初回用の丁寧な時間稼ぎ
-        acknowledgment_audio = synthesize_speech_mp3("はい、少々お待ちください。")
+        # 初回用の相槌
+        acknowledgment_audio = synthesize_speech_mp3("はい、かしこまりました。")
         logger.info(f"[Init] 初回相槌音声生成完了: {len(acknowledgment_audio)} bytes")
         
         # 2回目以降用の短い相槌
@@ -454,10 +454,10 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 quick_text = ""
                 
                 if is_first_response and acknowledgment_audio:
-                    # 初回: 丁寧な時間稼ぎ
+                    # 初回: 丁寧な相槌
                     quick_audio = acknowledgment_audio
-                    quick_delay = 2.0
-                    quick_text = "はい、少々お待ちください。"
+                    quick_delay = 1.5  # やや長め
+                    quick_text = "はい、かしこまりました。"
                     logger.info(f"[Quick Response] 初回応答 → 「{quick_text}」")
                 elif quick_hai_audio:
                     # 2回目以降: 短い相槌
