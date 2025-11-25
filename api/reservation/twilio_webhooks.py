@@ -182,10 +182,13 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
 
 【重要な指示】
 - 簡潔に応答してください（1-2文、30文字以内）
-- 既に伝えた情報は繰り返さないでください
+- 既に伝えた情報を何度も繰り返さないでください
 - 店員が「それでは」「失礼します」など終了を示唆したら、「ありがとうございました」で終了してください
-- 店員の発言が不明瞭や誤認識の可能性がある場合は、会話の文脈から適切に推測して応答してください
-- 店員が確認している内容には「はい」「そうです」など肯定で答えてください
+- 店員が「復唱します」「確認します」と言ったら、「はい、お願いします」のみ応答してください
+- 店員が「私は〇〇と言います」と自己紹介したら、「承知いたしました、〇〇様」と応答してください
+- 店員が予約内容を確認している時は、「はい」「その通りです」など短く肯定してください
+- 店員が質問した時のみ、必要な情報を簡潔に答えてください
+- 文脈から判断して、不要な応答は避けてください
 
 【予約情報】
 - 予約者名: {RESERVATION_INFO['reserver_name']}
@@ -430,6 +433,18 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'text': transcript,
                         'timestamp': datetime.now().isoformat()
                     })
+
+                # 即座の相槌を再生（店員の発話が長い場合のみ、待ち時間を埋める）
+                if len(transcript) >= 10 and acknowledgment_audio:
+                    ack_id = str(uuid.uuid4())
+                    audio_cache[ack_id] = acknowledgment_audio
+                    logger.info(f"[Acknowledgment] 相槌再生開始: {ack_id}")
+                    # ロックを使わずに即座に再生
+                    asyncio.create_task(update_call_with_audio(call_sid, ack_id))
+                    # 相槌再生中フラグ（短時間）
+                    if call_sid in active_calls:
+                        active_calls[call_sid]['is_playing_audio'] = True
+                    asyncio.create_task(reset_playing_flag(call_sid, 1.5))  # 1.5秒後に解除
 
                 # Gemini で応答生成（非同期化）
                 ai_response = await asyncio.to_thread(get_gemini_response, transcript, call_sid)
