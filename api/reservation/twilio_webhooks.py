@@ -341,7 +341,7 @@ async def handle_media_stream(websocket: WebSocket):
 
                     # 発話中かどうかを判定（通話ごとの無音カウンター）
                     if call_sid and call_sid in active_calls:
-                        if energy > 5:  # 閾値: 発話中
+                        if energy > 3:  # 閾値: 発話中（より敏感に検知）
                             active_calls[call_sid]['silence_chunks'] = 0
                         else:
                             active_calls[call_sid]['silence_chunks'] = active_calls[call_sid].get('silence_chunks', 0) + 1
@@ -349,9 +349,9 @@ async def handle_media_stream(websocket: WebSocket):
                     else:
                         silence_chunks = 0
 
-                    # 発話終了を検知（無音が25チャンク=約500ms続いた場合）
+                    # 発話終了を検知（無音が30チャンク=約600ms続いた場合）
                     # かつ、バッファに十分なデータがある場合（最低0.5秒）
-                    if len(audio_buffer) >= 25 and silence_chunks >= 25:
+                    if len(audio_buffer) >= 25 and silence_chunks >= 30:
                         logger.info(f"[Media Stream] 発話終了検知: {len(audio_buffer)} chunks, silence={silence_chunks}")
                         # バックグラウンドタスクとして実行
                         audio_to_process = b''.join(audio_buffer)
@@ -361,8 +361,8 @@ async def handle_media_stream(websocket: WebSocket):
                         asyncio.create_task(
                             process_audio_chunk(websocket, stream_sid, call_sid, audio_to_process)
                         )
-                    # 最大バッファサイズに達した場合も処理（5秒分）
-                    elif len(audio_buffer) >= 250:
+                    # 最大バッファサイズに達した場合も処理（10秒分）
+                    elif len(audio_buffer) >= 500:
                         logger.info(f"[Media Stream] 最大バッファ: {len(audio_buffer)} chunks")
                         audio_to_process = b''.join(audio_buffer)
                         audio_buffer.clear()
