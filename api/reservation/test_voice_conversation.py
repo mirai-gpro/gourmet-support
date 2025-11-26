@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
-ローカル音声会話テストツール
+ローカル音声会話テストツール (Twilio完全準拠版)
 
 Twilioを使わずに、PCのマイク/ヘッドセットで会話をテスト
-- マイクから店員発話を録音
+- マイクから店員発話を録音（バッファサイズのみで判定、VADなし）
 - Google Cloud STT で音声認識
-- Gemini で応答生成（即答キーワード検知含む）
+- Gemini で応答生成
 - Google Cloud TTS で音声合成
 - スピーカーで音声再生
+
+twilio_webhooks.py (index 10) と完全同一ロジック:
+- 店員の第一声を検知したら、事前生成済みのAI挨拶を即答
+- 全発話に即答相槌（初回: 丁寧1.5秒、2回目以降: 短0.6秒）
+- 復唱モードでバッファ5倍
+- VAD（音声エネルギー計算）なし
 
 使用方法:
     python api/reservation/test_voice_conversation.py [--save-audio]
@@ -28,7 +34,6 @@ from datetime import datetime
 
 # 音声再生用
 try:
-    # pygame をインポート（MP3再生用）
     import pygame
     pygame.mixer.init()
     USE_PYGAME = True
@@ -80,9 +85,21 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000  # 16kHz（STT用）
 
-# VAD設定
-SILENCE_THRESHOLD = 500  # 音声エネルギー閾値
-SILENCE_DURATION = 1.0  # 無音検知時間（秒）
+# バッファ設定（Twilio準拠）
+# 16kHz の場合、1チャンク = 1024サンプル = 約64ms
+# 150チャンク = 約9.6秒、250チャンク = 約16秒
+# Twilioは8kHzなので、16kHzの場合は倍速になる点に注意
+NORMAL_BUFFER_SIZE = 75  # 約4.8秒（16kHzで調整）
+RECITATION_BUFFER_SIZE = 125  # 約8秒（復唱モード）
+
+# 状態管理
+is_first_interaction = True
+in_recitation_mode = False
+
+# 事前生成音声
+acknowledgment_audio = None  # 「はい、かしこまりました。」
+quick_hai_audio = None       # 「はい。」
+greeting_audio = None        # AI挨拶音声
 
 
 def synthesize_speech_mp3(text: str) -> bytes:
@@ -108,6 +125,33 @@ def synthesize_speech_mp3(text: str) -> bytes:
     return response.audio_content
 
 
+def initialize_audio():
+    """即答音声とAI挨拶音声を事前生成"""
+    global acknowledgment_audio, quick_hai_audio, greeting_audio
+    
+    try:
+        print("[初期化] 相槌音声を生成中...")
+        
+        # 初回用の相槌
+        acknowledgment_audio = synthesize_speech_mp3("はい、かしこまりました。")
+        print(f"  ✓ 初回相槌: {len(acknowledgment_audio)} bytes")
+        
+        # 2回目以降用の短い相槌
+        quick_hai_audio = synthesize_speech_mp3("はい。")
+        print(f"  ✓ 短い相槌: {len(quick_hai_audio)} bytes")
+        
+        # AI挨拶音声
+        greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
+        greeting_audio = synthesize_speech_mp3(greeting_text)
+        print(f"  ✓ AI挨拶: {len(greeting_audio)} bytes")
+        
+        print("[初期化] 完了\n")
+        
+    except Exception as e:
+        print(f"[エラー] 音声生成失敗: {e}")
+        sys.exit(1)
+
+
 def play_audio_mp3(audio_bytes: bytes):
     """MP3音声を再生"""
     if not USE_PYGAME:
@@ -115,21 +159,17 @@ def play_audio_mp3(audio_bytes: bytes):
         return
 
     try:
-        # 一時ファイルに保存
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
             tmp_file.write(audio_bytes)
             tmp_path = tmp_file.name
 
-        # pygameで再生
         pygame.mixer.music.load(tmp_path)
         pygame.mixer.music.play()
 
-        # 再生が終わるまで待機
         while pygame.mixer.music.get_busy():
             pygame.time.Clock().tick(10)
 
-        # 一時ファイル削除
         os.remove(tmp_path)
     except Exception as e:
         print(f"[エラー] 音声再生エラー: {e}")
@@ -139,12 +179,22 @@ def transcribe_audio(audio_data: bytes) -> tuple[str, float]:
     """Google Cloud STT で音声認識"""
     audio = speech.RecognitionAudio(content=audio_data)
 
+    # フレーズヒント
+    phrases = [
+        "予約", "空席", "満席", "お取りできます", "承知いたしました",
+        "かしこまりました", "少々お待ちください", "確認いたします",
+        "テーブル席", "カウンター席", "個室", "お名前", "人数",
+        "日時", "時間", "お電話番号", "復唱"
+    ]
+
     config = speech.RecognitionConfig(
         encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
         sample_rate_hertz=RATE,
         language_code="ja-JP",
         model="default",
         enable_automatic_punctuation=True,
+        speech_contexts=[speech.SpeechContext(phrases=phrases)],
+        use_enhanced=True,  # VADを含む高精度モデル
     )
 
     response = stt_client.recognize(config=config, audio=audio)
@@ -190,11 +240,13 @@ def get_gemini_response(user_input: str) -> str:
         return "少々お待ちください。"
 
 
-def record_audio_with_vad(audio_interface: pyaudio.PyAudio) -> bytes:
+def record_audio_buffered(audio_interface: pyaudio.PyAudio) -> bytes:
     """
-    マイクから音声を録音（VAD付き）
-    発話終了を検知したら録音を停止
+    マイクから音声を録音（バッファサイズのみで判定、VADなし）
+    Twilio版と同じロジック: バッファが一定量溜まったら処理
     """
+    global in_recitation_mode
+    
     stream = audio_interface.open(
         format=FORMAT,
         channels=CHANNELS,
@@ -206,41 +258,29 @@ def record_audio_with_vad(audio_interface: pyaudio.PyAudio) -> bytes:
     print("\n[録音開始] 話してください...")
 
     frames = []
-    silence_chunks = 0
-    silence_threshold_chunks = int(SILENCE_DURATION * RATE / CHUNK_SIZE)
-    is_speaking = False
+    max_buffer_size = RECITATION_BUFFER_SIZE if in_recitation_mode else NORMAL_BUFFER_SIZE
+    
+    print(f"[バッファ設定] {'復唱モード' if in_recitation_mode else '通常モード'}: {max_buffer_size} chunks")
 
     try:
-        while True:
+        while len(frames) < max_buffer_size:
             data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
             frames.append(data)
+            
+            # プログレス表示
+            if len(frames) % 10 == 0:
+                print(f"  バッファ: {len(frames)}/{max_buffer_size} chunks", end='\r')
 
-            # 音声エネルギー計算
-            audio_data = list(data)
-            energy = sum(abs(b) for b in audio_data) / len(audio_data)
-
-            # 発話検知
-            if energy > SILENCE_THRESHOLD:
-                silence_chunks = 0
-                if not is_speaking:
-                    is_speaking = True
-                    print("[発話検知]")
-            else:
-                silence_chunks += 1
-
-            # 発話終了検知
-            if is_speaking and silence_chunks >= silence_threshold_chunks:
-                print("[発話終了]")
-                break
-
-            # タイムアウト（30秒）
-            if len(frames) > RATE / CHUNK_SIZE * 30:
-                print("[タイムアウト]")
-                break
+        print(f"\n[バッファ到達] {len(frames)} chunks 処理開始")
 
     finally:
         stream.stop_stream()
         stream.close()
+
+    # 復唱モード解除
+    if in_recitation_mode:
+        in_recitation_mode = False
+        print("[復唱モード] 終了")
 
     # WAV形式でバイト列を返す
     wav_buffer = BytesIO()
@@ -255,8 +295,10 @@ def record_audio_with_vad(audio_interface: pyaudio.PyAudio) -> bytes:
 
 def main():
     """メインループ"""
+    global is_first_interaction, in_recitation_mode
+    
     # コマンドライン引数のパース
-    parser = argparse.ArgumentParser(description="ローカル音声会話テストツール")
+    parser = argparse.ArgumentParser(description="ローカル音声会話テストツール (Twilio完全準拠版)")
     parser.add_argument('--save-audio', action='store_true', help='会話を音声ファイルとして保存')
     args = parser.parse_args()
 
@@ -269,35 +311,33 @@ def main():
         print(f"[録音] 音声ファイルを保存します: {save_dir}")
 
     print("=" * 60)
-    print("ローカル音声会話テストツール")
+    print("ローカル音声会話テストツール (Twilio完全準拠版)")
     print("=" * 60)
     print(f"予約情報: {RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']} {RESERVATION_INFO['time']} / {RESERVATION_INFO['guests']}名")
     print(f"レストラン: {RESERVATION_INFO['restaurant_name']}")
     if save_dir:
         print(f"録音保存先: {save_dir}")
     print("=" * 60)
+    print("\n仕様:")
+    print("  - バッファサイズのみで判定（VADなし、Twilio準拠）")
+    print("  - 店員の第一声を検知 → 事前生成済みAI挨拶を即答")
+    print("  - 全発話に即答相槌（初回: 丁寧1.5秒、2回目以降: 短0.6秒）")
+    print("  - 復唱モード: バッファ5倍拡大")
+    print("=" * 60)
     print("\n操作方法:")
     print("  - マイクに向かって店員役として話してください")
-    print("  - 発話が終わると自動的に認識されます")
+    print("  - バッファが溜まると自動的に認識されます")
     print("  - Ctrl+C で終了")
     print("=" * 60)
+
+    # 事前音声生成
+    initialize_audio()
 
     # PyAudio初期化
     audio = pyaudio.PyAudio()
 
-    # 最初のAI挨拶を事前生成
-    print("\n[初期化] AI挨拶音声を生成中...")
-    greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
-
-    # 即答相槌音声を事前生成
-    print("[初期化] 即答相槌音声を生成中...")
-    acknowledgment_audio = synthesize_speech_mp3("はい、かしこまりました。")
-
-    print("[初期化] 完了\n")
-
     # 会話ループ
     turn = 0
-    is_first_interaction = True
 
     try:
         while True:
@@ -307,7 +347,7 @@ def main():
             print(f"{'='*60}")
 
             # 音声録音
-            audio_data = record_audio_with_vad(audio)
+            audio_data = record_audio_buffered(audio)
 
             # 録音を保存
             if save_dir:
@@ -326,68 +366,100 @@ def main():
 
             print(f"[STT] 認識: '{transcript}' (confidence: {confidence:.2f})")
 
-            # 会話履歴に追加
+            # confidence チェック
+            if confidence <= 0.5:
+                print(f"[STT] 信頼度が低いためスキップ: {confidence:.2f}")
+                continue
+
+            # 会話履歴に追加（店員発話回数カウント用）
+            staff_count = sum(1 for item in conversation_history if item['role'] == '店員')
+            is_first_response = staff_count == 0
+
             conversation_history.append({
                 'role': '店員',
                 'text': transcript,
                 'timestamp': datetime.now().isoformat()
             })
 
-            # 最初の応答の場合、AI挨拶を返す
+            # ============================================
+            # 初回: 店員の第一声を検知 → AI挨拶を即答
+            # ============================================
             if is_first_interaction:
-                print("[AI] 店員の第一声を検知 → AI挨拶を開始")
+                print("[初回検知] 店員の第一声を検知 → AI挨拶を即答")
                 is_first_interaction = False
 
-                print(f"[AI] {greeting_text}")
-                print("[TTS] 音声再生中...")
-                greeting_audio = synthesize_speech_mp3(greeting_text)
+                if greeting_audio:
+                    print(f"[AI挨拶] 再生中...")
+                    play_audio_mp3(greeting_audio)
 
-                # AI挨拶を保存
-                if save_dir:
-                    ai_audio_path = save_dir / f"turn_{turn:02d}_ai_greeting.mp3"
-                    with open(ai_audio_path, 'wb') as f:
-                        f.write(greeting_audio)
-                    print(f"[保存] AI挨拶: {ai_audio_path.name}")
+                    # AI挨拶を保存
+                    if save_dir:
+                        ai_audio_path = save_dir / f"turn_{turn:02d}_ai_greeting.mp3"
+                        with open(ai_audio_path, 'wb') as f:
+                            f.write(greeting_audio)
+                        print(f"[保存] AI挨拶: {ai_audio_path.name}")
 
-                play_audio_mp3(greeting_audio)
+                    # 会話履歴に追加
+                    greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。..."
+                    conversation_history.append({
+                        'role': 'AI',
+                        'text': greeting_text,
+                        'timestamp': datetime.now().isoformat()
+                    })
 
-                conversation_history.append({
-                    'role': 'AI',
-                    'text': greeting_text,
-                    'timestamp': datetime.now().isoformat()
-                })
+                    print("[AI挨拶] 完了")
                 continue
 
-            # 即答キーワード検知
-            quick_response_keywords = ["確認", "待って", "お待ち", "少々"]
-            needs_quick_response = any(keyword in transcript for keyword in quick_response_keywords)
+            # ============================================
+            # 即答相槌（全発話に対して）
+            # ============================================
+            quick_audio = None
+            quick_delay = 0
+            quick_text = ""
 
-            # 復唱モード検知（情報のみ）
-            if "復唱" in transcript:
-                print("[検知] 復唱モード（次の発話は長めに待ちます）")
+            if is_first_response and acknowledgment_audio:
+                # 初回: 丁寧な相槌
+                quick_audio = acknowledgment_audio
+                quick_delay = 1.5
+                quick_text = "はい、かしこまりました。"
+                print(f"[即答相槌] 初回 → 「{quick_text}」")
+            elif quick_hai_audio:
+                # 2回目以降: 短い相槌
+                quick_audio = quick_hai_audio
+                quick_delay = 0.6
+                quick_text = "はい。"
+                print(f"[即答相槌] 通常 → 「{quick_text}」")
 
-            # 即答相槌
-            if needs_quick_response:
-                print("[AI] 即答相槌: 'はい、かしこまりました。'")
-                print("[TTS] 音声再生中...")
+            if quick_audio:
+                print(f"[TTS] 即答再生中...")
+                play_audio_mp3(quick_audio)
 
                 # 即答相槌を保存
                 if save_dir:
                     ai_audio_path = save_dir / f"turn_{turn:02d}_ai_quick.mp3"
                     with open(ai_audio_path, 'wb') as f:
-                        f.write(acknowledgment_audio)
+                        f.write(quick_audio)
                     print(f"[保存] AI即答: {ai_audio_path.name}")
-
-                play_audio_mp3(acknowledgment_audio)
 
                 conversation_history.append({
                     'role': 'AI',
-                    'text': 'かしこまりました。',
+                    'text': quick_text,
                     'timestamp': datetime.now().isoformat()
                 })
-                continue
 
+                # 相槌の長さ分だけ待機
+                time.sleep(quick_delay)
+
+            # ============================================
+            # 復唱モード検知
+            # ============================================
+            if "復唱" in transcript:
+                in_recitation_mode = True
+                print(f"[復唱モード] 開始 → 次回バッファ: {RECITATION_BUFFER_SIZE} chunks")
+
+            # ============================================
             # Gemini応答
+            # ============================================
             print("[Gemini] 応答生成中...")
             ai_response = get_gemini_response(transcript)
             print(f"[AI] {ai_response}")
@@ -429,7 +501,7 @@ def main():
     if save_dir:
         transcript_path = save_dir / "conversation_transcript.txt"
         with open(transcript_path, 'w', encoding='utf-8') as f:
-            f.write("会話履歴\n")
+            f.write("会話履歴 (Twilio完全準拠版)\n")
             f.write("=" * 60 + "\n\n")
             f.write(f"予約情報:\n")
             f.write(f"  レストラン: {RESERVATION_INFO['restaurant_name']}\n")
