@@ -151,7 +151,7 @@ def initialize_audio():
         print(f"  ✓ 初回相槌: {len(acknowledgment_audio)} bytes")
         
         # 2回目以降用の短い相槌
-        quick_hai_audio = synthesize_speech_mp3("はい。")
+        quick_hai_audio = synthesize_speech_mp3("はい。わかりました。")
         print(f"  ✓ 短い相槌: {len(quick_hai_audio)} bytes")
         
         # AI挨拶音声
@@ -189,10 +189,17 @@ def play_audio_mp3(audio_bytes: bytes):
         print(f"[エラー] 音声再生エラー: {e}")
 
 
-def transcribe_audio_streaming(audio_interface: pyaudio.PyAudio) -> tuple[str, float, bytes]:
+def transcribe_audio_streaming(audio_interface: pyaudio.PyAudio) -> tuple[str, float, bytes, list]:
     """
     Google Cloud STT Streaming API で音声認識
     リアルタイムで音声を送信し、is_final フラグで発話終了を検知
+
+    Returns:
+        tuple[str, float, bytes, list]: (transcript, confidence, wav_audio, raw_frames)
+            - transcript: 認識テキスト
+            - confidence: 信頼度
+            - wav_audio: WAV形式の音声データ（個別ターン用）
+            - raw_frames: 生の音声フレーム（全編録音用）
     """
     print("\n[録音開始] 話してください... (発話が終わると自動的に停止します)")
 
@@ -299,7 +306,7 @@ def transcribe_audio_streaming(audio_interface: pyaudio.PyAudio) -> tuple[str, f
         result_type, transcript, confidence, _ = output_queue.get_nowait()
         if result_type == 'error':
             print(f"[エラー] STTエラー: {transcript}")
-            return "", 0.0, b''
+            return "", 0.0, b'', []
 
         # 録音データをWAV形式で返す
         wav_buffer = BytesIO()
@@ -309,11 +316,11 @@ def transcribe_audio_streaming(audio_interface: pyaudio.PyAudio) -> tuple[str, f
             wf.setframerate(RATE)
             wf.writeframes(b''.join(recorded_chunks))
 
-        return transcript, confidence, wav_buffer.getvalue()
+        return transcript, confidence, wav_buffer.getvalue(), recorded_chunks
 
     except queue.Empty:
         print("[エラー] 認識結果を取得できませんでした")
-        return "", 0.0, b''
+        return "", 0.0, b'', []
 
 
 def get_gemini_response(user_input: str) -> str:
@@ -332,6 +339,11 @@ def get_gemini_response(user_input: str) -> str:
 - 席種: {RESERVATION_INFO['seat_type']}
 - 時間の融通: {RESERVATION_INFO['flexibility']}
 - 備考: {RESERVATION_INFO['notes']}
+
+【重要な指示】
+- 電話番号を伝える際は、必ず1桁ずつ区切って伝えてください。
+  例: 「090-1234-5678」→「ゼロキュウゼロ、イチニーサンヨン、ゴーロクナナハチ」
+- 「6千7百」や「8じゅう9」のような表現は絶対に使わないでください。
 
 【これまでの会話】
 {history_text}
@@ -354,7 +366,7 @@ def get_gemini_response(user_input: str) -> str:
 def main():
     """メインループ"""
     global is_first_interaction, in_recitation_mode
-    
+
     # コマンドライン引数のパース
     parser = argparse.ArgumentParser(description="ローカル音声会話テストツール (Twilio完全準拠版)")
     parser.add_argument('--save-audio', action='store_true', help='会話を音声ファイルとして保存')
@@ -362,6 +374,9 @@ def main():
 
     # 保存ディレクトリの設定
     save_dir = None
+    # 全編録音用バッファ
+    full_recording_frames = []
+
     if args.save_audio:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         save_dir = Path(f"output/conversation_{timestamp}")
@@ -406,7 +421,11 @@ def main():
             print(f"{'='*60}")
 
             # ストリーミングSTT（録音+認識を同時実行）
-            transcript, confidence, audio_data = transcribe_audio_streaming(audio)
+            transcript, confidence, audio_data, raw_frames = transcribe_audio_streaming(audio)
+
+            # 全編録音に追加
+            if save_dir and raw_frames:
+                full_recording_frames.extend(raw_frames)
 
             if not transcript:
                 print("[STT] 認識できませんでした。もう一度お願いします。")
@@ -417,7 +436,7 @@ def main():
                 print(f"[STT] 信頼度が低いためスキップ: {confidence:.2f}")
                 continue
 
-            # 録音を保存
+            # 個別ターンの録音を保存（オプション）
             if save_dir and audio_data:
                 staff_audio_path = save_dir / f"turn_{turn:02d}_staff.wav"
                 with open(staff_audio_path, 'wb') as f:
@@ -479,8 +498,8 @@ def main():
             elif quick_hai_audio:
                 # 2回目以降: 短い相槌
                 quick_audio = quick_hai_audio
-                quick_delay = 0.6
-                quick_text = "はい。"
+                quick_delay = 1.0
+                quick_text = "はい。わかりました。"
                 print(f"[即答相槌] 通常 → 「{quick_text}」")
 
             if quick_audio:
@@ -541,6 +560,16 @@ def main():
         print("\n\n[終了] 会話を終了します。")
     finally:
         audio.terminate()
+
+        # 全編録音を保存
+        if save_dir and full_recording_frames:
+            full_recording_path = save_dir / "full_conversation.wav"
+            with wave.open(str(full_recording_path), 'wb') as wf:
+                wf.setnchannels(CHANNELS)
+                wf.setsampwidth(audio.get_sample_size(FORMAT))
+                wf.setframerate(RATE)
+                wf.writeframes(b''.join(full_recording_frames))
+            print(f"\n[保存] 全編録音: {full_recording_path.name} ({len(full_recording_frames)} chunks)")
 
     # 会話履歴を表示
     print("\n" + "=" * 60)

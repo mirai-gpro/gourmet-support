@@ -125,7 +125,7 @@ def initialize_acknowledgment_audio():
         logger.info(f"[Init] 初回相槌音声生成完了: {len(acknowledgment_audio)} bytes")
 
         # 2回目以降用の短い相槌
-        quick_hai_audio = synthesize_speech_mp3("はい。")
+        quick_hai_audio = synthesize_speech_mp3("はい。わかりました。")
         logger.info(f"[Init] 短い相槌音声生成完了: {len(quick_hai_audio)} bytes")
 
         # AI挨拶音声
@@ -184,6 +184,11 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
 - 席種: {RESERVATION_INFO['seat_type']}
 - 時間の融通: {RESERVATION_INFO['flexibility']}
 - 備考: {RESERVATION_INFO['notes']}
+
+【重要な指示】
+- 電話番号を伝える際は、必ず1桁ずつ区切って伝えてください。
+  例: 「090-1234-5678」→「ゼロキュウゼロ、イチニーサンヨン、ゴーロクナナハチ」
+- 「6千7百」や「8じゅう9」のような表現は絶対に使わないでください。
 
 【これまでの会話】
 {history_text}
@@ -545,8 +550,8 @@ async def process_audio_chunk_with_transcript(websocket: WebSocket, stream_sid: 
         elif quick_hai_audio:
             # 2回目以降: 短い相槌
             quick_audio = quick_hai_audio
-            quick_delay = 0.6
-            quick_text = "はい。"
+            quick_delay = 1.0
+            quick_text = "はい。わかりました。"
             logger.info(f"[Quick Response] 通常応答 → 「{quick_text}」")
         else:
             logger.warning(f"[Quick Response] 相槌音声が利用不可")
@@ -730,8 +735,8 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 elif quick_hai_audio:
                     # 2回目以降: 短い相槌
                     quick_audio = quick_hai_audio
-                    quick_delay = 0.6
-                    quick_text = "はい。"
+                    quick_delay = 1.0
+                    quick_text = "はい。わかりました。"
                     logger.info(f"[Quick Response] 通常応答 → 「{quick_text}」")
                 else:
                     logger.warning(f"[Quick Response] 相槌音声が利用不可")
