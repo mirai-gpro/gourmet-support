@@ -1,14 +1,3 @@
-"""
-Twilio Webhook ハンドラー
-
-仕様書準拠アーキテクチャ:
-- Twilio Media Streams (WebSocket) で生音声を受信
-- Google Cloud STT でリアルタイム音声認識
-- Gemini で会話応答生成
-- Google Cloud TTS で音声合成
-- HTTP経由で音声を再生（Twilio REST API使用）
-"""
-
 import os
 import json
 import base64
@@ -47,7 +36,6 @@ else:
     gemini_model = None
     logger.warning("[Gemini] GOOGLE_API_KEY が未設定")
 
-
 # 予約情報（テスト用）
 RESERVATION_INFO = {
     "restaurant_name": "レストラン岡部",
@@ -73,9 +61,8 @@ audio_cache = {}
 
 # 即座の相槌音声（事前生成）
 acknowledgment_audio = None
-# AI挨拶音声（事前生成）
-greeting_audio = None
-
+quick_hai_audio = None  # 短い相槌「はい。」
+greeting_audio = None  # AI挨拶音声（事前生成）
 
 # ========================================
 # Google Cloud TTS
@@ -107,7 +94,6 @@ def synthesize_speech_google(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda"
 
     return response.audio_content
 
-
 def synthesize_speech_mp3(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda") -> bytes:
     """MP3形式で音声生成（<Play>用）"""
     synthesis_input = texttospeech.SynthesisInput(text=text)
@@ -130,14 +116,17 @@ def synthesize_speech_mp3(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda") -
 
     return response.audio_content
 
-
-def initialize_audio_cache():
+def initialize_acknowledgment_audio():
     """即座の相槌音声とAI挨拶音声を事前生成"""
-    global acknowledgment_audio, greeting_audio
+    global acknowledgment_audio, quick_hai_audio, greeting_audio
     try:
-        # 相槌音声
+        # 初回用の相槌
         acknowledgment_audio = synthesize_speech_mp3("はい、かしこまりました。")
-        logger.info(f"[Init] 相槌音声生成完了: {len(acknowledgment_audio)} bytes")
+        logger.info(f"[Init] 初回相槌音声生成完了: {len(acknowledgment_audio)} bytes")
+
+        # 2回目以降用の短い相槌
+        quick_hai_audio = synthesize_speech_mp3("はい。")
+        logger.info(f"[Init] 短い相槌音声生成完了: {len(quick_hai_audio)} bytes")
 
         # AI挨拶音声
         greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
@@ -146,9 +135,8 @@ def initialize_audio_cache():
     except Exception as e:
         logger.error(f"[Init] 音声生成エラー: {e}")
 
-# アプリ起動時に音声を生成
-initialize_audio_cache()
-
+# アプリ起動時に相槌音声を生成
+initialize_acknowledgment_audio()
 
 # ========================================
 # Google Cloud STT (Streaming)
@@ -171,7 +159,6 @@ def get_stt_streaming_config():
     )
 
     return streaming_config
-
 
 # ========================================
 # Gemini 会話
@@ -212,7 +199,6 @@ def get_gemini_response(user_input: str, call_sid: str) -> str:
     except Exception as e:
         logger.error(f"[Gemini] エラー: {e}")
         return "少々お待ちください。"
-
 
 # ========================================
 # Webhook エンドポイント
@@ -264,7 +250,6 @@ async def handle_answer(request: Request):
         content=str(response),
         media_type="application/xml"
     )
-
 
 @router.websocket("/media-stream")
 async def handle_media_stream(websocket: WebSocket):
@@ -334,50 +319,26 @@ async def handle_media_stream(websocket: WebSocket):
                     audio_data = base64.b64decode(payload)
                     audio_buffer.append(audio_data)
 
-                    # 音声エネルギーで発話検知（mulaw: 128が無音、差が大きいほど音声あり）
-                    energy = sum(abs(b - 128) for b in audio_data) / len(audio_data)
-
-                    # 発話中かどうかを判定（通話ごとの無音カウンター）
-                    if call_sid and call_sid in active_calls:
-                        if energy > 3:  # 閾値: 発話中（より敏感に検知）
-                            active_calls[call_sid]['silence_chunks'] = 0
-                        else:
-                            active_calls[call_sid]['silence_chunks'] = active_calls[call_sid].get('silence_chunks', 0) + 1
-                        silence_chunks = active_calls[call_sid].get('silence_chunks', 0)
-                    else:
-                        silence_chunks = 0
-
+                    # 最小バッファサイズ（0.5秒 = 25チャンク）に達したら処理開始
+                    # VADはSTT側で判定するため、ここではバッファサイズのみで判定
+                    
                     # 復唱モード中かチェック
                     in_recitation_mode = active_calls.get(call_sid, {}).get('in_recitation_mode', False)
 
-                    # 復唱モード中は無音検知を2秒（100チャンク）に延長、通常は600ms（30チャンク）
-                    silence_threshold = 100 if in_recitation_mode else 30
-
-                    # 発話終了を検知
-                    # かつ、バッファに十分なデータがある場合（最低0.5秒）
-                    if len(audio_buffer) >= 25 and silence_chunks >= silence_threshold:
-                        logger.info(f"[Media Stream] 発話終了検知: {len(audio_buffer)} chunks, silence={silence_chunks}, 復唱モード={in_recitation_mode}")
-                        # バックグラウンドタスクとして実行
-                        audio_to_process = b''.join(audio_buffer)
-                        audio_buffer.clear()
-                        if call_sid in active_calls:
-                            active_calls[call_sid]['silence_chunks'] = 0
-                            # 復唱モード解除
-                            if in_recitation_mode:
-                                active_calls[call_sid]['in_recitation_mode'] = False
-                                logger.info(f"[Recitation Mode] 復唱モード終了")
-                        asyncio.create_task(
-                            process_audio_chunk(websocket, stream_sid, call_sid, audio_to_process)
-                        )
-                    # 最大バッファサイズに達した場合も処理（10秒分）
-                    elif len(audio_buffer) >= 500:
-                        logger.info(f"[Media Stream] 最大バッファ: {len(audio_buffer)} chunks")
+                    # 最小バッファ（25チャンク = 0.5秒）以上で処理
+                    # 復唱モードは長め（100チャンク = 2秒）に設定
+                    silence_threshold = 100 if in_recitation_mode else 25
+                    max_buffer_size = 250 if in_recitation_mode else 150  # 5秒 / 3秒
+                    
+                    # バッファサイズで処理開始を判定（VADはSTT側で行う）
+                    if len(audio_buffer) >= max_buffer_size:
+                        logger.info(f"[Media Stream] バッファ到達: {len(audio_buffer)} chunks")
                         audio_to_process = b''.join(audio_buffer)
                         audio_buffer.clear()
                         # 復唱モード解除
-                        if call_sid in active_calls and active_calls.get(call_sid, {}).get('in_recitation_mode', False):
+                        if call_sid and active_calls.get(call_sid, {}).get('in_recitation_mode', False):
                             active_calls[call_sid]['in_recitation_mode'] = False
-                            logger.info(f"[Recitation Mode] 復唱モード終了（最大バッファ）")
+                            logger.info(f"[Recitation Mode] 復唱モード終了（バッファ到達）")
                         asyncio.create_task(
                             process_audio_chunk(websocket, stream_sid, call_sid, audio_to_process)
                         )
@@ -406,11 +367,10 @@ async def handle_media_stream(websocket: WebSocket):
         if call_sid and call_sid in audio_locks:
             del audio_locks[call_sid]
 
-
 async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: str, audio_data: bytes):
     """
     音声チャンクを処理
-    Google STT → Gemini → Google TTS → Twilio送信
+    Google STT → 即答相槌 → Gemini → Google TTS → Twilio送信
     """
     try:
         logger.info(f"[Process Audio] 処理開始: {len(audio_data)} bytes")
@@ -439,13 +399,32 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                     logger.info(f"[First Interaction] AI挨拶再生完了")
                 return
 
+        # 音声再生中は処理をスキップ
+        if call_sid and call_sid in active_calls:
+            if active_calls[call_sid].get('is_playing_audio', False):
+                logger.info(f"[Process Audio] 音声再生中のためスキップ: {call_sid}")
+                return
+
         # Google Cloud STT で音声認識（非同期化）
         audio = speech.RecognitionAudio(content=audio_data)
+        
+        # フレーズヒントの設定
+        phrases = [
+            "予約", "空席", "満席", "お取りできます", "承知いたしました",
+            "かしこまりました", "少々お待ちください", "確認いたします",
+            "テーブル席", "カウンター席", "個室", "お名前", "人数",
+            "日時", "時間", "お電話番号"
+        ]
+        
         config = speech.RecognitionConfig(
             encoding=speech.RecognitionConfig.AudioEncoding.MULAW,
             sample_rate_hertz=8000,
             language_code="ja-JP",
             model="phone_call",
+            enable_automatic_punctuation=True,
+            speech_contexts=[speech.SpeechContext(phrases=phrases)],
+            # VAD（Voice Activity Detection）を有効化
+            use_enhanced=True,  # 高精度モデルを使用
         )
 
         # 同期関数をスレッドプールで実行
@@ -458,7 +437,20 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
 
             logger.info(f"[STT] 認識: '{transcript}' (confidence: {confidence:.2f})")
 
+            # 🔥 デバッグ: confidence チェック前
+            logger.info(f"[DEBUG] confidence={confidence}, 閾値チェック: {confidence > 0.5}")
+
             if transcript and confidence > 0.5:
+                logger.info(f"[DEBUG] 条件通過: transcript='{transcript}', confidence={confidence}")
+                
+                # 🔥 会話履歴に追加する前に店員の発話回数をカウント
+                staff_count = sum(1 for item in active_calls.get(call_sid, {}).get('transcript', []) if item['role'] == '店員')
+                is_first_response = staff_count == 0  # 店員の1回目
+                
+                logger.info(f"[Response Check] 店員発話回数={staff_count}, 初回={is_first_response}")
+                logger.info(f"[DEBUG] acknowledgment_audio存在: {acknowledgment_audio is not None}")
+                logger.info(f"[DEBUG] quick_hai_audio存在: {quick_hai_audio is not None}")
+
                 # 会話履歴に追加
                 if call_sid in active_calls:
                     active_calls[call_sid]['transcript'].append({
@@ -466,10 +458,53 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         'text': transcript,
                         'timestamp': datetime.now().isoformat()
                     })
+                    logger.info(f"[DEBUG] 履歴追加完了")
 
-                # 頻出フレーズ検知（「確認」「待って」「復唱」など）
-                quick_response_keywords = ["確認", "待って", "お待ち", "少々"]
-                needs_quick_response = any(keyword in transcript for keyword in quick_response_keywords)
+                # 即答モード（全ての発話に対して相槌を入れる）
+                quick_audio = None
+                quick_delay = 0
+                quick_text = ""
+                
+                if is_first_response and acknowledgment_audio:
+                    # 初回: 丁寧な相槌
+                    quick_audio = acknowledgment_audio
+                    quick_delay = 1.5  # やや長め
+                    quick_text = "はい、かしこまりました。"
+                    logger.info(f"[Quick Response] 初回応答 → 「{quick_text}」")
+                elif quick_hai_audio:
+                    # 2回目以降: 短い相槌
+                    quick_audio = quick_hai_audio
+                    quick_delay = 0.6
+                    quick_text = "はい。"
+                    logger.info(f"[Quick Response] 通常応答 → 「{quick_text}」")
+                else:
+                    logger.warning(f"[Quick Response] 相槌音声が利用不可")
+
+                # 即答音声を再生
+                if quick_audio:
+                    logger.info(f"[DEBUG] 即答音声再生開始")
+                    quick_id = str(uuid.uuid4())
+                    audio_cache[quick_id] = quick_audio
+                    
+                    # フラグを先に設定
+                    if call_sid in active_calls:
+                        active_calls[call_sid]['is_playing_audio'] = True
+                        logger.info(f"[Audio Playback] フラグ設定: 即答音声 {quick_delay}秒")
+                    
+                    # 即座に再生開始
+                    await update_call_with_audio(call_sid, quick_id)
+                    logger.info(f"[DEBUG] update_call_with_audio完了")
+                    
+                    # 即座にフラグを解除（LLM処理を妨げない）
+                    logger.info(f"[Quick Response] 即答完了、フラグ解除してLLM処理継続")
+                    if call_sid in active_calls:
+                        active_calls[call_sid]['is_playing_audio'] = False
+                    
+                    # 相槌の長さ分だけ待機（次の音声が被らないように）
+                    await asyncio.sleep(quick_delay)
+                    logger.info(f"[DEBUG] 待機完了")
+                else:
+                    logger.warning(f"[DEBUG] quick_audio が None のため即答スキップ")
 
                 # 復唱モード検知
                 if "復唱" in transcript:
@@ -477,30 +512,8 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                         active_calls[call_sid]['in_recitation_mode'] = True
                         logger.info(f"[Recitation Mode] 復唱モード開始")
 
-                # 頻出フレーズには即座に「かしこまりました」を再生してGeminiスキップ
-                if needs_quick_response and acknowledgment_audio:
-                    ack_id = str(uuid.uuid4())
-                    audio_cache[ack_id] = acknowledgment_audio
-                    logger.info(f"[Quick Response] 頻出フレーズ検知: '{transcript}' → 即座に相槌")
-                    # 即座に再生
-                    asyncio.create_task(update_call_with_audio(call_sid, ack_id))
-                    # 相槌再生中フラグ
-                    if call_sid in active_calls:
-                        active_calls[call_sid]['is_playing_audio'] = True
-                    asyncio.create_task(reset_playing_flag(call_sid, 1.5))
-
-                    # 会話履歴に追加
-                    if call_sid in active_calls:
-                        active_calls[call_sid]['transcript'].append({
-                            'role': 'AI',
-                            'text': 'かしこまりました。',
-                            'timestamp': datetime.now().isoformat()
-                        })
-
-                    # Gemini処理をスキップ
-                    return
-
                 # Gemini で応答生成（非同期化）
+                logger.info(f"[LLM] Gemini処理開始")
                 ai_response = await asyncio.to_thread(get_gemini_response, transcript, call_sid)
                 logger.info(f"[Gemini] 応答: {ai_response}")
 
@@ -522,8 +535,8 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 audio_cache[audio_id] = tts_audio
                 logger.info(f"[Audio Cache] 保存: {audio_id}")
 
-                # 音声の長さを推定（日本語: 1文字あたり0.2秒）
-                estimated_duration = len(ai_response) * 0.2 + 1.0  # +1秒バッファ
+                # 音声の長さを推定（日本語: 1文字あたり0.25秒 + バッファ）
+                estimated_duration = len(ai_response) * 0.25 + 2.0
 
                 # AI音声再生中フラグを設定
                 if call_sid in active_calls:
@@ -541,12 +554,13 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
 
                 # 推定時間後にフラグを解除
                 asyncio.create_task(reset_playing_flag(call_sid, estimated_duration))
+            else:
+                logger.info(f"[DEBUG] 条件不通過: transcript='{transcript}', confidence={confidence}")
 
     except Exception as e:
         import traceback
         logger.error(f"[Process Audio] エラー: {e}")
         logger.error(f"[Process Audio] トレースバック: {traceback.format_exc()}")
-
 
 async def reset_playing_flag(call_sid: str, delay: float):
     """音声再生完了後にフラグを解除"""
@@ -613,7 +627,6 @@ async def update_call_with_audio(call_sid: str, audio_id: str):
     except Exception as e:
         logger.error(f"[Twilio API] エラー: {e}")
 
-
 @router.post("/status")
 async def handle_status(request: Request):
     """通話ステータス更新"""
@@ -633,7 +646,6 @@ async def handle_status(request: Request):
             active_calls[call_sid]['ended_at'] = datetime.now().isoformat()
 
     return Response(status_code=200)
-
 
 @router.get("/audio/dynamic")
 async def get_dynamic_audio(text: str = ""):
@@ -655,7 +667,6 @@ async def get_dynamic_audio(text: str = ""):
     except Exception as e:
         logger.error(f"[Google TTS] エラー: {e}")
         return Response(status_code=500)
-
 
 @router.post("/play-audio/{audio_id}")
 async def play_audio_twiml(audio_id: str, request: Request):
@@ -697,7 +708,6 @@ async def play_audio_twiml(audio_id: str, request: Request):
         media_type="application/xml"
     )
 
-
 @router.get("/audio/{audio_id}")
 async def get_cached_audio(audio_id: str):
     """キャッシュされた音声を返す"""
@@ -714,7 +724,6 @@ async def get_cached_audio(audio_id: str):
         logger.warning(f"[Audio Cache] 見つからない: {audio_id}")
         return Response(status_code=404)
 
-
 @router.get("/test")
 async def test_endpoint():
     """Webhook疎通確認用"""
@@ -730,7 +739,6 @@ async def test_endpoint():
             "audio_playback": "HTTP via Twilio REST API"
         }
     }
-
 
 @router.get("/calls")
 async def get_active_calls():
