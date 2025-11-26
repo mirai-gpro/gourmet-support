@@ -69,7 +69,7 @@ else:
 
 # 予約情報（テスト用）
 RESERVATION_INFO = {
-    "restaurant_name": "レストラン岡部",
+    "restaurant_name": "リストランテ鈴木",
     "reserver_name": "山田太郎",
     "contact_phone": "090-1234-5678",
     "date": "12月25日",
