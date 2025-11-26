@@ -586,9 +586,7 @@ def main():
     except KeyboardInterrupt:
         print("\n\n[終了] 会話を終了します。")
     finally:
-        audio.terminate()
-
-        # 全編録音を保存
+        # 全編録音を保存（audio.terminate()の前に実行）
         if save_dir and full_recording_frames:
             full_recording_path = save_dir / "full_conversation.wav"
             with wave.open(str(full_recording_path), 'wb') as wf:
@@ -597,6 +595,8 @@ def main():
                 wf.setframerate(RATE)
                 wf.writeframes(b''.join(full_recording_frames))
             print(f"\n[保存] 全編録音: {full_recording_path.name} ({len(full_recording_frames)} chunks)")
+
+        audio.terminate()
 
     # 会話履歴を表示
     print("\n" + "=" * 60)
