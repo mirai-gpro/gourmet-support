@@ -328,8 +328,8 @@ async def handle_media_stream(websocket: WebSocket):
                     # 最小バッファ（25チャンク = 0.5秒）以上で処理
                     # 復唱モードは長め（100チャンク = 2秒）に設定
                     silence_threshold = 100 if in_recitation_mode else 25
-                    max_buffer_size = 250 if in_recitation_mode else 150  # 5秒 / 3秒
-                    
+                    max_buffer_size = 100 if in_recitation_mode else 50  # 2秒 / 1秒（高速化）
+
                     # バッファサイズで処理開始を判定（VADはSTT側で行う）
                     if len(audio_buffer) >= max_buffer_size:
                         logger.info(f"[Media Stream] バッファ到達: {len(audio_buffer)} chunks")
