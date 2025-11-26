@@ -73,6 +73,8 @@ audio_cache = {}
 
 # 即座の相槌音声（事前生成）
 acknowledgment_audio = None
+# AI挨拶音声（事前生成）
+greeting_audio = None
 
 
 # ========================================
@@ -129,17 +131,23 @@ def synthesize_speech_mp3(text: str, voice_name: str = "ja-JP-Chirp3-HD-Leda") -
     return response.audio_content
 
 
-def initialize_acknowledgment_audio():
-    """即座の相槌音声を事前生成"""
-    global acknowledgment_audio
+def initialize_audio_cache():
+    """即座の相槌音声とAI挨拶音声を事前生成"""
+    global acknowledgment_audio, greeting_audio
     try:
+        # 相槌音声
         acknowledgment_audio = synthesize_speech_mp3("はい、かしこまりました。")
         logger.info(f"[Init] 相槌音声生成完了: {len(acknowledgment_audio)} bytes")
-    except Exception as e:
-        logger.error(f"[Init] 相槌音声生成エラー: {e}")
 
-# アプリ起動時に相槌音声を生成
-initialize_acknowledgment_audio()
+        # AI挨拶音声
+        greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
+        greeting_audio = synthesize_speech_mp3(greeting_text)
+        logger.info(f"[Init] AI挨拶音声生成完了: {len(greeting_audio)} bytes")
+    except Exception as e:
+        logger.error(f"[Init] 音声生成エラー: {e}")
+
+# アプリ起動時に音声を生成
+initialize_audio_cache()
 
 
 # ========================================
@@ -230,21 +238,14 @@ async def handle_answer(request: Request):
         'to': to_number,
         'status': 'answered',
         'started_at': datetime.now().isoformat(),
-        'transcript': []
+        'transcript': [],
+        'is_first_interaction': True  # 最初の応答フラグ
     }
-
-    # 最初の挨拶
-    from urllib.parse import quote
-    greeting = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
 
     # TwiMLレスポンス
     response = VoiceResponse()
 
-    # 挨拶を再生（日本語をURLエンコード）
-    encoded_greeting = quote(greeting, safe='')
-    audio_url = f"{BASE_URL}/api/twilio/audio/dynamic?text={encoded_greeting}"
-    logger.info(f"[Twilio Answer] Audio URL: {audio_url}")
-    response.play(audio_url)
+    # 最初の挨拶は再生せず、店員の発話を待つ
 
     # Media Streams (WebSocket) を開始
     start = Start()
@@ -304,6 +305,10 @@ async def handle_media_stream(websocket: WebSocket):
                     audio_locks[call_sid] = asyncio.Lock()
 
                 logger.info(f"[Media Stream] 開始: streamSid={stream_sid}, callSid={call_sid}")
+
+                # 2.5秒経っても店員が話さない場合、AIから挨拶を開始
+                if call_sid:
+                    asyncio.create_task(fallback_greeting(call_sid, 2.5))
 
             elif event == 'media':
                 # 音声データ受信
@@ -409,6 +414,30 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
     """
     try:
         logger.info(f"[Process Audio] 処理開始: {len(audio_data)} bytes")
+
+        # 最初の応答かチェック
+        if call_sid and call_sid in active_calls:
+            is_first = active_calls[call_sid].get('is_first_interaction', False)
+            if is_first:
+                logger.info(f"[First Interaction] 店員の第一声を検知 → AI挨拶を開始")
+                active_calls[call_sid]['is_first_interaction'] = False
+
+                # 事前生成済みのAI挨拶を再生
+                if greeting_audio:
+                    greeting_id = str(uuid.uuid4())
+                    audio_cache[greeting_id] = greeting_audio
+
+                    # AI音声再生中フラグを設定
+                    active_calls[call_sid]['is_playing_audio'] = True
+
+                    # 挨拶を再生
+                    await update_call_with_audio(call_sid, greeting_id)
+
+                    # 推定時間後にフラグを解除（約30-35秒）
+                    asyncio.create_task(reset_playing_flag(call_sid, 35.0))
+
+                    logger.info(f"[First Interaction] AI挨拶再生完了")
+                return
 
         # Google Cloud STT で音声認識（非同期化）
         audio = speech.RecognitionAudio(content=audio_data)
@@ -525,6 +554,34 @@ async def reset_playing_flag(call_sid: str, delay: float):
     if call_sid in active_calls:
         active_calls[call_sid]['is_playing_audio'] = False
         logger.info(f"[Audio Playback] 終了フラグ解除: {call_sid}")
+
+
+async def fallback_greeting(call_sid: str, timeout: float):
+    """
+    タイムアウト時にAIから挨拶を開始（店員が話さない場合）
+    """
+    await asyncio.sleep(timeout)
+
+    # まだ最初の応答フラグが立っているかチェック
+    if call_sid in active_calls and active_calls[call_sid].get('is_first_interaction', False):
+        logger.info(f"[Fallback Greeting] {timeout}秒経過、店員が話さないためAIから挨拶を開始")
+        active_calls[call_sid]['is_first_interaction'] = False
+
+        # 事前生成済みのAI挨拶を再生
+        if greeting_audio:
+            greeting_id = str(uuid.uuid4())
+            audio_cache[greeting_id] = greeting_audio
+
+            # AI音声再生中フラグを設定
+            active_calls[call_sid]['is_playing_audio'] = True
+
+            # 挨拶を再生
+            await update_call_with_audio(call_sid, greeting_id)
+
+            # 推定時間後にフラグを解除（約30-35秒）
+            asyncio.create_task(reset_playing_flag(call_sid, 35.0))
+
+            logger.info(f"[Fallback Greeting] AI挨拶再生完了")
 
 
 async def update_call_with_audio(call_sid: str, audio_id: str):
