@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-ローカル音声会話テストツール (Twilio完全準拠版)
+ローカル音声会話テストツール (Twilio完全準拠版 - Streaming STT)
 
 Twilioを使わずに、PCのマイク/ヘッドセットで会話をテスト
-- マイクから店員発話を録音（バッファサイズのみで判定、VADなし）
-- Google Cloud STT で音声認識
+- マイクから店員発話を録音（リアルタイムストリーミング）
+- Google Cloud STT Streaming API で音声認識（is_finalフラグで発話終了検知）
 - Gemini で応答生成
 - Google Cloud TTS で音声合成
 - スピーカーで音声再生
 
-twilio_webhooks.py (index 10) と完全同一ロジック:
+twilio_webhooks.py と完全同一ロジック:
 - 店員の第一声を検知したら、事前生成済みのAI挨拶を即答
 - 全発話に即答相槌（初回: 丁寧1.5秒、2回目以降: 短0.6秒）
-- 復唱モードでバッファ5倍
-- VAD（音声エネルギー計算）なし
+- 復唱モード対応
+- Google STT Streaming API の is_final フラグで発話終了検知（VADなし）
 
 使用方法:
     python api/reservation/test_voice_conversation.py [--save-audio]
@@ -28,6 +28,8 @@ import time
 import wave
 import pyaudio
 import argparse
+import queue
+import threading
 from pathlib import Path
 from io import BytesIO
 from datetime import datetime
@@ -85,12 +87,24 @@ FORMAT = pyaudio.paInt16
 CHANNELS = 1
 RATE = 16000  # 16kHz（STT用）
 
-# バッファ設定（Twilio準拠）
-# 16kHz の場合、1チャンク = 1024サンプル = 約64ms
-# 150チャンク = 約9.6秒、250チャンク = 約16秒
-# Twilioは8kHzなので、16kHzの場合は倍速になる点に注意
-NORMAL_BUFFER_SIZE = 75  # 約4.8秒（16kHzで調整）
-RECITATION_BUFFER_SIZE = 125  # 約8秒（復唱モード）
+# ストリーミングSTT設定
+def get_stt_streaming_config():
+    """Google Cloud STT ストリーミング設定"""
+    recognition_config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+        sample_rate_hertz=RATE,
+        language_code="ja-JP",
+        enable_automatic_punctuation=True,
+        model="default",
+    )
+
+    streaming_config = speech.StreamingRecognitionConfig(
+        config=recognition_config,
+        interim_results=True,  # 中間結果も取得
+        single_utterance=False,  # 連続認識
+    )
+
+    return streaming_config
 
 # 状態管理
 is_first_interaction = True
@@ -175,36 +189,131 @@ def play_audio_mp3(audio_bytes: bytes):
         print(f"[エラー] 音声再生エラー: {e}")
 
 
-def transcribe_audio(audio_data: bytes) -> tuple[str, float]:
-    """Google Cloud STT で音声認識"""
-    audio = speech.RecognitionAudio(content=audio_data)
+def transcribe_audio_streaming(audio_interface: pyaudio.PyAudio) -> tuple[str, float, bytes]:
+    """
+    Google Cloud STT Streaming API で音声認識
+    リアルタイムで音声を送信し、is_final フラグで発話終了を検知
+    """
+    print("\n[録音開始] 話してください... (発話が終わると自動的に停止します)")
 
-    # フレーズヒント
-    phrases = [
-        "予約", "空席", "満席", "お取りできます", "承知いたしました",
-        "かしこまりました", "少々お待ちください", "確認いたします",
-        "テーブル席", "カウンター席", "個室", "お名前", "人数",
-        "日時", "時間", "お電話番号", "復唱"
-    ]
+    # 入力キュー: 音声チャンク
+    input_queue = queue.Queue()
 
-    config = speech.RecognitionConfig(
-        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-        sample_rate_hertz=RATE,
-        language_code="ja-JP",
-        model="default",
-        enable_automatic_punctuation=True,
-        speech_contexts=[speech.SpeechContext(phrases=phrases)],
-        use_enhanced=True,  # VADを含む高精度モデル
+    # 出力キュー: 認識結果
+    output_queue = queue.Queue()
+
+    # 録音済み音声（保存用）
+    recorded_chunks = []
+
+    # 録音終了フラグ
+    stop_recording = threading.Event()
+
+    # ストリーミング認識スレッド
+    def run_streaming_recognize():
+        """同期スレッドでストリーミング認識を実行"""
+        accumulated_audio = []
+
+        try:
+            streaming_config = get_stt_streaming_config()
+
+            # リクエストジェネレーター
+            def request_generator():
+                """音声チャンクを生成"""
+                while True:
+                    chunk = input_queue.get()
+                    if chunk is None:  # 終了シグナル
+                        break
+
+                    accumulated_audio.append(chunk)
+                    yield speech.StreamingRecognizeRequest(audio_content=chunk)
+
+            # ストリーミング認識を実行
+            responses = stt_client.streaming_recognize(streaming_config, request_generator())
+
+            # 応答を処理
+            for response in responses:
+                if not response.results:
+                    continue
+
+                for result in response.results:
+                    if not result.alternatives:
+                        continue
+
+                    transcript = result.alternatives[0].transcript
+                    confidence = result.alternatives[0].confidence if result.alternatives else 0.0
+
+                    print(f"  [STT] {'[確定]' if result.is_final else '[中間]'} {transcript}", end='\r' if not result.is_final else '\n')
+
+                    # is_final=True の場合のみ処理
+                    if result.is_final:
+                        print(f"  [STT] 発話終了検知: '{transcript}' (confidence: {confidence:.2f})")
+
+                        # 蓄積された音声データを取得
+                        audio_data = b''.join(accumulated_audio)
+
+                        # 出力キューに結果を送信
+                        output_queue.put(('transcript', transcript, confidence, audio_data))
+
+                        # 録音停止
+                        stop_recording.set()
+                        break
+
+        except Exception as e:
+            import traceback
+            print(f"\n[STT エラー] {e}")
+            print(traceback.format_exc())
+            output_queue.put(('error', str(e), 0.0, b''))
+            stop_recording.set()
+
+    # ストリーミング認識スレッドを開始
+    streaming_thread = threading.Thread(target=run_streaming_recognize, daemon=True)
+    streaming_thread.start()
+
+    # 録音ストリーム
+    stream = audio_interface.open(
+        format=FORMAT,
+        channels=CHANNELS,
+        rate=RATE,
+        input=True,
+        frames_per_buffer=CHUNK_SIZE
     )
 
-    response = stt_client.recognize(config=config, audio=audio)
+    try:
+        # 録音ループ
+        while not stop_recording.is_set():
+            data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+            recorded_chunks.append(data)
+            input_queue.put(data)
 
-    if response.results:
-        transcript = response.results[0].alternatives[0].transcript
-        confidence = response.results[0].alternatives[0].confidence
-        return transcript, confidence
-    else:
-        return "", 0.0
+    finally:
+        # 終了シグナルを送信
+        input_queue.put(None)
+        stream.stop_stream()
+        stream.close()
+
+    # スレッドの終了を待つ
+    streaming_thread.join(timeout=5.0)
+
+    # 結果を取得
+    try:
+        result_type, transcript, confidence, _ = output_queue.get_nowait()
+        if result_type == 'error':
+            print(f"[エラー] STTエラー: {transcript}")
+            return "", 0.0, b''
+
+        # 録音データをWAV形式で返す
+        wav_buffer = BytesIO()
+        with wave.open(wav_buffer, 'wb') as wf:
+            wf.setnchannels(CHANNELS)
+            wf.setsampwidth(audio_interface.get_sample_size(FORMAT))
+            wf.setframerate(RATE)
+            wf.writeframes(b''.join(recorded_chunks))
+
+        return transcript, confidence, wav_buffer.getvalue()
+
+    except queue.Empty:
+        print("[エラー] 認識結果を取得できませんでした")
+        return "", 0.0, b''
 
 
 def get_gemini_response(user_input: str) -> str:
@@ -240,57 +349,6 @@ def get_gemini_response(user_input: str) -> str:
         return "少々お待ちください。"
 
 
-def record_audio_buffered(audio_interface: pyaudio.PyAudio) -> bytes:
-    """
-    マイクから音声を録音（バッファサイズのみで判定、VADなし）
-    Twilio版と同じロジック: バッファが一定量溜まったら処理
-    """
-    global in_recitation_mode
-    
-    stream = audio_interface.open(
-        format=FORMAT,
-        channels=CHANNELS,
-        rate=RATE,
-        input=True,
-        frames_per_buffer=CHUNK_SIZE
-    )
-
-    print("\n[録音開始] 話してください...")
-
-    frames = []
-    max_buffer_size = RECITATION_BUFFER_SIZE if in_recitation_mode else NORMAL_BUFFER_SIZE
-    
-    print(f"[バッファ設定] {'復唱モード' if in_recitation_mode else '通常モード'}: {max_buffer_size} chunks")
-
-    try:
-        while len(frames) < max_buffer_size:
-            data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
-            frames.append(data)
-            
-            # プログレス表示
-            if len(frames) % 10 == 0:
-                print(f"  バッファ: {len(frames)}/{max_buffer_size} chunks", end='\r')
-
-        print(f"\n[バッファ到達] {len(frames)} chunks 処理開始")
-
-    finally:
-        stream.stop_stream()
-        stream.close()
-
-    # 復唱モード解除
-    if in_recitation_mode:
-        in_recitation_mode = False
-        print("[復唱モード] 終了")
-
-    # WAV形式でバイト列を返す
-    wav_buffer = BytesIO()
-    with wave.open(wav_buffer, 'wb') as wf:
-        wf.setnchannels(CHANNELS)
-        wf.setsampwidth(audio_interface.get_sample_size(FORMAT))
-        wf.setframerate(RATE)
-        wf.writeframes(b''.join(frames))
-
-    return wav_buffer.getvalue()
 
 
 def main():
@@ -311,7 +369,7 @@ def main():
         print(f"[録音] 音声ファイルを保存します: {save_dir}")
 
     print("=" * 60)
-    print("ローカル音声会話テストツール (Twilio完全準拠版)")
+    print("ローカル音声会話テストツール (Twilio完全準拠版 - Streaming STT)")
     print("=" * 60)
     print(f"予約情報: {RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']} {RESERVATION_INFO['time']} / {RESERVATION_INFO['guests']}名")
     print(f"レストラン: {RESERVATION_INFO['restaurant_name']}")
@@ -319,14 +377,15 @@ def main():
         print(f"録音保存先: {save_dir}")
     print("=" * 60)
     print("\n仕様:")
-    print("  - バッファサイズのみで判定（VADなし、Twilio準拠）")
+    print("  - Google STT Streaming API (is_final フラグで発話終了検知)")
     print("  - 店員の第一声を検知 → 事前生成済みAI挨拶を即答")
     print("  - 全発話に即答相槌（初回: 丁寧1.5秒、2回目以降: 短0.6秒）")
-    print("  - 復唱モード: バッファ5倍拡大")
+    print("  - 復唱モード対応")
+    print("  - twilio_webhooks.py と完全同一ロジック")
     print("=" * 60)
     print("\n操作方法:")
     print("  - マイクに向かって店員役として話してください")
-    print("  - バッファが溜まると自動的に認識されます")
+    print("  - 発話が終わると自動的に認識されます（is_final検知）")
     print("  - Ctrl+C で終了")
     print("=" * 60)
 
@@ -346,30 +405,24 @@ def main():
             print(f"ターン {turn}")
             print(f"{'='*60}")
 
-            # 音声録音
-            audio_data = record_audio_buffered(audio)
-
-            # 録音を保存
-            if save_dir:
-                staff_audio_path = save_dir / f"turn_{turn:02d}_staff.wav"
-                with open(staff_audio_path, 'wb') as f:
-                    f.write(audio_data)
-                print(f"[保存] 店員発話: {staff_audio_path.name}")
-
-            # STT
-            print("[STT] 音声認識中...")
-            transcript, confidence = transcribe_audio(audio_data)
+            # ストリーミングSTT（録音+認識を同時実行）
+            transcript, confidence, audio_data = transcribe_audio_streaming(audio)
 
             if not transcript:
                 print("[STT] 認識できませんでした。もう一度お願いします。")
                 continue
 
-            print(f"[STT] 認識: '{transcript}' (confidence: {confidence:.2f})")
-
             # confidence チェック
             if confidence <= 0.5:
                 print(f"[STT] 信頼度が低いためスキップ: {confidence:.2f}")
                 continue
+
+            # 録音を保存
+            if save_dir and audio_data:
+                staff_audio_path = save_dir / f"turn_{turn:02d}_staff.wav"
+                with open(staff_audio_path, 'wb') as f:
+                    f.write(audio_data)
+                print(f"[保存] 店員発話: {staff_audio_path.name}")
 
             # 会話履歴に追加（店員発話回数カウント用）
             staff_count = sum(1 for item in conversation_history if item['role'] == '店員')
@@ -451,11 +504,11 @@ def main():
                 time.sleep(quick_delay)
 
             # ============================================
-            # 復唱モード検知
+            # 復唱モード検知（ストリーミングSTTでは自動検知するのでログのみ）
             # ============================================
             if "復唱" in transcript:
                 in_recitation_mode = True
-                print(f"[復唱モード] 開始 → 次回バッファ: {RECITATION_BUFFER_SIZE} chunks")
+                print(f"[復唱モード] 検知（ストリーミングSTTが自動的に発話終了を待ちます）")
 
             # ============================================
             # Gemini応答
