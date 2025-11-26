@@ -19,7 +19,8 @@ twilio_webhooks.py と完全同一ロジック:
     python api/reservation/test_voice_conversation.py [--save-audio]
 
 オプション:
-    --save-audio  会話を音声ファイルとして保存（output/ディレクトリに保存）
+    --save-audio  会話全体を1つのWAVファイルとして保存（output/ディレクトリに保存）
+                  ※個別ターンの音声ファイルは保存されません
 """
 
 import os
@@ -369,7 +370,7 @@ def main():
 
     # コマンドライン引数のパース
     parser = argparse.ArgumentParser(description="ローカル音声会話テストツール (Twilio完全準拠版)")
-    parser.add_argument('--save-audio', action='store_true', help='会話を音声ファイルとして保存')
+    parser.add_argument('--save-audio', action='store_true', help='会話全体を1つのWAVファイルとして保存（個別ファイルは保存しない）')
     args = parser.parse_args()
 
     # 保存ディレクトリの設定
@@ -436,12 +437,6 @@ def main():
                 print(f"[STT] 信頼度が低いためスキップ: {confidence:.2f}")
                 continue
 
-            # 個別ターンの録音を保存（オプション）
-            if save_dir and audio_data:
-                staff_audio_path = save_dir / f"turn_{turn:02d}_staff.wav"
-                with open(staff_audio_path, 'wb') as f:
-                    f.write(audio_data)
-                print(f"[保存] 店員発話: {staff_audio_path.name}")
 
             # 会話履歴に追加（店員発話回数カウント用）
             staff_count = sum(1 for item in conversation_history if item['role'] == '店員')
@@ -463,13 +458,6 @@ def main():
                 if greeting_audio:
                     print(f"[AI挨拶] 再生中...")
                     play_audio_mp3(greeting_audio)
-
-                    # AI挨拶を保存
-                    if save_dir:
-                        ai_audio_path = save_dir / f"turn_{turn:02d}_ai_greeting.mp3"
-                        with open(ai_audio_path, 'wb') as f:
-                            f.write(greeting_audio)
-                        print(f"[保存] AI挨拶: {ai_audio_path.name}")
 
                     # 会話履歴に追加
                     greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。..."
@@ -506,13 +494,6 @@ def main():
                 print(f"[TTS] 即答再生中...")
                 play_audio_mp3(quick_audio)
 
-                # 即答相槌を保存
-                if save_dir:
-                    ai_audio_path = save_dir / f"turn_{turn:02d}_ai_quick.mp3"
-                    with open(ai_audio_path, 'wb') as f:
-                        f.write(quick_audio)
-                    print(f"[保存] AI即答: {ai_audio_path.name}")
-
                 conversation_history.append({
                     'role': 'AI',
                     'text': quick_text,
@@ -546,14 +527,6 @@ def main():
             # TTS + 再生
             print("[TTS] 音声生成・再生中...")
             tts_audio = synthesize_speech_mp3(ai_response)
-
-            # Gemini応答を保存
-            if save_dir:
-                ai_audio_path = save_dir / f"turn_{turn:02d}_ai_gemini.mp3"
-                with open(ai_audio_path, 'wb') as f:
-                    f.write(tts_audio)
-                print(f"[保存] AIGemini応答: {ai_audio_path.name}")
-
             play_audio_mp3(tts_audio)
 
     except KeyboardInterrupt:
@@ -597,8 +570,10 @@ def main():
                 f.write(f"{i}. [{entry['role']}] {entry['text']}\n")
                 f.write(f"   時刻: {entry['timestamp']}\n\n")
 
-        print(f"\n[保存] 会話履歴: {transcript_path}")
-        print(f"[保存] すべての音声ファイル: {save_dir}")
+        print(f"\n[保存完了] 会話履歴: {transcript_path}")
+        print(f"[保存完了] 保存先: {save_dir}")
+        print(f"  - full_conversation.wav (全編録音)")
+        print(f"  - conversation_transcript.txt (テキスト履歴)")
         print("=" * 60)
 
 
