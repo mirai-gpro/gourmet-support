@@ -25,8 +25,17 @@ import argparse
 from pathlib import Path
 from io import BytesIO
 from datetime import datetime
-from pydub import AudioSegment
-from pydub.playback import play
+
+# 音声再生用
+try:
+    # pygame をインポート（MP3再生用）
+    import pygame
+    pygame.mixer.init()
+    USE_PYGAME = True
+except ImportError:
+    USE_PYGAME = False
+    print("[警告] pygame がインストールされていません。音声再生機能が制限されます。")
+    print("インストール: pip install pygame")
 
 # Google Cloud クライアント
 from google.cloud import speech
@@ -101,8 +110,29 @@ def synthesize_speech_mp3(text: str) -> bytes:
 
 def play_audio_mp3(audio_bytes: bytes):
     """MP3音声を再生"""
-    audio = AudioSegment.from_mp3(BytesIO(audio_bytes))
-    play(audio)
+    if not USE_PYGAME:
+        print("[スキップ] pygame未インストールのため音声再生をスキップします")
+        return
+
+    try:
+        # 一時ファイルに保存
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
+            tmp_file.write(audio_bytes)
+            tmp_path = tmp_file.name
+
+        # pygameで再生
+        pygame.mixer.music.load(tmp_path)
+        pygame.mixer.music.play()
+
+        # 再生が終わるまで待機
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
+
+        # 一時ファイル削除
+        os.remove(tmp_path)
+    except Exception as e:
+        print(f"[エラー] 音声再生エラー: {e}")
 
 
 def transcribe_audio(audio_data: bytes) -> tuple[str, float]:
