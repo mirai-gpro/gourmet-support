@@ -38,7 +38,9 @@ from datetime import datetime
 # 音声再生用
 try:
     import pygame
-    pygame.mixer.init()
+    # PyAudioと同じ設定で初期化（16kHz、モノラル、16bit）
+    # これによりオーディオデバイスの競合を防ぐ
+    pygame.mixer.init(frequency=16000, size=-16, channels=1, buffer=512)
     USE_PYGAME = True
 except ImportError:
     USE_PYGAME = False
@@ -208,6 +210,9 @@ def play_audio_mp3(audio_bytes: bytes):
 
         while pygame.mixer.music.get_busy():
             pygame.time.Clock().tick(10)
+
+        # 音声再生完了後、オーディオデバイスが完全にリリースされるまで待機
+        time.sleep(0.1)
 
         os.remove(tmp_path)
     except Exception as e:
