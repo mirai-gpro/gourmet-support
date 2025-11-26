@@ -140,6 +140,30 @@ def synthesize_speech_mp3(text: str) -> bytes:
     return response.audio_content
 
 
+def synthesize_speech_linear16(text: str) -> bytes:
+    """Google Cloud TTS で音声生成（LINEAR16形式、録音用）"""
+    synthesis_input = texttospeech.SynthesisInput(text=text)
+
+    voice = texttospeech.VoiceSelectionParams(
+        language_code="ja-JP",
+        name="ja-JP-Chirp3-HD-Leda"
+    )
+
+    audio_config = texttospeech.AudioConfig(
+        audio_encoding=texttospeech.AudioEncoding.LINEAR16,
+        sample_rate_hertz=RATE,  # 16kHz
+        speaking_rate=1.0
+    )
+
+    response = tts_client.synthesize_speech(
+        input=synthesis_input,
+        voice=voice,
+        audio_config=audio_config
+    )
+
+    return response.audio_content
+
+
 def initialize_audio():
     """即答音声とAI挨拶音声を事前生成"""
     global acknowledgment_audio, quick_hai_audio, greeting_audio
@@ -459,6 +483,18 @@ def main():
                     print(f"[AI挨拶] 再生中...")
                     play_audio_mp3(greeting_audio)
 
+                    # 全編録音用にLINEAR16版を生成して追加
+                    if save_dir:
+                        greeting_text_full = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
+                        greeting_linear16 = synthesize_speech_linear16(greeting_text_full)
+                        # LINEAR16はヘッダーなしのRAWデータなので、そのまま追加
+                        # 1サンプル = 2バイト（int16）、CHUNK_SIZE分ずつ分割
+                        for i in range(0, len(greeting_linear16), CHUNK_SIZE * 2):
+                            chunk = greeting_linear16[i:i + CHUNK_SIZE * 2]
+                            if chunk:
+                                full_recording_frames.append(chunk)
+                        print(f"[録音] AI挨拶を全編録音に追加: {len(greeting_linear16)} bytes")
+
                     # 会話履歴に追加
                     greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。..."
                     conversation_history.append({
@@ -494,6 +530,15 @@ def main():
                 print(f"[TTS] 即答再生中...")
                 play_audio_mp3(quick_audio)
 
+                # 全編録音用にLINEAR16版を生成して追加
+                if save_dir:
+                    quick_linear16 = synthesize_speech_linear16(quick_text)
+                    for i in range(0, len(quick_linear16), CHUNK_SIZE * 2):
+                        chunk = quick_linear16[i:i + CHUNK_SIZE * 2]
+                        if chunk:
+                            full_recording_frames.append(chunk)
+                    print(f"[録音] 即答相槌を全編録音に追加: {len(quick_linear16)} bytes")
+
                 conversation_history.append({
                     'role': 'AI',
                     'text': quick_text,
@@ -528,6 +573,15 @@ def main():
             print("[TTS] 音声生成・再生中...")
             tts_audio = synthesize_speech_mp3(ai_response)
             play_audio_mp3(tts_audio)
+
+            # 全編録音用にLINEAR16版を生成して追加
+            if save_dir:
+                ai_linear16 = synthesize_speech_linear16(ai_response)
+                for i in range(0, len(ai_linear16), CHUNK_SIZE * 2):
+                    chunk = ai_linear16[i:i + CHUNK_SIZE * 2]
+                    if chunk:
+                        full_recording_frames.append(chunk)
+                print(f"[録音] Gemini応答を全編録音に追加: {len(ai_linear16)} bytes")
 
     except KeyboardInterrupt:
         print("\n\n[終了] 会話を終了します。")
