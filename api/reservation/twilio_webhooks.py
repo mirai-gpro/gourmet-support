@@ -480,31 +480,17 @@ async def process_audio_chunk(websocket: WebSocket, stream_sid: str, call_sid: s
                 else:
                     logger.warning(f"[Quick Response] 相槌音声が利用不可")
 
-                # 即答音声を再生
+                # 即答音声を再生（Gemini処理と並列化）
                 if quick_audio:
-                    logger.info(f"[DEBUG] 即答音声再生開始")
+                    logger.info(f"[Quick Response] 即答音声再生開始 + Gemini並列処理")
                     quick_id = str(uuid.uuid4())
                     audio_cache[quick_id] = quick_audio
-                    
-                    # フラグを先に設定
-                    if call_sid in active_calls:
-                        active_calls[call_sid]['is_playing_audio'] = True
-                        logger.info(f"[Audio Playback] フラグ設定: 即答音声 {quick_delay}秒")
-                    
-                    # 即座に再生開始
-                    await update_call_with_audio(call_sid, quick_id)
-                    logger.info(f"[DEBUG] update_call_with_audio完了")
-                    
-                    # 即座にフラグを解除（LLM処理を妨げない）
-                    logger.info(f"[Quick Response] 即答完了、フラグ解除してLLM処理継続")
-                    if call_sid in active_calls:
-                        active_calls[call_sid]['is_playing_audio'] = False
-                    
-                    # 相槌の長さ分だけ待機（次の音声が被らないように）
-                    await asyncio.sleep(quick_delay)
-                    logger.info(f"[DEBUG] 待機完了")
+
+                    # バックグラウンドで即答音声を再生（待たない）
+                    asyncio.create_task(update_call_with_audio(call_sid, quick_id))
+                    logger.info(f"[Quick Response] 即答音声「{quick_text}」バックグラウンド再生開始")
                 else:
-                    logger.warning(f"[DEBUG] quick_audio が None のため即答スキップ")
+                    logger.warning(f"[Quick Response] 相槌音声が利用不可")
 
                 # 復唱モード検知
                 if "復唱" in transcript:
