@@ -39,10 +39,8 @@ pip install pyaudio
 
 ### 2. 環境変数の設定
 
-```bash
-export GOOGLE_APPLICATION_CREDENTIALS=/path/to/your/credentials.json
-export GOOGLE_API_KEY=your_gemini_api_key
-```
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:\Users\hamad\gourmet-support\hp-support-477512-afbd23b80ea8.json"
+$env:GOOGLE_API_KEY="AIzaSyBpMA83lAmHwucXZFPNG1RSFav3JnYDkNU"
 
 ## 使用方法
 
