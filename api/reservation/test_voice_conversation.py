@@ -199,6 +199,7 @@ def play_audio_mp3_simple(audio_bytes: bytes):
         print("[スキップ] pygame未インストールのため音声再生をスキップします")
         return
 
+    tmp_path = None
     try:
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
@@ -211,11 +212,19 @@ def play_audio_mp3_simple(audio_bytes: bytes):
         while pygame.mixer.music.get_busy():
             pygame.time.Clock().tick(10)
 
-        time.sleep(0.1)  # デバイスリリース待機
-        os.remove(tmp_path)
+        # pygame がファイルをリリースするまで待機
+        pygame.mixer.music.unload()
+        time.sleep(0.1)
 
     except Exception as e:
         print(f"[エラー] 音声再生エラー: {e}")
+    finally:
+        # ファイル削除（エラーは無視）
+        if tmp_path:
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass  # Windows でのファイルロックエラーは無視
 
 
 def play_audio_mp3_with_stt_interruption(audio_bytes: bytes, audio_interface: pyaudio.PyAudio):
@@ -317,6 +326,7 @@ def play_audio_mp3_with_stt_interruption(audio_bytes: bytes, audio_interface: py
             stream.stop_stream()
             stream.close()
 
+    tmp_path = None
     try:
         import tempfile
         with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
@@ -348,27 +358,47 @@ def play_audio_mp3_with_stt_interruption(audio_bytes: bytes, audio_interface: py
         record_thread.join(timeout=10.0)
         stt_thread.join(timeout=5.0)
 
-        # 音声再生完了後、デバイスリリースまで待機
+        # pygame がファイルをリリースするまで待機
         if not interruption_detected.is_set():
+            pygame.mixer.music.unload()
             time.sleep(0.1)
 
-        os.remove(tmp_path)
-
-        # 結果を取得
+        # 結果を取得（ファイル削除前に実行）
+        result = None
         if interruption_detected.is_set():
             try:
                 result_type, transcript, confidence, _ = output_queue.get(timeout=5.0)
                 if result_type == 'transcript':
-                    return True, transcript, confidence, recorded_chunks
+                    result = (True, transcript, confidence, recorded_chunks)
+                else:
+                    result = (True, "", 0.0, recorded_chunks)
             except queue.Empty:
                 print("[警告] STT結果を取得できませんでした")
-                return True, "", 0.0, recorded_chunks
+                result = (True, "", 0.0, recorded_chunks)
+        else:
+            result = (False, "", 0.0, [])
 
-        return False, "", 0.0, []
+        return result
 
     except Exception as e:
-        print(f"[エラー] 音声再生エラー: {e}")
+        print(f"[エラー] 音声再生・中断検知エラー: {e}")
+        import traceback
+        print(traceback.format_exc())
+        # エラーが起きても中断検知結果は返す
+        if interruption_detected.is_set():
+            return True, "", 0.0, recorded_chunks
         return False, "", 0.0, []
+    finally:
+        # ファイル削除（エラーは無視）
+        if tmp_path:
+            try:
+                pygame.mixer.music.unload()
+            except Exception:
+                pass
+            try:
+                os.remove(tmp_path)
+            except Exception:
+                pass  # Windows でのファイルロックエラーは無視
 
 
 def transcribe_audio_streaming(audio_interface: pyaudio.PyAudio) -> tuple[str, float, bytes, list]:
