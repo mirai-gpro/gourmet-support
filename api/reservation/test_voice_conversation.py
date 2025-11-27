@@ -193,24 +193,11 @@ def initialize_audio():
         sys.exit(1)
 
 
-def play_audio_mp3(audio_bytes: bytes, allow_interruption: bool = False, audio_interface: pyaudio.PyAudio = None):
-    """
-    MP3音声を再生
-
-    Args:
-        audio_bytes: MP3音声データ
-        allow_interruption: 店員の発話で中断を許可するか
-        audio_interface: PyAudioインターフェース（中断検知用）
-
-    Returns:
-        bool: 中断された場合True、完了まで再生された場合False
-    """
+def play_audio_mp3_simple(audio_bytes: bytes):
+    """MP3音声を再生（中断なし）"""
     if not USE_PYGAME:
         print("[スキップ] pygame未インストールのため音声再生をスキップします")
-        return False
-
-    interrupted = False
-    stream = None
+        return
 
     try:
         import tempfile
@@ -221,65 +208,167 @@ def play_audio_mp3(audio_bytes: bytes, allow_interruption: bool = False, audio_i
         pygame.mixer.music.load(tmp_path)
         pygame.mixer.music.play()
 
-        # 中断検知が有効な場合、マイク入力を監視
-        if allow_interruption and audio_interface:
-            stream = audio_interface.open(
-                format=FORMAT,
-                channels=CHANNELS,
-                rate=RATE,
-                input=True,
-                frames_per_buffer=CHUNK_SIZE
-            )
+        while pygame.mixer.music.get_busy():
+            pygame.time.Clock().tick(10)
 
-            # 音声検知の閾値（店員が話し始めたことを検知）
-            INTERRUPTION_THRESHOLD = 500  # エネルギー閾値
-            consecutive_loud_chunks = 0
-            REQUIRED_LOUD_CHUNKS = 2  # 2回連続で閾値超えたら中断
-
-            while pygame.mixer.music.get_busy():
-                try:
-                    # マイク入力をチェック
-                    audio_data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
-
-                    # 音声エネルギーを計算
-                    import audioop
-                    energy = audioop.rms(audio_data, 2)  # 2 = sample width for int16
-
-                    if energy > INTERRUPTION_THRESHOLD:
-                        consecutive_loud_chunks += 1
-                        if consecutive_loud_chunks >= REQUIRED_LOUD_CHUNKS:
-                            # 店員が話し始めた → AI音声を即座に停止
-                            pygame.mixer.music.stop()
-                            interrupted = True
-                            print(f"\n[中断] 店員の発話を検知 (energy: {energy}) → AI音声を停止")
-                            break
-                    else:
-                        consecutive_loud_chunks = 0
-
-                    pygame.time.Clock().tick(100)  # 10ms間隔でチェック
-
-                except IOError:
-                    # マイク入力エラーは無視して再生を継続
-                    pygame.time.Clock().tick(10)
-        else:
-            # 中断なしで最後まで再生
-            while pygame.mixer.music.get_busy():
-                pygame.time.Clock().tick(10)
-
-        # 音声再生完了後、オーディオデバイスが完全にリリースされるまで待機
-        if not interrupted:
-            time.sleep(0.1)
-
+        time.sleep(0.1)  # デバイスリリース待機
         os.remove(tmp_path)
 
     except Exception as e:
         print(f"[エラー] 音声再生エラー: {e}")
-    finally:
-        if stream:
+
+
+def play_audio_mp3_with_stt_interruption(audio_bytes: bytes, audio_interface: pyaudio.PyAudio):
+    """
+    MP3音声を再生し、Google STTで店員の発話を検知したら即座に中断
+
+    Args:
+        audio_bytes: MP3音声データ
+        audio_interface: PyAudioインターフェース
+
+    Returns:
+        tuple[bool, str, float, list]: (中断されたか, トランスクリプト, 信頼度, 録音フレーム)
+            - 中断された場合: (True, transcript, confidence, frames)
+            - 完了まで再生: (False, "", 0.0, [])
+    """
+    if not USE_PYGAME:
+        print("[スキップ] pygame未インストールのため音声再生をスキップします")
+        return False, "", 0.0, []
+
+    # 中断フラグとSTT結果を格納
+    interruption_detected = threading.Event()
+    stt_result = {'transcript': '', 'confidence': 0.0}
+    recorded_chunks = []
+
+    # 入力キュー: 音声チャンク
+    input_queue = queue.Queue()
+    # 出力キュー: 認識結果
+    output_queue = queue.Queue()
+
+    # ストリーミング認識スレッド
+    def run_streaming_recognize():
+        """Google STT Streaming APIで中断検知"""
+        accumulated_audio = []
+
+        try:
+            streaming_config = get_stt_streaming_config()
+
+            def request_generator():
+                while True:
+                    chunk = input_queue.get()
+                    if chunk is None:
+                        break
+                    accumulated_audio.append(chunk)
+                    yield speech.StreamingRecognizeRequest(audio_content=chunk)
+
+            responses = stt_client.streaming_recognize(streaming_config, request_generator())
+
+            for response in responses:
+                if not response.results:
+                    continue
+
+                for result in response.results:
+                    if not result.alternatives:
+                        continue
+
+                    transcript = result.alternatives[0].transcript
+
+                    # 中間結果でも検知（店員が話し始めた瞬間に反応）
+                    if transcript.strip():
+                        print(f"\n  [STT中断検知] {'[確定]' if result.is_final else '[中間]'} {transcript}")
+
+                        # トランスクリプトが来た時点でAI音声を停止
+                        interruption_detected.set()
+
+                        # is_finalまで待って確定結果を取得
+                        if result.is_final:
+                            confidence = result.alternatives[0].confidence if result.alternatives else 0.0
+                            audio_data = b''.join(accumulated_audio)
+                            output_queue.put(('transcript', transcript, confidence, audio_data))
+                            break
+
+        except Exception as e:
+            import traceback
+            print(f"\n[STT中断検知エラー] {e}")
+            print(traceback.format_exc())
+            output_queue.put(('error', str(e), 0.0, b''))
+
+    # 録音スレッド
+    def record_audio():
+        """マイク入力を録音し、STTに送信"""
+        stream = audio_interface.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=RATE,
+            input=True,
+            frames_per_buffer=CHUNK_SIZE
+        )
+
+        try:
+            # AI音声再生中 + 中断後も録音継続（is_finalまで）
+            while pygame.mixer.music.get_busy() or (interruption_detected.is_set() and output_queue.empty()):
+                data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+                recorded_chunks.append(data)
+                input_queue.put(data)
+                time.sleep(0.01)  # 10ms間隔
+
+        finally:
+            input_queue.put(None)  # 終了シグナル
             stream.stop_stream()
             stream.close()
 
-    return interrupted
+    try:
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as tmp_file:
+            tmp_file.write(audio_bytes)
+            tmp_path = tmp_file.name
+
+        # AI音声再生開始
+        pygame.mixer.music.load(tmp_path)
+        pygame.mixer.music.play()
+        print("[AI音声] 再生開始（STT監視中...）")
+
+        # STTスレッドと録音スレッドを開始
+        stt_thread = threading.Thread(target=run_streaming_recognize, daemon=True)
+        record_thread = threading.Thread(target=record_audio, daemon=True)
+
+        stt_thread.start()
+        record_thread.start()
+
+        # 中断検知を待つ
+        while pygame.mixer.music.get_busy():
+            if interruption_detected.is_set():
+                # 店員の発話を検知 → AI音声を即座に停止
+                pygame.mixer.music.stop()
+                print("[中断] 店員の発話を検知 → AI音声を即座に停止")
+                break
+            time.sleep(0.01)  # 10ms間隔でチェック
+
+        # スレッドの終了を待つ
+        record_thread.join(timeout=10.0)
+        stt_thread.join(timeout=5.0)
+
+        # 音声再生完了後、デバイスリリースまで待機
+        if not interruption_detected.is_set():
+            time.sleep(0.1)
+
+        os.remove(tmp_path)
+
+        # 結果を取得
+        if interruption_detected.is_set():
+            try:
+                result_type, transcript, confidence, _ = output_queue.get(timeout=5.0)
+                if result_type == 'transcript':
+                    return True, transcript, confidence, recorded_chunks
+            except queue.Empty:
+                print("[警告] STT結果を取得できませんでした")
+                return True, "", 0.0, recorded_chunks
+
+        return False, "", 0.0, []
+
+    except Exception as e:
+        print(f"[エラー] 音声再生エラー: {e}")
+        return False, "", 0.0, []
 
 
 def transcribe_audio_streaming(audio_interface: pyaudio.PyAudio) -> tuple[str, float, bytes, list]:
@@ -549,7 +638,7 @@ def main():
 
                 if greeting_audio:
                     print(f"[AI挨拶] 再生中...")
-                    play_audio_mp3(greeting_audio)
+                    play_audio_mp3_simple(greeting_audio)
 
                     # 全編録音用にLINEAR16版を生成して追加
                     if save_dir:
@@ -596,7 +685,7 @@ def main():
 
             if quick_audio:
                 print(f"[TTS] 即答再生中...")
-                play_audio_mp3(quick_audio)
+                play_audio_mp3_simple(quick_audio)
 
                 # 全編録音用にLINEAR16版を生成して追加
                 if save_dir:
@@ -637,14 +726,54 @@ def main():
                 'timestamp': datetime.now().isoformat()
             })
 
-            # TTS + 再生（中断検知を有効化）
-            print("[TTS] 音声生成・再生中... (店員の発話で自動中断)")
+            # TTS + 再生（STT中断検知を有効化）
+            print("[TTS] 音声生成・再生中... (Google STT監視中)")
             tts_audio = synthesize_speech_mp3(ai_response)
-            was_interrupted = play_audio_mp3(tts_audio, allow_interruption=True, audio_interface=audio)
+            was_interrupted, staff_transcript, staff_confidence, staff_frames = play_audio_mp3_with_stt_interruption(tts_audio, audio)
 
             if was_interrupted:
-                print("[中断完了] AI応答が途中で停止されました")
-                # 中断された場合、録音に追加しない（次のターンで店員の発話を処理）
+                print(f"[中断完了] AI応答が途中で停止されました → 店員: 「{staff_transcript}」")
+
+                # 中断された場合、AI音声は録音に追加しない
+                # 店員の発話を録音に追加
+                if save_dir and staff_frames:
+                    full_recording_frames.extend(staff_frames)
+                    print(f"[録音] 中断時の店員発話を全編録音に追加: {len(staff_frames)} chunks")
+
+                # 店員の発話を会話履歴に追加して、次のターンへ
+                if staff_transcript and staff_confidence > 0.5:
+                    conversation_history.append({
+                        'role': '店員',
+                        'text': staff_transcript,
+                        'timestamp': datetime.now().isoformat()
+                    })
+
+                    # 次のターンのGemini応答を生成
+                    print("\n[Gemini] 応答生成中... (中断後の返答)")
+                    ai_response = get_gemini_response(staff_transcript)
+                    print(f"[AI] {ai_response}")
+
+                    conversation_history.append({
+                        'role': 'AI',
+                        'text': ai_response,
+                        'timestamp': datetime.now().isoformat()
+                    })
+
+                    # 新しい応答を再生（また中断検知あり）
+                    print("[TTS] 音声生成・再生中... (Google STT監視中)")
+                    tts_audio = synthesize_speech_mp3(ai_response)
+                    was_interrupted2, _, _, _ = play_audio_mp3_with_stt_interruption(tts_audio, audio)
+
+                    if not was_interrupted2:
+                        # 完了まで再生された場合のみ、全編録音に追加
+                        if save_dir:
+                            ai_linear16 = synthesize_speech_linear16(ai_response)
+                            for i in range(0, len(ai_linear16), CHUNK_SIZE * 2):
+                                chunk = ai_linear16[i:i + CHUNK_SIZE * 2]
+                                if chunk:
+                                    full_recording_frames.append(chunk)
+                            print(f"[録音] Gemini応答を全編録音に追加: {len(ai_linear16)} bytes")
+
             else:
                 # 完了まで再生された場合のみ、全編録音に追加
                 if save_dir:
