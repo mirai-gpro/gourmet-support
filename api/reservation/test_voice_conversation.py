@@ -34,6 +34,10 @@ import threading
 from pathlib import Path
 from io import BytesIO
 from datetime import datetime
+from dotenv import load_dotenv
+
+# .envファイルから環境変数を読み込む
+load_dotenv()
 
 # 音声再生用
 try:
@@ -52,19 +56,20 @@ from google.cloud import speech
 from google.cloud import texttospeech
 import google.generativeai as genai
 
-# 環境変数
-GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
+# 環境変数（GEMINI_API_KEYに統一、互換性のためGOOGLE_API_KEYもフォールバック）
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY', '')
 
 # Google Cloud クライアント初期化
 tts_client = texttospeech.TextToSpeechClient()
 stt_client = speech.SpeechClient()
 
 # Gemini 初期化
-if GOOGLE_API_KEY:
-    genai.configure(api_key=GOOGLE_API_KEY)
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
     gemini_model = genai.GenerativeModel('gemini-2.0-flash')
 else:
-    print("[エラー] GOOGLE_API_KEY 環境変数が未設定です")
+    print("[エラー] GEMINI_API_KEY または GOOGLE_API_KEY 環境変数が未設定です")
+    print("ヒント: .env ファイルに GEMINI_API_KEY=your-key を設定してください")
     sys.exit(1)
 
 # 予約情報（テスト用）
