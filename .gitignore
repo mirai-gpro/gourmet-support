@@ -1,1 +1,16 @@
 __pycache__/
+
+# Environment variables (機密情報を含むため除外)
+.env
+*.env
+!.env.example
+
+# Google Cloud credentials
+*.json
+!package.json
+!package-lock.json
+
+# Audio files
+output/
+*.wav
+*.mp3
