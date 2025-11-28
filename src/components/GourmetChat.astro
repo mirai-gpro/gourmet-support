@@ -13,6 +13,18 @@ const { apiBaseUrl = '' } = Astro.props;
     <p>お店探しをお手伝いします</p>
   </div>
 
+  <!-- マイクブロック時のアラート -->
+  <div id="micBlockedAlert" class="alert alert-error hidden">
+    <strong>⚠️ マイクがブロックされています</strong>
+    <p>音声入力を使用するには、マイクの許可が必要です。以下の手順で設定を変更してください：</p>
+    <ul>
+      <li><strong>Chrome:</strong> アドレスバー左側の🔒アイコンをクリック → 「マイク」を「許可」に変更</li>
+      <li><strong>Edge:</strong> アドレスバー左側の🔒アイコンをクリック → 「マイク」を「許可」に変更</li>
+      <li><strong>Safari:</strong> Safari メニュー → 「このWebサイトの設定」→ マイクを「許可」に変更</li>
+    </ul>
+    <p style="margin-top: 10px;">設定変更後、ページをリロードしてください。</p>
+  </div>
+
   <div class="voice-status stopped" id="voiceStatus">
     &#127908; 音声認識: 停止中
   </div>
@@ -392,6 +404,41 @@ const { apiBaseUrl = '' } = Astro.props;
   .click-prompt p {
     margin: 5px 0;
   }
+
+  /* アラートスタイル */
+  .alert {
+    padding: 15px 20px;
+    margin: 0;
+    border-bottom: 1px solid #e5e7eb;
+    font-size: 14px;
+    line-height: 1.6;
+  }
+
+  .alert-error {
+    background: #fee;
+    color: #c33;
+    border-left: 4px solid #f00;
+  }
+
+  .alert strong {
+    display: block;
+    margin-bottom: 8px;
+    font-weight: 600;
+    font-size: 15px;
+  }
+
+  .alert ul {
+    margin: 10px 0 10px 20px;
+    padding: 0;
+  }
+
+  .alert li {
+    margin: 6px 0;
+  }
+
+  .hidden {
+    display: none;
+  }
 </style>
 
 <script>
@@ -410,8 +457,10 @@ const { apiBaseUrl = '' } = Astro.props;
     const speakerBtn = document.getElementById('speakerBtn') as HTMLButtonElement;
     const reservationBtn = document.getElementById('reservationBtn') as HTMLButtonElement;
     const voiceStatus = document.getElementById('voiceStatus')!;
+    const micBlockedAlert = document.getElementById('micBlockedAlert')!;
 
     // 状態
+    let micPermissionGranted = false;
     let sessionId: string | null = null;
     let isProcessing = false;
     let currentStage = 'conversation';
@@ -617,6 +666,13 @@ const { apiBaseUrl = '' } = Astro.props;
 
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+        // 許可が成功したのでフラグを更新
+        micPermissionGranted = true;
+        micBtn.style.opacity = '1';
+        micBtn.disabled = false;
+        micBlockedAlert.classList.add('hidden');
+
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
 
         audioChunks = [];
@@ -698,7 +754,27 @@ const { apiBaseUrl = '' } = Astro.props;
 
       } catch (error) {
         console.error('[Recording] Error:', error);
-        addMessage('system', `マイクアクセスエラー: ${(error as Error).message}`);
+
+        // エラーの種類に応じた処理
+        if ((error as any).name === 'NotAllowedError' || (error as any).name === 'PermissionDeniedError') {
+          // ユーザーがマイク許可をブロックした
+          micPermissionGranted = false;
+          micBtn.style.opacity = '0.5';
+          micBtn.disabled = true;
+          micBlockedAlert.classList.remove('hidden');
+          voiceStatus.innerHTML = '&#127908; 音声認識: ブロック中';
+          voiceStatus.className = 'voice-status stopped';
+        } else if ((error as any).name === 'NotFoundError') {
+          // マイクが見つからない
+          addMessage('system', 'マイクが見つかりません。マイクが接続されているか確認してください。');
+          voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+          voiceStatus.className = 'voice-status stopped';
+        } else {
+          // その他のエラー
+          addMessage('system', `マイクアクセスエラー: ${(error as Error).message}`);
+          voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+          voiceStatus.className = 'voice-status stopped';
+        }
       }
     }
 
