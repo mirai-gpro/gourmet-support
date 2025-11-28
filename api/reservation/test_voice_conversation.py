@@ -695,64 +695,38 @@ def main():
                             'timestamp': datetime.now().isoformat()
                         })
 
-                        # 中断時の店員発話を会話履歴に追加
-                        if staff_transcript:
+                        # 中断時の店員発話を会話履歴に追加して、次のターンへ
+                        if staff_transcript and staff_confidence > 0.5:
                             print(f"[中断時の店員発話] {staff_transcript} (信頼度: {staff_confidence:.2f})")
                             conversation_history.append({
                                 'role': '店員',
                                 'text': staff_transcript,
                                 'timestamp': datetime.now().isoformat()
                             })
+                            print("[中断後] 次のターンで応答します")
+                    else:
+                        # 中断されなかった場合（挨拶を最後まで再生）
+                        # 全編録音用にLINEAR16版を生成して追加
+                        if save_dir:
+                            greeting_text_full = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
+                            greeting_linear16 = synthesize_speech_linear16(greeting_text_full)
+                            # LINEAR16はヘッダーなしのRAWデータなので、そのまま追加
+                            # 1サンプル = 2バイト（int16）、CHUNK_SIZE分ずつ分割
+                            for i in range(0, len(greeting_linear16), CHUNK_SIZE * 2):
+                                chunk = greeting_linear16[i:i + CHUNK_SIZE * 2]
+                                if chunk:
+                                    full_recording_frames.append(chunk)
+                            print(f"[録音] AI挨拶を全編録音に追加: {len(greeting_linear16)} bytes")
 
-                            # Gemini応答を生成（中断された場合は即座に対応）
-                            print(f"[Gemini] 応答生成中...")
-                            ai_response = get_gemini_response(staff_transcript)
-                            print(f"[AI応答] {ai_response}")
+                        # 会話履歴に追加
+                        greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。..."
+                        conversation_history.append({
+                            'role': 'AI',
+                            'text': greeting_text,
+                            'timestamp': datetime.now().isoformat()
+                        })
 
-                            # TTS音声合成
-                            response_audio = synthesize_speech(ai_response)
-                            if response_audio:
-                                print(f"[TTS] 応答再生中（中断検知あり）...")
-                                response_interrupted, _, _, _ = play_audio_mp3_with_stt_interruption(response_audio, audio)
-
-                                # 全編録音用にLINEAR16版を追加
-                                if save_dir and not response_interrupted:
-                                    response_linear16 = synthesize_speech_linear16(ai_response)
-                                    for i in range(0, len(response_linear16), CHUNK_SIZE * 2):
-                                        chunk = response_linear16[i:i + CHUNK_SIZE * 2]
-                                        if chunk:
-                                            full_recording_frames.append(chunk)
-                                    print(f"[録音] Gemini応答を全編録音に追加: {len(response_linear16)} bytes")
-
-                                conversation_history.append({
-                                    'role': 'AI',
-                                    'text': ai_response,
-                                    'timestamp': datetime.now().isoformat()
-                                })
-                        continue
-
-                    # 中断されなかった場合（挨拶を最後まで再生）
-                    # 全編録音用にLINEAR16版を生成して追加
-                    if save_dir:
-                        greeting_text_full = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
-                        greeting_linear16 = synthesize_speech_linear16(greeting_text_full)
-                        # LINEAR16はヘッダーなしのRAWデータなので、そのまま追加
-                        # 1サンプル = 2バイト（int16）、CHUNK_SIZE分ずつ分割
-                        for i in range(0, len(greeting_linear16), CHUNK_SIZE * 2):
-                            chunk = greeting_linear16[i:i + CHUNK_SIZE * 2]
-                            if chunk:
-                                full_recording_frames.append(chunk)
-                        print(f"[録音] AI挨拶を全編録音に追加: {len(greeting_linear16)} bytes")
-
-                    # 会話履歴に追加
-                    greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。..."
-                    conversation_history.append({
-                        'role': 'AI',
-                        'text': greeting_text,
-                        'timestamp': datetime.now().isoformat()
-                    })
-
-                    print("[AI挨拶] 完了")
+                        print("[AI挨拶] 完了")
                 continue
 
             # ============================================
