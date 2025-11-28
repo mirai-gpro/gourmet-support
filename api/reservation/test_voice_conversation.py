@@ -670,9 +670,70 @@ def main():
                 is_first_interaction = False
 
                 if greeting_audio:
-                    print(f"[AI挨拶] 再生中...")
-                    play_audio_mp3_simple(greeting_audio)
+                    print(f"[AI挨拶] 再生中（中断検知あり）...")
+                    interruption_result = play_audio_mp3_with_stt_interruption(greeting_audio, audio)
 
+                    # 中断された場合の処理
+                    if interruption_result['interrupted']:
+                        print(f"[中断] AI挨拶が中断されました")
+                        staff_transcript = interruption_result.get('transcript', '')
+                        staff_confidence = interruption_result.get('confidence', 0.0)
+                        staff_audio_data = interruption_result.get('audio_data', b'')
+
+                        # 中断時の店員発話を全編録音に追加
+                        if save_dir and staff_audio_data:
+                            # LINEAR16フォーマット（ヘッダーなし）として追加
+                            for i in range(0, len(staff_audio_data), CHUNK_SIZE * 2):
+                                chunk = staff_audio_data[i:i + CHUNK_SIZE * 2]
+                                if chunk:
+                                    full_recording_frames.append(chunk)
+                            print(f"[録音] 中断時の店員発話を全編録音に追加: {len(staff_audio_data)} bytes")
+
+                        # AI挨拶（中断された部分まで）を会話履歴に追加
+                        greeting_text = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約を... [店員により中断]"
+                        conversation_history.append({
+                            'role': 'AI',
+                            'text': greeting_text,
+                            'timestamp': datetime.now().isoformat()
+                        })
+
+                        # 中断時の店員発話を会話履歴に追加
+                        if staff_transcript:
+                            print(f"[中断時の店員発話] {staff_transcript} (信頼度: {staff_confidence:.2f})")
+                            conversation_history.append({
+                                'role': '店員',
+                                'text': staff_transcript,
+                                'timestamp': datetime.now().isoformat()
+                            })
+
+                            # Gemini応答を生成（中断された場合は即座に対応）
+                            print(f"[Gemini] 応答生成中...")
+                            ai_response = generate_response(staff_transcript)
+                            print(f"[AI応答] {ai_response}")
+
+                            # TTS音声合成
+                            response_audio = synthesize_speech(ai_response)
+                            if response_audio:
+                                print(f"[TTS] 応答再生中（中断検知あり）...")
+                                response_interruption = play_audio_mp3_with_stt_interruption(response_audio, audio)
+
+                                # 全編録音用にLINEAR16版を追加
+                                if save_dir and not response_interruption['interrupted']:
+                                    response_linear16 = synthesize_speech_linear16(ai_response)
+                                    for i in range(0, len(response_linear16), CHUNK_SIZE * 2):
+                                        chunk = response_linear16[i:i + CHUNK_SIZE * 2]
+                                        if chunk:
+                                            full_recording_frames.append(chunk)
+                                    print(f"[録音] Gemini応答を全編録音に追加: {len(response_linear16)} bytes")
+
+                                conversation_history.append({
+                                    'role': 'AI',
+                                    'text': ai_response,
+                                    'timestamp': datetime.now().isoformat()
+                                })
+                        continue
+
+                    # 中断されなかった場合（挨拶を最後まで再生）
                     # 全編録音用にLINEAR16版を生成して追加
                     if save_dir:
                         greeting_text_full = f"お忙しいところ恐れ入ります。{RESERVATION_INFO['restaurant_name']}様へ、{RESERVATION_INFO['reserver_name']}様の予約をお願いしたく、お電話しております。私は{RESERVATION_INFO['reserver_name']}様のAIアシスタントです。{RESERVATION_INFO['date']}{RESERVATION_INFO['day_of_week']}の{RESERVATION_INFO['time']}から、{RESERVATION_INFO['reserver_name']}様名義で{RESERVATION_INFO['guests']}名、{RESERVATION_INFO['seat_type']}で、予約をお願いできますでしょうか。"
