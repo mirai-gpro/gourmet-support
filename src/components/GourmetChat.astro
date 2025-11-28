@@ -13,14 +13,26 @@ const { apiBaseUrl = '' } = Astro.props;
     <p>お店探しをお手伝いします</p>
   </div>
 
-  <!-- マイクブロック時のアラート -->
-  <div id="micBlockedAlert" class="alert alert-error hidden">
+  <!-- マイクブロック時のアラート（デスクトップ） -->
+  <div id="micBlockedAlertDesktop" class="alert alert-error hidden">
     <strong>⚠️ マイクがブロックされています</strong>
     <p>音声入力を使用するには、マイクの許可が必要です。以下の手順で設定を変更してください：</p>
     <ul>
       <li><strong>Chrome:</strong> アドレスバー左側の🔒アイコンをクリック → 「マイク」を「許可」に変更</li>
       <li><strong>Edge:</strong> アドレスバー左側の🔒アイコンをクリック → 「マイク」を「許可」に変更</li>
       <li><strong>Safari:</strong> Safari メニュー → 「このWebサイトの設定」→ マイクを「許可」に変更</li>
+    </ul>
+    <p style="margin-top: 10px;">設定変更後、ページをリロードしてください。</p>
+  </div>
+
+  <!-- マイクブロック時のアラート（モバイル） -->
+  <div id="micBlockedAlertMobile" class="alert alert-error hidden">
+    <strong>⚠️ マイクがブロックされています</strong>
+    <p>音声入力を使用するには、マイクの許可が必要です。以下の手順で設定を変更してください：</p>
+    <ul>
+      <li><strong>iPhone (Safari):</strong> 設定アプリ → Safari → カメラとマイク → このサイトを「許可」に変更</li>
+      <li><strong>Android (Chrome):</strong> 設定アプリ → アプリ → Chrome → 権限 → マイク → 「許可」に変更</li>
+      <li><strong>Android (Firefox):</strong> アドレスバー左側の🔒アイコンをタップ → 権限 → マイク → 「許可」に変更</li>
     </ul>
     <p style="margin-top: 10px;">設定変更後、ページをリロードしてください。</p>
   </div>
@@ -448,7 +460,10 @@ const { apiBaseUrl = '' } = Astro.props;
     if (!container) return;
 
     const apiBase = container.dataset.apiBase || '';
-    
+
+    // デバイス検出
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+
     // DOM要素
     const chatArea = document.getElementById('chatArea')!;
     const userInput = document.getElementById('userInput') as HTMLInputElement;
@@ -457,7 +472,9 @@ const { apiBaseUrl = '' } = Astro.props;
     const speakerBtn = document.getElementById('speakerBtn') as HTMLButtonElement;
     const reservationBtn = document.getElementById('reservationBtn') as HTMLButtonElement;
     const voiceStatus = document.getElementById('voiceStatus')!;
-    const micBlockedAlert = document.getElementById('micBlockedAlert')!;
+    const micBlockedAlertDesktop = document.getElementById('micBlockedAlertDesktop')!;
+    const micBlockedAlertMobile = document.getElementById('micBlockedAlertMobile')!;
+    const micBlockedAlert = isMobile ? micBlockedAlertMobile : micBlockedAlertDesktop;
 
     // 状態
     let micPermissionGranted = false;
@@ -671,7 +688,8 @@ const { apiBaseUrl = '' } = Astro.props;
         micPermissionGranted = true;
         micBtn.style.opacity = '1';
         micBtn.disabled = false;
-        micBlockedAlert.classList.add('hidden');
+        micBlockedAlertDesktop.classList.add('hidden');
+        micBlockedAlertMobile.classList.add('hidden');
 
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
 
