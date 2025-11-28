@@ -234,7 +234,10 @@ def play_audio_mp3_simple(audio_bytes: bytes):
 
 def play_audio_mp3_with_stt_interruption(audio_bytes: bytes, audio_interface: pyaudio.PyAudio):
     """
-    MP3音声を再生し、Google STTで店員の発話を検知したら即座に中断
+    MP3音声を再生し、音声検出でAIを中断、その後Google STTで文字起こし
+
+    フェーズ1: 音量レベル検出のみ（Google API不使用）
+    フェーズ2: 音声検出後、Google STT Streamingで正確な文字起こし
 
     Args:
         audio_bytes: MP3音声データ
@@ -249,87 +252,13 @@ def play_audio_mp3_with_stt_interruption(audio_bytes: bytes, audio_interface: py
         print("[スキップ] pygame未インストールのため音声再生をスキップします")
         return False, "", 0.0, []
 
-    # 中断フラグとSTT結果を格納
-    interruption_detected = threading.Event()
-    stt_result = {'transcript': '', 'confidence': 0.0}
+    import numpy as np
+
+    # 音声検出の閾値（16bit音声の平均振幅）
+    VOICE_THRESHOLD = 500  # 調整可能
+
+    voice_detected = False
     recorded_chunks = []
-
-    # 入力キュー: 音声チャンク
-    input_queue = queue.Queue()
-    # 出力キュー: 認識結果
-    output_queue = queue.Queue()
-
-    # ストリーミング認識スレッド
-    def run_streaming_recognize():
-        """Google STT Streaming APIで中断検知"""
-        accumulated_audio = []
-
-        try:
-            streaming_config = get_stt_streaming_config()
-
-            def request_generator():
-                while True:
-                    chunk = input_queue.get()
-                    if chunk is None:
-                        break
-                    accumulated_audio.append(chunk)
-                    yield speech.StreamingRecognizeRequest(audio_content=chunk)
-
-            responses = stt_client.streaming_recognize(streaming_config, request_generator())
-
-            for response in responses:
-                if not response.results:
-                    continue
-
-                for result in response.results:
-                    if not result.alternatives:
-                        continue
-
-                    transcript = result.alternatives[0].transcript
-
-                    # 中間結果でも検知（店員が話し始めた瞬間に反応）
-                    if transcript.strip():
-                        print(f"\n  [STT中断検知] {'[確定]' if result.is_final else '[中間]'} {transcript}")
-
-                        # トランスクリプトが来た時点でAI音声を停止
-                        interruption_detected.set()
-
-                        # is_finalまで待って確定結果を取得
-                        if result.is_final:
-                            confidence = result.alternatives[0].confidence if result.alternatives else 0.0
-                            audio_data = b''.join(accumulated_audio)
-                            output_queue.put(('transcript', transcript, confidence, audio_data))
-                            break
-
-        except Exception as e:
-            import traceback
-            print(f"\n[STT中断検知エラー] {e}")
-            print(traceback.format_exc())
-            output_queue.put(('error', str(e), 0.0, b''))
-
-    # 録音スレッド
-    def record_audio():
-        """マイク入力を録音し、STTに送信"""
-        stream = audio_interface.open(
-            format=FORMAT,
-            channels=CHANNELS,
-            rate=RATE,
-            input=True,
-            frames_per_buffer=CHUNK_SIZE
-        )
-
-        try:
-            # AI音声再生中 + 中断後も録音継続（is_finalまで）
-            while pygame.mixer.music.get_busy() or (interruption_detected.is_set() and output_queue.empty()):
-                data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
-                recorded_chunks.append(data)
-                input_queue.put(data)
-                time.sleep(0.01)  # 10ms間隔
-
-        finally:
-            input_queue.put(None)  # 終了シグナル
-            stream.stop_stream()
-            stream.close()
 
     tmp_path = None
     try:
@@ -341,58 +270,138 @@ def play_audio_mp3_with_stt_interruption(audio_bytes: bytes, audio_interface: py
         # AI音声再生開始
         pygame.mixer.music.load(tmp_path)
         pygame.mixer.music.play()
-        print("[AI音声] 再生開始（STT監視中...）")
+        print("[AI音声] 再生開始（音量監視中...）")
 
-        # STTスレッドと録音スレッドを開始
-        stt_thread = threading.Thread(target=run_streaming_recognize, daemon=True)
-        record_thread = threading.Thread(target=record_audio, daemon=True)
+        # フェーズ1: 音量レベル検出（Google API不使用）
+        stream = audio_interface.open(
+            format=FORMAT,
+            channels=CHANNELS,
+            rate=RATE,
+            input=True,
+            frames_per_buffer=CHUNK_SIZE
+        )
 
-        stt_thread.start()
-        record_thread.start()
+        try:
+            while pygame.mixer.music.get_busy():
+                data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+                recorded_chunks.append(data)
 
-        # 中断検知を待つ
-        while pygame.mixer.music.get_busy():
-            if interruption_detected.is_set():
-                # 店員の発話を検知 → AI音声を即座に停止
-                pygame.mixer.music.stop()
-                print("[中断] 店員の発話を検知 → AI音声を即座に停止")
-                break
-            time.sleep(0.01)  # 10ms間隔でチェック
+                # 音量レベルを計算
+                audio_array = np.frombuffer(data, dtype=np.int16)
+                volume = np.abs(audio_array).mean()
 
-        # スレッドの終了を待つ
-        record_thread.join(timeout=10.0)
-        stt_thread.join(timeout=5.0)
+                if volume > VOICE_THRESHOLD:
+                    # 音声検出！AI音声を即座に停止
+                    voice_detected = True
+                    pygame.mixer.music.stop()
+                    print(f"[音声検出] 音量レベル: {volume:.1f} → AI音声を停止")
+                    break
 
-        # pygame がファイルをリリースするまで待機
-        if not interruption_detected.is_set():
-            pygame.mixer.music.unload()
-            time.sleep(0.1)
+                time.sleep(0.01)
+        finally:
+            # AI音声が完了するまで録音を継続（中断されなかった場合）
+            if not voice_detected:
+                stream.stop_stream()
+                stream.close()
+                pygame.mixer.music.unload()
+                time.sleep(0.1)
 
-        # 結果を取得（ファイル削除前に実行）
-        result = None
-        if interruption_detected.is_set():
+        # フェーズ2: 音声が検出された場合、Google STT Streamingで文字起こし
+        if voice_detected:
+            print("[STT開始] Google STT Streamingで文字起こし中...")
+
+            # 入力キュー: 音声チャンク
+            input_queue = queue.Queue()
+            # 出力キュー: 認識結果
+            output_queue = queue.Queue()
+
+            # 既に録音したチャンクをキューに追加
+            for chunk in recorded_chunks:
+                input_queue.put(chunk)
+
+            # ストリーミング認識スレッド
+            def run_streaming_recognize():
+                accumulated_audio = []
+                try:
+                    streaming_config = get_stt_streaming_config()
+
+                    def request_generator():
+                        while True:
+                            chunk = input_queue.get()
+                            if chunk is None:
+                                break
+                            accumulated_audio.append(chunk)
+                            yield speech.StreamingRecognizeRequest(audio_content=chunk)
+
+                    responses = stt_client.streaming_recognize(streaming_config, request_generator())
+
+                    for response in responses:
+                        if not response.results:
+                            continue
+
+                        for result in response.results:
+                            if not result.alternatives:
+                                continue
+
+                            transcript = result.alternatives[0].transcript
+
+                            if transcript.strip():
+                                print(f"\n  [STT中断検知] {'[確定]' if result.is_final else '[中間]'} {transcript}")
+
+                                if result.is_final:
+                                    confidence = result.alternatives[0].confidence if result.alternatives else 0.0
+                                    output_queue.put(('transcript', transcript, confidence))
+                                    break
+
+                except Exception as e:
+                    import traceback
+                    print(f"\n[STT中断検知エラー] {e}")
+                    print(traceback.format_exc())
+                    output_queue.put(('error', str(e), 0.0))
+
+            # 録音継続スレッド
+            def continue_recording():
+                try:
+                    # is_finalまで録音を継続
+                    while output_queue.empty():
+                        data = stream.read(CHUNK_SIZE, exception_on_overflow=False)
+                        recorded_chunks.append(data)
+                        input_queue.put(data)
+                        time.sleep(0.01)
+                finally:
+                    input_queue.put(None)  # 終了シグナル
+                    stream.stop_stream()
+                    stream.close()
+
+            # スレッド開始
+            stt_thread = threading.Thread(target=run_streaming_recognize, daemon=True)
+            record_thread = threading.Thread(target=continue_recording, daemon=True)
+
+            stt_thread.start()
+            record_thread.start()
+
+            # 結果を待つ
             try:
-                result_type, transcript, confidence, _ = output_queue.get(timeout=5.0)
+                result_type, transcript, confidence = output_queue.get(timeout=10.0)
                 if result_type == 'transcript':
-                    result = (True, transcript, confidence, recorded_chunks)
+                    return (True, transcript, confidence, recorded_chunks)
                 else:
-                    result = (True, "", 0.0, recorded_chunks)
+                    return (True, "", 0.0, recorded_chunks)
             except queue.Empty:
                 print("[警告] STT結果を取得できませんでした")
-                result = (True, "", 0.0, recorded_chunks)
-        else:
-            result = (False, "", 0.0, [])
+                return (True, "", 0.0, recorded_chunks)
+            finally:
+                record_thread.join(timeout=2.0)
+                stt_thread.join(timeout=2.0)
 
-        return result
+        # 中断されなかった場合
+        return (False, "", 0.0, [])
 
     except Exception as e:
         print(f"[エラー] 音声再生・中断検知エラー: {e}")
         import traceback
         print(traceback.format_exc())
-        # エラーが起きても中断検知結果は返す
-        if interruption_detected.is_set():
-            return True, "", 0.0, recorded_chunks
-        return False, "", 0.0, []
+        return (False, "", 0.0, [])
     finally:
         # ファイル削除（エラーは無視）
         if tmp_path:
