@@ -671,14 +671,12 @@ def main():
 
                 if greeting_audio:
                     print(f"[AI挨拶] 再生中（中断検知あり）...")
-                    interruption_result = play_audio_mp3_with_stt_interruption(greeting_audio, audio)
+                    interrupted, staff_transcript, staff_confidence, staff_audio_chunks = play_audio_mp3_with_stt_interruption(greeting_audio, audio)
 
                     # 中断された場合の処理
-                    if interruption_result['interrupted']:
+                    if interrupted:
                         print(f"[中断] AI挨拶が中断されました")
-                        staff_transcript = interruption_result.get('transcript', '')
-                        staff_confidence = interruption_result.get('confidence', 0.0)
-                        staff_audio_data = interruption_result.get('audio_data', b'')
+                        staff_audio_data = b''.join(staff_audio_chunks)
 
                         # 中断時の店員発話を全編録音に追加
                         if save_dir and staff_audio_data:
@@ -715,10 +713,10 @@ def main():
                             response_audio = synthesize_speech(ai_response)
                             if response_audio:
                                 print(f"[TTS] 応答再生中（中断検知あり）...")
-                                response_interruption = play_audio_mp3_with_stt_interruption(response_audio, audio)
+                                response_interrupted, _, _, _ = play_audio_mp3_with_stt_interruption(response_audio, audio)
 
                                 # 全編録音用にLINEAR16版を追加
-                                if save_dir and not response_interruption['interrupted']:
+                                if save_dir and not response_interrupted:
                                     response_linear16 = synthesize_speech_linear16(ai_response)
                                     for i in range(0, len(response_linear16), CHUNK_SIZE * 2):
                                         chunk = response_linear16[i:i + CHUNK_SIZE * 2]
