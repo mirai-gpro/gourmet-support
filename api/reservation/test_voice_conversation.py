@@ -706,7 +706,7 @@ def main():
 
                             # Gemini応答を生成（中断された場合は即座に対応）
                             print(f"[Gemini] 応答生成中...")
-                            ai_response = generate_response(staff_transcript)
+                            ai_response = get_gemini_response(staff_transcript)
                             print(f"[AI応答] {ai_response}")
 
                             # TTS音声合成
