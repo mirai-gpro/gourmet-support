@@ -626,7 +626,13 @@ def get_gemini_response(user_input: str) -> str:
 
     try:
         response = gemini_model.generate_content(prompt)
-        return response.text.strip()
+        response_text = response.text.strip()
+
+        # Geminiが会話履歴の形式を真似して "AI: " を出力することがあるため除去
+        if response_text.startswith("AI: ") or response_text.startswith("AI:"):
+            response_text = response_text.replace("AI: ", "", 1).replace("AI:", "", 1).strip()
+
+        return response_text
     except Exception as e:
         print(f"[Gemini エラー] {e}")
         return "少々お待ちください。"
