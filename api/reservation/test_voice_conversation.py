@@ -638,6 +638,111 @@ def get_gemini_response(user_input: str) -> str:
         return "少々お待ちください。"
 
 
+def generate_conversation_summary(conversation_history: list, start_time: datetime, end_time: datetime) -> str:
+    """
+    会話内容から予約サマリーを生成（パターンB：簡潔版）
+
+    Args:
+        conversation_history: 会話履歴
+        start_time: 会話開始時刻
+        end_time: 会話終了時刻
+
+    Returns:
+        str: フォーマットされたサマリーテキスト
+    """
+    # 通話時間を計算
+    duration = end_time - start_time
+    duration_minutes = int(duration.total_seconds() // 60)
+    duration_seconds = int(duration.total_seconds() % 60)
+    duration_str = f"{duration_minutes}分{duration_seconds}秒"
+
+    # ターン数（店員とAIの発話数）
+    turn_count = len(conversation_history)
+
+    # 会話内容から特別リクエストを抽出
+    special_requests = []
+    cake_info = None
+    cake_message = None
+    allergies = None
+
+    # 会話履歴から情報を抽出
+    conversation_text = " ".join([entry['text'] for entry in conversation_history])
+
+    # 誕生日の確認
+    if "誕生日" in conversation_text or "お祝い" in conversation_text:
+        special_requests.append("誕生日のお祝い")
+
+    # ケーキ情報の抽出
+    if "5000円" in conversation_text or "5,000円" in conversation_text:
+        cake_info = "ケーキ 5,000円"
+    elif "3000円" in conversation_text or "3,000円" in conversation_text:
+        cake_info = "ケーキ 3,000円"
+    elif "7000円" in conversation_text or "7,000円" in conversation_text:
+        cake_info = "ケーキ 7,000円"
+
+    # メッセージの抽出
+    for entry in conversation_history:
+        if "お誕生日おめでとう" in entry['text']:
+            # メッセージ部分を抽出
+            text = entry['text']
+            if "太郎" in text:
+                cake_message = "お誕生日おめでとう　太郎"
+            else:
+                cake_message = "お誕生日おめでとう"
+            break
+
+    # アレルギー情報の抽出
+    for entry in conversation_history:
+        if "アレルギー" in entry['text'] and entry['role'] == "AI":
+            if "ありません" in entry['text'] or "ない" in entry['text']:
+                allergies = "なし"
+            else:
+                allergies = "あり（詳細は会話履歴を参照）"
+            break
+
+    # 確認事項
+    confirmation = []
+    for entry in conversation_history:
+        if "復唱" in entry['text']:
+            confirmation.append("店舗にて予約内容を復唱確認済み")
+        if "お待ちしております" in entry['text'] and entry['role'] == "店員":
+            confirmation.append("当日のご来店をお待ちしております")
+
+    # サマリーテキストを生成
+    summary = "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+    summary += "予約完了レポート\n"
+    summary += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+
+    summary += "【予約状況】 ✅ 予約完了\n\n"
+
+    summary += f"【店舗】 {RESERVATION_INFO['restaurant_name']}\n"
+    summary += f"【日時】 {RESERVATION_INFO['date']}（{RESERVATION_INFO['day_of_week']}） {RESERVATION_INFO['time']}\n"
+    summary += f"【人数】 {RESERVATION_INFO['guests']}名様（{RESERVATION_INFO['seat_type']}）\n"
+    summary += f"【予約者】 {RESERVATION_INFO['reserver_name']} 様（{RESERVATION_INFO['contact_phone']}）\n\n"
+
+    # 特別リクエストセクション
+    if special_requests or cake_info or allergies:
+        summary += "【特別リクエスト】\n"
+        for req in special_requests:
+            summary += f"- {req}\n"
+        if cake_info:
+            if cake_message:
+                summary += f"- {cake_info}（メッセージ: {cake_message}）\n"
+            else:
+                summary += f"- {cake_info}\n"
+        if allergies:
+            summary += f"- アレルギー: {allergies}\n"
+        summary += "\n"
+
+    # 確認事項セクション
+    if confirmation:
+        summary += "【確認事項】\n"
+        summary += "\n".join(confirmation) + "\n\n"
+
+    summary += f"通話時間: {duration_str} / ターン数: {turn_count}\n"
+    summary += "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+
+    return summary
 
 
 def main():
@@ -689,6 +794,7 @@ def main():
 
     # 会話ループ
     turn = 0
+    conversation_start_time = datetime.now()  # 会話開始時刻を記録
 
     try:
         while True:
@@ -979,10 +1085,23 @@ def main():
                 f.write(f"{i}. [{entry['role']}] {entry['text']}\n")
                 f.write(f"   時刻: {entry['timestamp']}\n\n")
 
+        # 会話サマリーを生成して保存
+        conversation_end_time = datetime.now()
+        summary_text = generate_conversation_summary(conversation_history, conversation_start_time, conversation_end_time)
+
+        summary_path = save_dir / "reservation_summary.txt"
+        with open(summary_path, 'w', encoding='utf-8') as f:
+            f.write(summary_text)
+
+        # サマリーをコンソールにも表示
+        print("\n" + summary_text)
+
         print(f"\n[保存完了] 会話履歴: {transcript_path}")
+        print(f"[保存完了] 予約サマリー: {summary_path}")
         print(f"[保存完了] 保存先: {save_dir}")
         print(f"  - full_conversation.wav (全編録音)")
         print(f"  - conversation_transcript.txt (テキスト履歴)")
+        print(f"  - reservation_summary.txt (予約サマリー)")
         print("=" * 60)
 
 
