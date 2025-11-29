@@ -394,6 +394,9 @@ const { apiBaseUrl = '' } = Astro.props;
   }
 </style>
 
+<!-- Socket.IO クライアントライブラリ（WebSocket Streaming STT用） -->
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+
 <script>
   // グルメチャット機能
   document.addEventListener('DOMContentLoaded', () => {
@@ -437,6 +440,12 @@ const { apiBaseUrl = '' } = Astro.props;
     let hasSpoken = false; // 音声が検出されたかどうか
     const SILENCE_THRESHOLD = 15; // 無音判定の閾値（0-255）
     const SILENCE_DURATION = 3000; // 無音が続いたら停止するミリ秒（3秒）
+
+    // WebSocket Streaming STT用（案2: 完全実装）
+    let socket: any = null;
+    let audioWorkletNode: AudioWorkletNode | null = null;
+    let streamingTranscript = ''; // リアルタイム認識結果
+    let isStreamingSTT = false; // Streaming STT使用フラグ
 
     // ユーザーインタラクション検出
     function enableAudioPlayback() {
@@ -599,26 +608,160 @@ const { apiBaseUrl = '' } = Astro.props;
       micBtn.innerHTML = '&#127908;';
     }
 
-    // 録音切り替え
+    // 録音切り替え（案2: WebSocket Streaming STT対応）
     async function toggleRecording() {
       enableAudioPlayback();
       stopCurrentAudio();
 
       if (isRecording) {
-        stopVAD();
-        if (mediaRecorder && mediaRecorder.state === 'recording') {
-          mediaRecorder.stop();
-        }
-        if (recordingTimer) {
-          clearTimeout(recordingTimer);
-          recordingTimer = null;
-        }
-        isRecording = false;
-        micBtn.classList.remove('recording');
-        micBtn.innerHTML = '&#127908;';
+        // 録音停止
+        stopStreamingSTT();
         return;
       }
 
+      // WebSocket Streaming STT が有効な場合は使用、無効な場合はフォールバック
+      if (isStreamingSTT) {
+        await startStreamingSTT();
+      } else {
+        // フォールバック: 従来のMediaRecorder方式
+        console.warn('[Recording] WebSocket未接続、フォールバック使用');
+        await startLegacyRecording();
+      }
+    }
+
+    // WebSocket Streaming STT開始
+    async function startStreamingSTT() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            channelCount: 1,
+            sampleRate: 16000,  // 16kHz (Google Cloud STT推奨)
+            echoCancellation: true,
+            noiseSuppression: true
+          }
+        });
+
+        // AudioContext作成（16kHz）
+        audioContext = new AudioContext({ sampleRate: 16000 });
+        const source = audioContext.createMediaStreamSource(stream);
+
+        // AudioWorklet読み込み
+        await audioContext.audioWorklet.addModule('/audio-processor.js');
+
+        // AudioWorkletNode作成
+        audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
+
+        // PCMチャンクをWebSocket経由で送信
+        audioWorkletNode.port.onmessage = (event) => {
+          const { audioChunk } = event.data;
+
+          // Int16Array をbase64エンコード
+          const uint8Array = new Uint8Array(audioChunk.buffer);
+          const base64 = btoa(String.fromCharCode.apply(null, Array.from(uint8Array)));
+
+          // WebSocket送信
+          if (socket && socket.connected) {
+            socket.emit('audio_chunk', { chunk: base64 });
+          }
+        };
+
+        // 音声フロー接続
+        source.connect(audioWorkletNode);
+        audioWorkletNode.connect(audioContext.destination);
+
+        // VADセットアップ（無音検出）
+        analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+
+        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+        hasSpoken = false;
+
+        vadCheckInterval = window.setInterval(() => {
+          if (!analyser || !isRecording) return;
+
+          analyser.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
+
+          if (average > SILENCE_THRESHOLD) {
+            hasSpoken = true;
+            if (silenceTimer) {
+              clearTimeout(silenceTimer);
+              silenceTimer = null;
+            }
+            voiceStatus.innerHTML = '&#127908; 録音中...';
+          } else if (hasSpoken && !silenceTimer) {
+            voiceStatus.innerHTML = '&#127908; 認識待機中...';
+            silenceTimer = window.setTimeout(() => {
+              console.log('[VAD] 無音検出 - 自動停止');
+              stopStreamingSTT();
+            }, SILENCE_DURATION);
+          }
+        }, 100);
+
+        // WebSocketストリーム開始通知
+        socket.emit('start_stream', { language_code: 'ja-JP' });
+
+        isRecording = true;
+        micBtn.classList.add('recording');
+        micBtn.innerHTML = '&#9209;';
+        voiceStatus.innerHTML = '&#127908; 話してください...';
+        voiceStatus.className = 'voice-status listening';
+
+        console.log('[WebSocket STT] ストリーミング録音開始');
+
+        // 55秒後に自動停止
+        recordingTimer = window.setTimeout(() => {
+          if (isRecording) {
+            console.log('[Recording] 最大録音時間に達したため自動停止');
+            stopStreamingSTT();
+            addMessage('system', '録音時間が上限（55秒）に達したため自動停止しました');
+          }
+        }, MAX_RECORDING_TIME);
+
+      } catch (error) {
+        console.error('[WebSocket STT] 録音開始エラー:', error);
+        addMessage('system', `マイクアクセスエラー: ${(error as Error).message}`);
+      }
+    }
+
+    // WebSocket Streaming STT停止
+    function stopStreamingSTT() {
+      // VAD停止
+      stopVAD();
+
+      // AudioWorklet停止
+      if (audioWorkletNode) {
+        audioWorkletNode.disconnect();
+        audioWorkletNode = null;
+      }
+
+      // AudioContext停止
+      if (audioContext) {
+        audioContext.close();
+        audioContext = null;
+      }
+
+      // WebSocketストリーム停止通知
+      if (socket && socket.connected) {
+        socket.emit('stop_stream');
+      }
+
+      // タイマー停止
+      if (recordingTimer) {
+        clearTimeout(recordingTimer);
+        recordingTimer = null;
+      }
+
+      isRecording = false;
+      micBtn.classList.remove('recording');
+      micBtn.innerHTML = '&#127908;';
+
+      console.log('[WebSocket STT] ストリーミング録音停止');
+    }
+
+    // フォールバック: 従来のMediaRecorder方式
+    async function startLegacyRecording() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
         mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm;codecs=opus' });
@@ -635,7 +778,6 @@ const { apiBaseUrl = '' } = Astro.props;
 
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-        // 音声レベルを定期的にチェック
         vadCheckInterval = window.setInterval(() => {
           if (!analyser || !isRecording) return;
 
@@ -643,7 +785,6 @@ const { apiBaseUrl = '' } = Astro.props;
           const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
 
           if (average > SILENCE_THRESHOLD) {
-            // 音声が検出された
             hasSpoken = true;
             if (silenceTimer) {
               clearTimeout(silenceTimer);
@@ -651,7 +792,6 @@ const { apiBaseUrl = '' } = Astro.props;
             }
             voiceStatus.innerHTML = '&#127908; 録音中...';
           } else if (hasSpoken && !silenceTimer) {
-            // 音声後の無音を検出 - タイマー開始
             voiceStatus.innerHTML = '&#127908; 認識待機中...';
             silenceTimer = window.setTimeout(() => {
               autoStopRecording();
@@ -687,7 +827,6 @@ const { apiBaseUrl = '' } = Astro.props;
         voiceStatus.innerHTML = '&#127908; 話してください...';
         voiceStatus.className = 'voice-status listening';
 
-        // 55秒後に自動停止（APIの60秒制限対策）
         recordingTimer = window.setTimeout(() => {
           if (isRecording && mediaRecorder && mediaRecorder.state === 'recording') {
             console.log('[Recording] 最大録音時間に達したため自動停止');
@@ -898,10 +1037,117 @@ const { apiBaseUrl = '' } = Astro.props;
 
         console.log(`[初期化] 完了 (事前生成音声: ${preGeneratedAcks.size}件)`);
 
+        // 案2: WebSocket Streaming STT接続を初期化
+        initializeWebSocketSTT();
+
       } catch (error) {
         console.error('初期化エラー:', error);
         showError('初期化に失敗しました。ページを再読み込みしてください。');
       }
+    }
+
+    // WebSocket Streaming STT接続初期化（案2: 完全実装）
+    function initializeWebSocketSTT() {
+      try {
+        // Socket.IO接続（apiBaseからWebSocketサーバーURLを生成）
+        const wsUrl = apiBase || window.location.origin;
+        socket = io(wsUrl);
+
+        socket.on('connect', () => {
+          console.log('[WebSocket STT] 接続成功');
+          isStreamingSTT = true;
+        });
+
+        socket.on('disconnect', () => {
+          console.log('[WebSocket STT] 切断');
+          isStreamingSTT = false;
+        });
+
+        socket.on('connected', (data: any) => {
+          console.log('[WebSocket STT] サーバー準備完了:', data);
+        });
+
+        socket.on('stream_started', (data: any) => {
+          console.log('[WebSocket STT] ストリーム開始:', data);
+        });
+
+        socket.on('transcript', (data: any) => {
+          // リアルタイム認識結果
+          const { text, is_final, confidence } = data;
+
+          if (is_final) {
+            // 最終結果: ユーザー入力として確定
+            console.log(`[WebSocket STT] 最終認識: "${text}" (信頼度: ${confidence.toFixed(2)})`);
+            streamingTranscript = text;
+
+            // 音声認識完了処理
+            handleStreamingSTTComplete(text);
+          } else {
+            // 途中結果: リアルタイム表示
+            console.log(`[WebSocket STT] 途中認識: "${text}"`);
+            userInput.value = text; // リアルタイムで入力欄に表示
+          }
+        });
+
+        socket.on('stream_stopped', (data: any) => {
+          console.log('[WebSocket STT] ストリーム停止:', data);
+        });
+
+        socket.on('error', (data: any) => {
+          console.error('[WebSocket STT] エラー:', data.message);
+          addMessage('system', `音声認識エラー: ${data.message}`);
+        });
+
+      } catch (error) {
+        console.error('[WebSocket STT] 初期化エラー:', error);
+        isStreamingSTT = false;
+      }
+    }
+
+    // WebSocket Streaming STT完了処理
+    function handleStreamingSTTComplete(transcript: string) {
+      voiceStatus.innerHTML = '&#9989; 認識完了';
+      voiceStatus.className = 'voice-status';
+
+      // ユーザーメッセージを追加
+      addMessage('user', transcript);
+
+      // 案1+3: スマート即答を即座に再生（事前生成音声使用）
+      const ack = selectSmartAcknowledgment(transcript);
+      console.log(`[即答] ${ack.logText}`);
+
+      const preGeneratedAudio = preGeneratedAcks.get(ack.text);
+      if (preGeneratedAudio && isTTSEnabled && isUserInteracted) {
+        // 事前生成音声を即座に再生（TTSリクエスト不要！）
+        const audio = new Audio(`data:audio/mp3;base64,${preGeneratedAudio}`);
+        currentAudio = audio;
+
+        audio.onended = () => {
+          currentAudio = null;
+        };
+
+        audio.play().catch(err => {
+          console.error('[即答] 音声再生エラー:', err);
+        });
+
+        console.log(`[即答] 事前生成音声を再生: "${ack.text}"`);
+      } else if (isTTSEnabled) {
+        // フォールバック: 事前生成がない場合はその場で生成
+        console.log(`[即答] フォールバック: その場で生成 "${ack.text}"`);
+        speakTextGCP(ack.text, false);
+      }
+
+      // チャットに即答メッセージを追加
+      addMessage('assistant', ack.text);
+
+      // 並列でメッセージ送信（待たない）
+      if (!isRecording && userInput.value.trim()) {
+        isFromVoiceInput = true; // フラグをセット
+        sendMessage(); // awaitしない = 並列実行
+      }
+
+      voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+      voiceStatus.className = 'voice-status stopped';
     }
 
     // レスポンステキストからショップ情報を抽出

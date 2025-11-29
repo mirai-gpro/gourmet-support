@@ -17,11 +17,14 @@ import requests
 from datetime import datetime
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
+from flask_socketio import SocketIO, emit
 import google.generativeai as genai
 from google.cloud import firestore
 from google.cloud import texttospeech
 from google.cloud import speech
 from prompt_manager import PromptManager
+import threading
+import queue
 
 # ロギング設定
 logging.basicConfig(
@@ -32,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 CORS(app)
+
+# Flask-SocketIO初期化（WebSocket Streaming STT用）
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # Gemini API初期化
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
@@ -1207,6 +1213,171 @@ def health_check():
     })
 
 
+# ========================================
+# WebSocket Streaming STT (案2: 完全実装)
+# ========================================
+
+# セッション管理（各クライアントの音声ストリーム状態）
+active_streams = {}
+
+
+@socketio.on('connect')
+def handle_connect():
+    """WebSocket接続確立"""
+    logger.info(f"[WebSocket STT] クライアント接続: {request.sid}")
+    emit('connected', {'status': 'ready'})
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    """WebSocket切断"""
+    logger.info(f"[WebSocket STT] クライアント切断: {request.sid}")
+
+    # アクティブストリームのクリーンアップ
+    if request.sid in active_streams:
+        stream_data = active_streams[request.sid]
+        if 'stop_event' in stream_data:
+            stream_data['stop_event'].set()
+        del active_streams[request.sid]
+
+
+@socketio.on('start_stream')
+def handle_start_stream(data):
+    """
+    音声ストリーミング開始
+
+    Parameters:
+    - language_code: 言語コード (デフォルト: 'ja-JP')
+    """
+    language_code = data.get('language_code', 'ja-JP')
+
+    logger.info(f"[WebSocket STT] ストリーム開始: {request.sid}, 言語: {language_code}")
+
+    # ストリーム設定
+    recognition_config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+        sample_rate_hertz=16000,
+        language_code=language_code,
+        enable_automatic_punctuation=True,
+        model='default'
+    )
+
+    streaming_config = speech.StreamingRecognitionConfig(
+        config=recognition_config,
+        interim_results=True,  # 途中結果も取得（リアルタイム表示用）
+        single_utterance=False  # 複数発話対応
+    )
+
+    # 音声チャンクキュー
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+
+    # セッションデータ保存
+    active_streams[request.sid] = {
+        'audio_queue': audio_queue,
+        'stop_event': stop_event,
+        'streaming_config': streaming_config
+    }
+
+    def audio_generator():
+        """音声チャンクをキューから取得して送信"""
+        while not stop_event.is_set():
+            try:
+                chunk = audio_queue.get(timeout=0.5)
+                if chunk is None:  # 終了シグナル
+                    break
+                yield speech.StreamingRecognizeRequest(audio_content=chunk)
+            except queue.Empty:
+                continue
+
+    def recognition_thread():
+        """バックグラウンドでGoogle Cloud Streaming STT実行"""
+        try:
+            responses = stt_client.streaming_recognize(streaming_config, audio_generator())
+
+            for response in responses:
+                if stop_event.is_set():
+                    break
+
+                if not response.results:
+                    continue
+
+                result = response.results[0]
+
+                if result.alternatives:
+                    transcript = result.alternatives[0].transcript
+                    confidence = result.alternatives[0].confidence if result.is_final else 0.0
+
+                    # クライアントに結果送信
+                    socketio.emit('transcript', {
+                        'text': transcript,
+                        'is_final': result.is_final,
+                        'confidence': confidence
+                    }, room=request.sid)
+
+                    if result.is_final:
+                        logger.info(f"[WebSocket STT] 最終認識: '{transcript}' (信頼度: {confidence:.2f})")
+                    else:
+                        logger.debug(f"[WebSocket STT] 途中認識: '{transcript}'")
+
+        except Exception as e:
+            logger.error(f"[WebSocket STT] 認識エラー: {e}", exc_info=True)
+            socketio.emit('error', {'message': str(e)}, room=request.sid)
+
+    # 認識スレッド開始
+    thread = threading.Thread(target=recognition_thread, daemon=True)
+    thread.start()
+
+    emit('stream_started', {'status': 'streaming'})
+
+
+@socketio.on('audio_chunk')
+def handle_audio_chunk(data):
+    """
+    音声チャンク受信（リアルタイム）
+
+    Parameters:
+    - chunk: base64エンコードされたPCM音声データ (Int16Array)
+    """
+    if request.sid not in active_streams:
+        logger.warning(f"[WebSocket STT] 未初期化のストリーム: {request.sid}")
+        return
+
+    try:
+        chunk_base64 = data.get('chunk', '')
+        if not chunk_base64:
+            return
+
+        # base64デコード
+        audio_chunk = base64.b64decode(chunk_base64)
+
+        # キューに追加（recognition_threadがピックアップ）
+        stream_data = active_streams[request.sid]
+        stream_data['audio_queue'].put(audio_chunk)
+
+    except Exception as e:
+        logger.error(f"[WebSocket STT] チャンク処理エラー: {e}", exc_info=True)
+
+
+@socketio.on('stop_stream')
+def handle_stop_stream():
+    """音声ストリーミング停止"""
+    logger.info(f"[WebSocket STT] ストリーム停止: {request.sid}")
+
+    if request.sid in active_streams:
+        stream_data = active_streams[request.sid]
+
+        # 終了シグナル送信
+        stream_data['audio_queue'].put(None)
+        stream_data['stop_event'].set()
+
+        # クリーンアップ
+        del active_streams[request.sid]
+
+    emit('stream_stopped', {'status': 'stopped'})
+
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
-    app.run(host='0.0.0.0', port=port, debug=False)
+    # Flask-SocketIO用にsocketio.run()を使用
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)
