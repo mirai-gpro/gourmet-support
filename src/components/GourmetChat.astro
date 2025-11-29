@@ -424,6 +424,10 @@ const { apiBaseUrl = '' } = Astro.props;
     let currentAudio: HTMLAudioElement | null = null;
     let isUserInteracted = false;
     let currentShops: any[] = []; // 現在表示中のショップリスト
+    let isFromVoiceInput = false; // 音声入力からの送信かどうかを追跡
+
+    // 事前生成音声（案1: 高速応答用）
+    let preGeneratedAcks: Map<string, string> = new Map(); // key: テキスト, value: base64 MP3
 
     // 無音検出用
     let audioContext: AudioContext | null = null;
@@ -727,13 +731,46 @@ const { apiBaseUrl = '' } = Astro.props;
 
           if (data.success && data.transcript) {
             userInput.value = data.transcript;
-            voiceStatus.innerHTML = '&#9989; 認識完了 - 送信中...';
+            voiceStatus.innerHTML = '&#9989; 認識完了';
             voiceStatus.className = 'voice-status';
 
-            // 自動送信（即座に実行）
-            if (!isRecording && userInput.value.trim()) {
-              await sendMessage();
+            // ユーザーメッセージを追加
+            addMessage('user', data.transcript);
+
+            // 案1+3: スマート即答を即座に再生（事前生成音声使用）
+            const ack = selectSmartAcknowledgment(data.transcript);
+            console.log(`[即答] ${ack.logText}`);
+
+            const preGeneratedAudio = preGeneratedAcks.get(ack.text);
+            if (preGeneratedAudio && isTTSEnabled && isUserInteracted) {
+              // 事前生成音声を即座に再生（TTSリクエスト不要！）
+              const audio = new Audio(`data:audio/mp3;base64,${preGeneratedAudio}`);
+              currentAudio = audio;
+
+              audio.onended = () => {
+                currentAudio = null;
+              };
+
+              audio.play().catch(err => {
+                console.error('[即答] 音声再生エラー:', err);
+              });
+
+              console.log(`[即答] 事前生成音声を再生: "${ack.text}"`);
+            } else if (isTTSEnabled) {
+              // フォールバック: 事前生成がない場合はその場で生成
+              console.log(`[即答] フォールバック: その場で生成 "${ack.text}"`);
+              speakTextGCP(ack.text, false);
             }
+
+            // チャットに即答メッセージを追加
+            addMessage('assistant', ack.text);
+
+            // 並列でメッセージ送信（待たない）
+            if (!isRecording && userInput.value.trim()) {
+              isFromVoiceInput = true; // フラグをセット
+              sendMessage(); // awaitしない = 並列実行
+            }
+
             voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
             voiceStatus.className = 'voice-status stopped';
           } else {
@@ -747,6 +784,41 @@ const { apiBaseUrl = '' } = Astro.props;
         voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
         voiceStatus.className = 'voice-status stopped';
       }
+    }
+
+    // スマート即答選択（案3: test_voice_conversation.py準拠）
+    function selectSmartAcknowledgment(userMessage: string): { text: string, logText: string } {
+      const messageLower = userMessage.trim();
+
+      // 質問形式（明確な疑問文）
+      if (/ございますか|でしょうか|いかがですか|ありますか/.test(messageLower)) {
+        return {
+          text: "確認しますので、少々お待ち下さい。",
+          logText: "質問形式 → 「確認しますので、少々お待ち下さい。」"
+        };
+      }
+
+      // 場所・エリアの質問
+      if (/どこ|場所|エリア|地域|駅/.test(messageLower)) {
+        return {
+          text: "お調べします。",
+          logText: "場所の質問 → 「お調べします。」"
+        };
+      }
+
+      // 検索・探す
+      if (/探して|探し|教えて|おすすめ|紹介/.test(messageLower)) {
+        return {
+          text: "かしこまりました。",
+          logText: "検索依頼 → 「かしこまりました。」"
+        };
+      }
+
+      // デフォルト: シンプルな確認
+      return {
+        text: "はい、承知しました。",
+        logText: "デフォルト → 「はい、承知しました。」"
+      };
     }
 
     // TTS切り替え
@@ -781,13 +853,49 @@ const { apiBaseUrl = '' } = Astro.props;
 
         addMessage('assistant', data.initial_message);
 
+        // 案1: 即答用音声を事前生成（並列実行）
+        console.log('[初期化] 即答用音声を事前生成中...');
+        const ackTexts = [
+          "確認しますので、少々お待ち下さい。",
+          "お調べします。",
+          "かしこまりました。",
+          "はい、承知しました。"
+        ];
+
+        const ackPromises = ackTexts.map(async (text) => {
+          try {
+            const ackResponse = await fetch(`${apiBase}/api/tts/synthesize`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                text: text,
+                language_code: 'ja-JP',
+                voice_name: 'ja-JP-Chirp3-HD-Leda'
+              })
+            });
+            const ackData = await ackResponse.json();
+            if (ackData.success && ackData.audio) {
+              preGeneratedAcks.set(text, ackData.audio);
+              console.log(`[初期化] ✓ 事前生成完了: "${text}"`);
+            }
+          } catch (error) {
+            console.error(`[初期化] 事前生成失敗: "${text}"`, error);
+          }
+        });
+
+        // 初期メッセージのTTSと並列実行
+        await Promise.all([
+          speakTextGCP(data.initial_message),
+          ...ackPromises
+        ]);
+
         userInput.disabled = false;
         sendBtn.disabled = false;
         micBtn.disabled = false;
         speakerBtn.disabled = false;
         userInput.focus();
 
-        speakTextGCP(data.initial_message);
+        console.log(`[初期化] 完了 (事前生成音声: ${preGeneratedAcks.size}件)`);
 
       } catch (error) {
         console.error('初期化エラー:', error);
@@ -851,22 +959,32 @@ const { apiBaseUrl = '' } = Astro.props;
       micBtn.disabled = true;
       userInput.disabled = true;
 
-      addMessage('user', message);
+      // テキスト送信の場合のみユーザーメッセージを追加
+      // （音声の場合はtranscribeAudio()で既にユーザーメッセージ追加済み）
+      if (!isFromVoiceInput) {
+        addMessage('user', message);
+      }
       userInput.value = '';
 
-      // 即座に確認メッセージを表示（質問内容に関わらず）
-      const quickAck = "かしこまりました。只今、お店の情報を確認してまとめておりますので、少々お待ちください。";
-      addMessage('assistant', quickAck);
+      // 案1: 即答は transcribeAudio() で既に再生済み（音声入力の場合）
+      // テキスト入力の場合のみここで即答を生成
+      if (!isFromVoiceInput) {
+        const ack = selectSmartAcknowledgment(message);
+        console.log(`[即答/テキスト] ${ack.logText}`);
 
-      // 確認メッセージを読み上げ（完了を待つ）
-      await speakTextGCP(quickAck);
+        const preGeneratedAudio = preGeneratedAcks.get(ack.text);
+        if (preGeneratedAudio && isTTSEnabled && isUserInteracted) {
+          const audio = new Audio(`data:audio/mp3;base64,${preGeneratedAudio}`);
+          currentAudio = audio;
+          audio.onended = () => { currentAudio = null; };
+          audio.play().catch(err => console.error('[即答] 音声再生エラー:', err));
+        }
+        addMessage('assistant', ack.text);
+      }
 
-      // 読み上げ完了後、1.5秒待ってから先行TTSを再生
-      let advanceTTSStarted = false;
-      const advanceTTSTimer = setTimeout(() => {
-        advanceTTSStarted = true;
-        speakTextGCP("お待たせしました。お店の情報を確認中です。", false);
-      }, 1500);
+      // フラグをリセット
+      const wasVoiceInput = isFromVoiceInput;
+      isFromVoiceInput = false;
 
       try {
         const loadingId = addLoadingMessage();
@@ -882,9 +1000,6 @@ const { apiBaseUrl = '' } = Astro.props;
         });
 
         const data = await response.json();
-
-        // 先行TTSのタイマーをクリア
-        clearTimeout(advanceTTSTimer);
 
         removeLoadingMessage(loadingId);
 
