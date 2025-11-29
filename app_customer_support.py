@@ -1052,15 +1052,15 @@ def transcribe_audio():
         data = request.json
         audio_base64 = data.get('audio', '')
         language_code = data.get('language_code', 'ja-JP')
-        
+
         if not audio_base64:
             return jsonify({'success': False, 'error': '音声データが必要です'}), 400
-        
+
         logger.info(f"[STT] 認識開始: {len(audio_base64)} bytes (base64)")
-        
+
         audio_content = base64.b64decode(audio_base64)
         audio = speech.RecognitionAudio(content=audio_content)
-        
+
         config = speech.RecognitionConfig(
             encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
             sample_rate_hertz=48000,
@@ -1068,9 +1068,9 @@ def transcribe_audio():
             enable_automatic_punctuation=True,
             model='default'
         )
-        
+
         response = stt_client.recognize(config=config, audio=audio)
-        
+
         transcript = ''
         if response.results:
             transcript = response.results[0].alternatives[0].transcript
@@ -1078,14 +1078,96 @@ def transcribe_audio():
             logger.info(f"[STT] 認識成功: '{transcript}' (信頼度: {confidence:.2f})")
         else:
             logger.warning("[STT] 音声が認識されませんでした")
-        
+
         return jsonify({
             'success': True,
             'transcript': transcript
         })
-        
+
     except Exception as e:
         logger.error(f"[STT] エラー: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/stt/stream', methods=['POST'])
+def transcribe_audio_streaming():
+    """
+    音声認識 (Google Cloud Streaming Speech-to-Text)
+    案2: test_voice_conversation.py準拠のStreaming STT
+
+    より高速な認識のため、streaming_recognize()を使用
+    """
+    try:
+        data = request.json
+        audio_base64 = data.get('audio', '')
+        language_code = data.get('language_code', 'ja-JP')
+
+        if not audio_base64:
+            return jsonify({'success': False, 'error': '音声データが必要です'}), 400
+
+        logger.info(f"[STT Streaming] 認識開始: {len(audio_base64)} bytes (base64)")
+
+        audio_content = base64.b64decode(audio_base64)
+
+        # Streaming STT設定 (test_voice_conversation.py準拠)
+        recognition_config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
+            sample_rate_hertz=48000,
+            language_code=language_code,
+            enable_automatic_punctuation=True,
+            model='default'
+        )
+
+        streaming_config = speech.StreamingRecognitionConfig(
+            config=recognition_config,
+            interim_results=False,  # is_finalのみ取得
+            single_utterance=True   # 単一発話
+        )
+
+        # 音声データをチャンクに分割してストリーミング
+        CHUNK_SIZE = 1024 * 16  # 16KB chunks
+
+        def audio_generator():
+            """音声チャンクを生成"""
+            for i in range(0, len(audio_content), CHUNK_SIZE):
+                chunk = audio_content[i:i + CHUNK_SIZE]
+                yield speech.StreamingRecognizeRequest(audio_content=chunk)
+
+        # Streaming認識実行
+        responses = stt_client.streaming_recognize(streaming_config, audio_generator())
+
+        transcript = ''
+        confidence = 0.0
+
+        # is_final=Trueの結果のみ取得
+        for response in responses:
+            if not response.results:
+                continue
+
+            for result in response.results:
+                if result.is_final and result.alternatives:
+                    transcript = result.alternatives[0].transcript
+                    confidence = result.alternatives[0].confidence
+                    logger.info(f"[STT Streaming] 認識成功: '{transcript}' (信頼度: {confidence:.2f})")
+                    break
+
+            if transcript:  # is_final取得したら終了
+                break
+
+        if not transcript:
+            logger.warning("[STT Streaming] 音声が認識されませんでした")
+
+        return jsonify({
+            'success': True,
+            'transcript': transcript,
+            'confidence': confidence
+        })
+
+    except Exception as e:
+        logger.error(f"[STT Streaming] エラー: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': str(e)

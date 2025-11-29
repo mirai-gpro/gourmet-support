@@ -718,7 +718,8 @@ const { apiBaseUrl = '' } = Astro.props;
         reader.onloadend = async () => {
           const base64Audio = (reader.result as string).split(',')[1];
 
-          const response = await fetch(`${apiBase}/api/stt/transcribe`, {
+          // 案2: Streaming STT エンドポイントを使用（高速化）
+          const response = await fetch(`${apiBase}/api/stt/stream`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
