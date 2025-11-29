@@ -570,7 +570,7 @@ def select_smart_acknowledgment(staff_utterance: str) -> tuple:
 
     # 質問形式（明確な疑問文）
     if any(kw in utterance_lower for kw in ['ございますか', 'でしょうか', 'いかがですか']):
-        return "ご質問ありがとうございます。", "質問形式 → 「ご質問ありがとうございます。」"
+        return "確認しますので、少々お待ち下さい。", "質問形式 → 「確認しますので、少々お待ち下さい。」"
 
     # 待機要求（店員が作業する）
     if any(kw in utterance_lower for kw in ['お待ちください', '確認します', '代わります', '変わります']):
