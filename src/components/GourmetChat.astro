@@ -1501,6 +1501,9 @@ const { apiBaseUrl = '' } = Astro.props;
       // チャットに即答メッセージを追加
       addMessage('assistant', ack.text);
 
+      // 録音を停止
+      stopStreamingSTT();
+
       // 第2段階：形態素解析ベースの理解応答（分割再生）
       (async () => {
         try {
