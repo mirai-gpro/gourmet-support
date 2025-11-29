@@ -654,6 +654,7 @@ const { apiBaseUrl = '' } = Astro.props;
         audioWorkletNode = new AudioWorkletNode(audioContext, 'audio-processor');
 
         // PCMチャンクをWebSocket経由で送信
+        let chunkCount = 0;
         audioWorkletNode.port.onmessage = (event) => {
           const { audioChunk } = event.data;
 
@@ -664,6 +665,12 @@ const { apiBaseUrl = '' } = Astro.props;
           // WebSocket送信
           if (socket && socket.connected) {
             socket.emit('audio_chunk', { chunk: base64 });
+            chunkCount++;
+            if (chunkCount % 10 === 0) {
+              console.log(`[Audio] チャンク送信: ${chunkCount}個 (${audioChunk.length} samples)`);
+            }
+          } else {
+            console.error('[Audio] WebSocket未接続 - チャンク送信失敗');
           }
         };
 
