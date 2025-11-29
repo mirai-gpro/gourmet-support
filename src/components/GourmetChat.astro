@@ -1132,6 +1132,9 @@ const { apiBaseUrl = '' } = Astro.props;
       voiceStatus.innerHTML = '&#9989; 認識完了';
       voiceStatus.className = 'voice-status';
 
+      // 入力欄に認識結果を設定
+      userInput.value = transcript;
+
       // ユーザーメッセージを追加
       addMessage('user', transcript);
 
