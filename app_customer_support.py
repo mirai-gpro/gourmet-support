@@ -1260,7 +1260,10 @@ def handle_start_stream(data):
     """
     language_code = data.get('language_code', 'ja-JP')
 
-    logger.info(f"[WebSocket STT] ストリーム開始: {request.sid}, 言語: {language_code}")
+    # request.sidを事前に取得（別スレッドでは使えないため）
+    client_sid = request.sid
+
+    logger.info(f"[WebSocket STT] ストリーム開始: {client_sid}, 言語: {language_code}")
 
     # ストリーム設定
     recognition_config = speech.RecognitionConfig(
@@ -1282,7 +1285,7 @@ def handle_start_stream(data):
     stop_event = threading.Event()
 
     # セッションデータ保存
-    active_streams[request.sid] = {
+    active_streams[client_sid] = {
         'audio_queue': audio_queue,
         'stop_event': stop_event,
         'streaming_config': streaming_config
@@ -1302,6 +1305,7 @@ def handle_start_stream(data):
     def recognition_thread():
         """バックグラウンドでGoogle Cloud Streaming STT実行"""
         try:
+            logger.info(f"[WebSocket STT] 認識スレッド開始: {client_sid}")
             responses = stt_client.streaming_recognize(streaming_config, audio_generator())
 
             for response in responses:
@@ -1317,12 +1321,12 @@ def handle_start_stream(data):
                     transcript = result.alternatives[0].transcript
                     confidence = result.alternatives[0].confidence if result.is_final else 0.0
 
-                    # クライアントに結果送信
+                    # クライアントに結果送信（client_sidを使用）
                     socketio.emit('transcript', {
                         'text': transcript,
                         'is_final': result.is_final,
                         'confidence': confidence
-                    }, room=request.sid)
+                    }, room=client_sid)
 
                     if result.is_final:
                         logger.info(f"[WebSocket STT] 最終認識: '{transcript}' (信頼度: {confidence:.2f})")
