@@ -439,9 +439,9 @@ const { apiBaseUrl = '' } = Astro.props;
     let vadCheckInterval: number | null = null;
     let hasSpoken = false; // 音声が検出されたかどうか
     let recordingStartTime = 0; // 録音開始時刻
-    const SILENCE_THRESHOLD = 25; // 無音判定の閾値（0-255）※16kHz環境用に調整
+    const SILENCE_THRESHOLD = 35; // 無音判定の閾値（0-255）※環境ノイズを無視
     const SILENCE_DURATION = 2000; // 無音が続いたら停止するミリ秒（2秒）
-    const MIN_RECORDING_TIME = 500; // 最小録音時間（0.5秒）- すぐに停止しないように
+    const MIN_RECORDING_TIME = 3000; // 最小録音時間（3秒）- マイク初期化音を無視
 
     // WebSocket Streaming STT用（案2: 完全実装）
     let socket: any = null;
