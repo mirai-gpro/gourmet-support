@@ -34,7 +34,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-CORS(app)
+
+# CORS設定（Flask-SocketIOとの併用のため明示的に設定）
+CORS(app, resources={
+    r"/*": {
+        "origins": "*",
+        "methods": ["GET", "POST", "OPTIONS"],
+        "allow_headers": ["Content-Type", "Authorization"],
+        "supports_credentials": False
+    }
+})
 
 # Flask-SocketIO初期化（WebSocket Streaming STT用）
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
