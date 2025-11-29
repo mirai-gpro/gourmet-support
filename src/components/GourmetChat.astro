@@ -1007,8 +1007,8 @@ const { apiBaseUrl = '' } = Astro.props;
       // 質問形式（明確な疑問文）
       if (/ございますか|でしょうか|いかがですか|ありますか/.test(messageLower)) {
         return {
-          text: "確認しますので、少々お待ち下さい。",
-          logText: "質問形式 → 「確認しますので、少々お待き下さい。」"
+          text: "確認しますので、少々お待ちください。",
+          logText: "質問形式 → 「確認しますので、少々お待ちください。」"
         };
       }
 
@@ -1260,7 +1260,7 @@ const { apiBaseUrl = '' } = Astro.props;
         conditionPart = conditions.join('、') + ' ';
       }
       
-      return `${conditionPart}${coreRequest}ですね、お調べしますので、少々お待き下さい。`;
+      return `${conditionPart}${coreRequest}ですね、お調べしますので、少々お待ちください。`;
     }
 
     // 形態素解析ベースの応答生成
@@ -1306,7 +1306,7 @@ const { apiBaseUrl = '' } = Astro.props;
     function generateFallbackResponse(text: string): string {
       // 簡易パターンマッチング
       const core = text.replace(/を(?:紹介して|教えて|探して|知りたい|食べたい|行きたい)$/, '');
-      return `${core}ですね、お調べしますので、少々お待き下さい。`;
+      return `${core}ですね、お調べしますので、少々お待ちください。`;
     }
 
     // 初期化
@@ -1326,7 +1326,7 @@ const { apiBaseUrl = '' } = Astro.props;
         // 案1: 即答用音声を事前生成（並列実行）
         console.log('[初期化] 即答用音声を事前生成中...');
         const ackTexts = [
-          "確認しますので、少々お待き下さい。",
+          "確認しますので、少々お待ちください。",
           "お調べします。",
           "かしこまりました。",
           "はい、承知しました。"
@@ -1517,24 +1517,24 @@ const { apiBaseUrl = '' } = Astro.props;
             addMessage('assistant', responses[0]);
           }
 
-          // 3秒後に2つ目の応答を再生（「お調べしますので...」部分）
+          // 5秒後に2つ目の応答を再生（「お調べしますので...」部分）
           if (responses.length > 1) {
             setTimeout(async () => {
               if (isTTSEnabled && isUserInteracted) {
                 await speakTextGCP(responses[1], false);
               }
               addMessage('assistant', responses[1]);
-            }, 3000);
+            }, 5000);
           }
 
-          // さらに3秒後に追加の応答を再生（合計6秒後）
+          // さらに3秒後に追加の応答を再生（合計8秒後）
           setTimeout(async () => {
-            const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ち下さい。";
+            const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
             if (isTTSEnabled && isUserInteracted) {
               await speakTextGCP(additionalResponse, false);
             }
             addMessage('assistant', additionalResponse);
-          }, 6000);
+          }, 8000);
 
           // 並列でメッセージ送信
           if (userInput.value.trim()) {
