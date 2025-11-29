@@ -438,8 +438,10 @@ const { apiBaseUrl = '' } = Astro.props;
     let silenceTimer: number | null = null;
     let vadCheckInterval: number | null = null;
     let hasSpoken = false; // 音声が検出されたかどうか
-    const SILENCE_THRESHOLD = 15; // 無音判定の閾値（0-255）
-    const SILENCE_DURATION = 3000; // 無音が続いたら停止するミリ秒（3秒）
+    let recordingStartTime = 0; // 録音開始時刻
+    const SILENCE_THRESHOLD = 25; // 無音判定の閾値（0-255）※16kHz環境用に調整
+    const SILENCE_DURATION = 2000; // 無音が続いたら停止するミリ秒（2秒）
+    const MIN_RECORDING_TIME = 500; // 最小録音時間（0.5秒）- すぐに停止しないように
 
     // WebSocket Streaming STT用（案2: 完全実装）
     let socket: any = null;
@@ -676,9 +678,16 @@ const { apiBaseUrl = '' } = Astro.props;
 
         const dataArray = new Uint8Array(analyser.frequencyBinCount);
         hasSpoken = false;
+        recordingStartTime = Date.now(); // 録音開始時刻を記録
 
         vadCheckInterval = window.setInterval(() => {
           if (!analyser || !isRecording) return;
+
+          // 最小録音時間に達していない場合はスキップ
+          const elapsed = Date.now() - recordingStartTime;
+          if (elapsed < MIN_RECORDING_TIME) {
+            return;
+          }
 
           analyser.getByteFrequencyData(dataArray);
           const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
@@ -768,6 +777,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
         audioChunks = [];
         hasSpoken = false;
+        recordingStartTime = Date.now(); // 録音開始時刻を記録
 
         // 無音検出のセットアップ
         audioContext = new AudioContext();
@@ -780,6 +790,12 @@ const { apiBaseUrl = '' } = Astro.props;
 
         vadCheckInterval = window.setInterval(() => {
           if (!analyser || !isRecording) return;
+
+          // 最小録音時間に達していない場合はスキップ
+          const elapsed = Date.now() - recordingStartTime;
+          if (elapsed < MIN_RECORDING_TIME) {
+            return;
+          }
 
           analyser.getByteFrequencyData(dataArray);
           const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
