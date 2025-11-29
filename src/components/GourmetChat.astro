@@ -396,6 +396,8 @@ const { apiBaseUrl = '' } = Astro.props;
 
 <!-- Socket.IO クライアントライブラリ（WebSocket Streaming STT用） -->
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<!-- kuromoji.js 形態素解析ライブラリ -->
+<script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dist/kuromoji.min.js"></script>
 
 <script>
   // グルメチャット機能
@@ -448,6 +450,11 @@ const { apiBaseUrl = '' } = Astro.props;
     let audioWorkletNode: AudioWorkletNode | null = null;
     let streamingTranscript = ''; // リアルタイム認識結果
     let isStreamingSTT = false; // Streaming STT使用フラグ
+
+    // 形態素解析関連
+    let tokenizer: any = null;
+    let morphologyReady = false;
+    const responseCache = new Map<string, string>(); // 応答キャッシュ
 
     // ユーザーインタラクション検出
     function enableAudioPlayback() {
@@ -900,7 +907,7 @@ const { apiBaseUrl = '' } = Astro.props;
             // ユーザーメッセージを追加
             addMessage('user', data.transcript);
 
-            // 案1+3: スマート即答を即座に再生（事前生成音声使用）
+            // 第1段階：即答
             const ack = selectSmartAcknowledgment(data.transcript);
             console.log(`[即答] ${ack.logText}`);
 
@@ -927,6 +934,50 @@ const { apiBaseUrl = '' } = Astro.props;
 
             // チャットに即答メッセージを追加
             addMessage('assistant', ack.text);
+
+            // 第2段階：形態素解析ベースの理解応答（分割再生）
+            if (morphologyReady) {
+              const understandingResponse = await generateUnderstandingResponse(data.transcript);
+              console.log(`[理解応答] "${data.transcript}" → "${understandingResponse}"`);
+              
+              // 応答を分割
+              const responses = splitUnderstandingResponse(understandingResponse);
+              
+              // 1つ目の応答を再生
+              if (responses.length > 0) {
+                if (isTTSEnabled && isUserInteracted) {
+                  await speakTextGCP(responses[0], false);
+                }
+                addMessage('assistant', responses[0]);
+              }
+
+              // 3秒後に2つ目の応答を再生
+              if (responses.length > 1) {
+                setTimeout(async () => {
+                  if (isTTSEnabled && isUserInteracted) {
+                    await speakTextGCP(responses[1], false);
+                  }
+                  addMessage('assistant', responses[1]);
+                }, 3000);
+              }
+
+              // さらに3秒後に追加の応答を再生（合計6秒後）
+              setTimeout(async () => {
+                const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ち下さい。";
+                if (isTTSEnabled && isUserInteracted) {
+                  await speakTextGCP(additionalResponse, false);
+                }
+                addMessage('assistant', additionalResponse);
+              }, 6000);
+              
+            } else {
+              // 形態素解析未準備時はフォールバック（分割しない）
+              const fallbackResponse = generateFallbackResponse(data.transcript);
+              if (isTTSEnabled && isUserInteracted) {
+                await speakTextGCP(fallbackResponse, false);
+              }
+              addMessage('assistant', fallbackResponse);
+            }
 
             // 並列でメッセージ送信（待たない）
             if (!isRecording && userInput.value.trim()) {
@@ -957,7 +1008,7 @@ const { apiBaseUrl = '' } = Astro.props;
       if (/ございますか|でしょうか|いかがですか|ありますか/.test(messageLower)) {
         return {
           text: "確認しますので、少々お待ち下さい。",
-          logText: "質問形式 → 「確認しますので、少々お待ち下さい。」"
+          logText: "質問形式 → 「確認しますので、少々お待き下さい。」"
         };
       }
 
@@ -1002,6 +1053,279 @@ const { apiBaseUrl = '' } = Astro.props;
       }
     }
 
+    // 形態素解析の初期化
+    async function initializeMorphology() {
+      if (typeof kuromoji === 'undefined') {
+        console.warn('[形態素解析] kuromoji.jsが読み込まれていません');
+        return;
+      }
+
+      try {
+        console.log('[形態素解析] 辞書を初期化中...');
+        tokenizer = await kuromoji.builder({ 
+          dicPath: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/"
+        }).build();
+        morphologyReady = true;
+        console.log('[形態素解析] 初期化完了');
+      } catch (error) {
+        console.error('[形態素解析] 初期化失敗:', error);
+        morphologyReady = false;
+      }
+    }
+
+    // キャッシュキー生成
+    function generateCacheKey(text: string): string {
+      return text
+        .replace(/[。、！？]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .toLowerCase();
+    }
+
+    // 特殊パターンを事前に処理する関数
+    function preprocessSpecialPatterns(text: string): string {
+      // より包括的なパターンマッチング
+      const specialPatterns = [
+        // 「?を教えて」系
+        /(.+)を教えて$/,
+        /(.+)を教えてください$/,
+        /(.+)を教えてほしい$/,
+        // 「?を探して」系
+        /(.+)を探して$/,
+        /(.+)を探してください$/,
+        /(.+)を探してほしい$/,
+        // 「?を知りたい」系
+        /(.+)を知りたい$/,
+        /(.+)を知りたいです$/,
+        // 「?を紹介して」系
+        /(.+)を紹介して$/,
+        /(.+)を紹介してください$/,
+        /(.+)を紹介してほしい$/,
+        // 「?をおすすめして」系
+        /(.+)をおすすめして$/,
+        /(.+)をおすすめしてください$/,
+        // 「?を見つけて」系
+        /(.+)を見つけて$/,
+        /(.+)を見つけてほしい$/,
+        // 「?を探したい」系
+        /(.+)を探したい$/,
+        /(.+)を探したいです$/,
+        // 「?を食べたい」系
+        /(.+)を食べたい$/,
+        /(.+)を食べたいです$/,
+        // 「?に行きたい」系
+        /(.+)に行きたい$/,
+        /(.+)に行きたいです$/,
+        // 「?を予約したい」系
+        /(.+)を予約したい$/,
+        /(.+)を予約したいです$/,
+        // 末尾の句点を考慮
+        /(.+)を教えて。$/,
+        /(.+)を探して。$/,
+        /(.+)を知りたい。$/,
+        /(.+)を紹介して。$/,
+        /(.+)をおすすめして。$/,
+        /(.+)を見つけて。$/,
+        /(.+)を探したい。$/,
+        /(.+)を食べたい。$/,
+        /(.+)に行きたい。$/,
+        /(.+)を予約したい。$/
+      ];
+      
+      for (const pattern of specialPatterns) {
+        const match = text.match(pattern);
+        if (match) {
+          console.log(`[特殊パターン処理] "${text}" → "${match[1]}"`);
+          return match[1]; // 動詞部分を除去したコア部分を返す
+        }
+      }
+      
+      return text; // パターンに一致しない場合は元のテキストを返す
+    }
+
+    // 理解応答を分割する関数
+    function splitUnderstandingResponse(response: string): string[] {
+      // 「ですね、」で分割
+      const parts = response.split('ですね、');
+      
+      if (parts.length === 2) {
+        return [
+          parts[0] + 'ですね',  // 「原宿で美味しいお店ですね」
+          parts[1]             // 「お調べしますので、少々お待き下さい。」
+        ];
+      }
+      
+      // 分割できない場合はそのまま返す
+      return [response];
+    }
+
+    // 単語の意味的分類
+    function classifyWord(morpheme: any): { type: string; word: string } {
+      const { surface_form, pos, pos_detail1 } = morpheme;
+      
+      // 地名候補
+      if (pos === '固有名詞' && pos_detail1 === '地域') {
+        return { type: 'location', word: surface_form };
+      }
+      
+      // 食べ物候補
+      if (pos === '名詞' && isFoodRelated(surface_form)) {
+        return { type: 'food', word: surface_form };
+      }
+      
+      // 条件修飾語
+      if (pos === '名詞' || pos === '形容詞') {
+        if (isConditionWord(surface_form)) {
+          return { type: 'condition', word: surface_form };
+        }
+      }
+      
+      // 動詞（除去対象）
+      if (pos === '動詞') {
+        return { type: 'verb', word: surface_form };
+      }
+      
+      return { type: 'other', word: surface_form };
+    }
+
+    // 食べ物関連語の判定
+    function isFoodRelated(word: string): boolean {
+      const foodPatterns = [
+        /料理$/, /料理店$/, /屋$/,
+        /食堂$/, /軒$/, /店$/,
+        /イタリアン$/, /フレンチ$/, /中華$/,
+        /ラーメン/, /寿司/, /カフェ/, /居酒屋/,
+        /焼肉/, /天ぷら/, /そば/, /うどん/,
+        /ピザ/, /ハンバーガー/, /中華/
+      ];
+      
+      return foodPatterns.some(pattern => pattern.test(word));
+    }
+
+    // 条件語の判定
+    function isConditionWord(word: string): boolean {
+      const conditionPatterns = [
+        /人気$/, /安い$/, /高い$/,
+        /おしゃれ$/, /綺麗$/,
+        /静か$/, /賑やか$/,
+        /ミシュラン/, /インスタ/,
+        /女子/, /女性/, /デート$/,
+        /バズる/, /話題$/, /有名$/,
+        /おすすめ/, /お勧め$/,
+        /美味しい/, /美味い$/,
+        /綺麗$/, /きれい$/,
+        /安い$/, /やすい$/,
+        /高い$/, /高級$/,
+        /新しい$/, /新しく$/,
+        /古い$/, /昔ながら/,
+        // 追加：リクエスト動詞パターン
+        /教えて$/, /探して$/, /知りたい$/,
+        /紹介して$/, /おすすめして$/,
+        /見つけて$/, /探したい$/
+      ];
+      
+      return conditionPatterns.some(pattern => pattern.test(word));
+    }
+
+    // 意図の構築
+    function buildIntent(morphemes: any[]): { locations: string[]; foods: string[]; conditions: string[]; coreRequest: string } {
+      const words = morphemes.map(m => classifyWord(m));
+      
+      const intent = {
+        locations: [] as string[],
+        foods: [] as string[],
+        conditions: [] as string[],
+        coreRequest: ''
+      };
+      
+      // 単語をグルーピング
+      for (const word of words) {
+        switch (word.type) {
+          case 'location':
+            intent.locations.push(word.word);
+            break;
+          case 'food':
+            intent.foods.push(word.word);
+            break;
+          case 'condition':
+            intent.conditions.push(word.word);
+            break;
+        }
+      }
+      
+      // コアリクエストを構築
+      if (intent.locations.length > 0 && intent.foods.length > 0) {
+        intent.coreRequest = `${intent.locations[0]}の${intent.foods[0]}`;
+      } else if (intent.locations.length > 0) {
+        intent.coreRequest = `${intent.locations[0]}のお店`;
+      } else if (intent.foods.length > 0) {
+        intent.coreRequest = `${intent.foods[0]}のお店`;
+      } else {
+        intent.coreRequest = 'ご希望のお店';
+      }
+      
+      return intent;
+    }
+
+    // 意図から自然な応答を生成
+    function generateResponseFromIntent(intent: any): string {
+      const { locations, foods, conditions, coreRequest } = intent;
+      
+      // 条件部分を構築
+      let conditionPart = '';
+      if (conditions.length > 0) {
+        conditionPart = conditions.join('、') + ' ';
+      }
+      
+      return `${conditionPart}${coreRequest}ですね、お調べしますので、少々お待き下さい。`;
+    }
+
+    // 形態素解析ベースの応答生成
+    async function generateUnderstandingResponse(text: string): Promise<string> {
+      console.time('形態素解析');
+      
+      try {
+        // 特殊パターンの事前処理を最初に行う
+        const preprocessedText = preprocessSpecialPatterns(text);
+        
+        // キャッシュチェック
+        const cacheKey = generateCacheKey(preprocessedText);
+        if (responseCache.has(cacheKey)) {
+          console.log('[キャッシュヒット]', cacheKey);
+          console.timeEnd('形態素解析（キャッシュヒット）');
+          return responseCache.get(cacheKey)!;
+        }
+        
+        // 形態素解析実行
+        const morphemes = tokenizer.tokenize(preprocessedText);
+        const intent = buildIntent(morphemes);
+        const response = generateResponseFromIntent(intent);
+        
+        // キャッシュに保存
+        responseCache.set(cacheKey, response);
+        
+        console.log('[形態素解析結果]', { 
+          original: text, 
+          preprocessed: preprocessedText,
+          intent, 
+          response 
+        });
+        console.timeEnd('形態素解析');
+        return response;
+      } catch (error) {
+        console.error('形態素解析失敗:', error);
+        console.timeEnd('形態素解析');
+        return generateFallbackResponse(text);
+      }
+    }
+
+    // フォールバック応答生成
+    function generateFallbackResponse(text: string): string {
+      // 簡易パターンマッチング
+      const core = text.replace(/を(?:紹介して|教えて|探して|知りたい|食べたい|行きたい)$/, '');
+      return `${core}ですね、お調べしますので、少々お待き下さい。`;
+    }
+
     // 初期化
     async function initialize() {
       try {
@@ -1019,7 +1343,7 @@ const { apiBaseUrl = '' } = Astro.props;
         // 案1: 即答用音声を事前生成（並列実行）
         console.log('[初期化] 即答用音声を事前生成中...');
         const ackTexts = [
-          "確認しますので、少々お待ち下さい。",
+          "確認しますので、少々お待き下さい。",
           "お調べします。",
           "かしこまりました。",
           "はい、承知しました。"
@@ -1039,7 +1363,7 @@ const { apiBaseUrl = '' } = Astro.props;
             const ackData = await ackResponse.json();
             if (ackData.success && ackData.audio) {
               preGeneratedAcks.set(text, ackData.audio);
-              console.log(`[初期化] ✓ 事前生成完了: "${text}"`);
+              console.log(`[初期化] ? 事前生成完了: "${text}"`);
             }
           } catch (error) {
             console.error(`[初期化] 事前生成失敗: "${text}"`, error);
@@ -1062,6 +1386,9 @@ const { apiBaseUrl = '' } = Astro.props;
 
         // 案2: WebSocket Streaming STT接続を初期化
         initializeWebSocketSTT();
+
+        // 形態素解析の初期化（バックグラウンドで）
+        initializeMorphology();
 
       } catch (error) {
         console.error('初期化エラー:', error);
@@ -1129,7 +1456,10 @@ const { apiBaseUrl = '' } = Astro.props;
 
     // WebSocket Streaming STT完了処理
     function handleStreamingSTTComplete(transcript: string) {
-      voiceStatus.innerHTML = '&#9989; 認識完了';
+      // まずストリーミングを完全停止
+      stopStreamingSTT();
+      
+      voiceStatus.innerHTML = '? 認識完了';
       voiceStatus.className = 'voice-status';
 
       // 入力欄に認識結果を設定
@@ -1138,41 +1468,111 @@ const { apiBaseUrl = '' } = Astro.props;
       // ユーザーメッセージを追加
       addMessage('user', transcript);
 
-      // 案1+3: スマート即答を即座に再生（事前生成音声使用）
+      // 第1段階：即答
       const ack = selectSmartAcknowledgment(transcript);
       console.log(`[即答] ${ack.logText}`);
 
       const preGeneratedAudio = preGeneratedAcks.get(ack.text);
+      let firstAckPromise: Promise<void> | null = null;
+
       if (preGeneratedAudio && isTTSEnabled && isUserInteracted) {
-        // 事前生成音声を即座に再生（TTSリクエスト不要！）
-        const audio = new Audio(`data:audio/mp3;base64,${preGeneratedAudio}`);
-        currentAudio = audio;
+        // 事前生成音声を即座に再生(TTSリクエスト不要!)
+        firstAckPromise = new Promise<void>((resolve) => {
+          const audio = new Audio(`data:audio/mp3;base64,${preGeneratedAudio}`);
+          currentAudio = audio;
 
-        audio.onended = () => {
-          currentAudio = null;
-        };
+          audio.onended = () => {
+            currentAudio = null;
+            resolve();
+          };
 
-        audio.play().catch(err => {
-          console.error('[即答] 音声再生エラー:', err);
+          audio.play().catch(err => {
+            console.error('[即答] 音声再生エラー:', err);
+            resolve();
+          });
         });
-
         console.log(`[即答] 事前生成音声を再生: "${ack.text}"`);
       } else if (isTTSEnabled) {
         // フォールバック: 事前生成がない場合はその場で生成
         console.log(`[即答] フォールバック: その場で生成 "${ack.text}"`);
-        speakTextGCP(ack.text, false);
+        firstAckPromise = speakTextGCP(ack.text, false);
       }
 
       // チャットに即答メッセージを追加
       addMessage('assistant', ack.text);
 
-      // 並列でメッセージ送信（待たない）
-      if (!isRecording && userInput.value.trim()) {
-        isFromVoiceInput = true; // フラグをセット
-        sendMessage(); // awaitしない = 並列実行
-      }
+      // 第2段階：形態素解析ベースの理解応答（分割再生）
+      (async () => {
+        try {
+          // 第1段階の即答が終わるのを待つ
+          if (firstAckPromise) {
+            await firstAckPromise;
+          }
 
-      voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+          // 形態素解析ベースの応答生成
+          let understandingResponse: string;
+          if (morphologyReady) {
+            understandingResponse = await generateUnderstandingResponse(transcript);
+            console.log(`[理解応答] "${transcript}" → "${understandingResponse}"`);
+          } else {
+            // 形態素解析未準備時はフォールバック
+            understandingResponse = generateFallbackResponse(transcript);
+            console.log(`[フォールバック応答] "${transcript}" → "${understandingResponse}"`);
+          }
+
+          // 応答を分割
+          const responses = splitUnderstandingResponse(understandingResponse);
+          
+          // 1つ目の応答を再生（オウム返し部分）
+          if (responses.length > 0) {
+            if (isTTSEnabled && isUserInteracted) {
+              await speakTextGCP(responses[0], false);
+            }
+            addMessage('assistant', responses[0]);
+          }
+
+          // 3秒後に2つ目の応答を再生（「お調べしますので...」部分）
+          if (responses.length > 1) {
+            setTimeout(async () => {
+              if (isTTSEnabled && isUserInteracted) {
+                await speakTextGCP(responses[1], false);
+              }
+              addMessage('assistant', responses[1]);
+            }, 3000);
+          }
+
+          // さらに3秒後に追加の応答を再生（合計6秒後）
+          setTimeout(async () => {
+            const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ち下さい。";
+            if (isTTSEnabled && isUserInteracted) {
+              await speakTextGCP(additionalResponse, false);
+            }
+            addMessage('assistant', additionalResponse);
+          }, 6000);
+
+          // 並列でメッセージ送信
+          if (userInput.value.trim()) {
+            isFromVoiceInput = true;
+            sendMessage();
+          }
+
+        } catch (error) {
+          console.error('第2段階応答生成エラー:', error);
+          // エラー時はシンプルな応答でフォールバック
+          const fallbackResponse = generateFallbackResponse(transcript);
+          if (isTTSEnabled && isUserInteracted) {
+            await speakTextGCP(fallbackResponse, false);
+          }
+          addMessage('assistant', fallbackResponse);
+
+          if (userInput.value.trim()) {
+            isFromVoiceInput = true;
+            sendMessage();
+          }
+        }
+      })();
+
+      voiceStatus.innerHTML = '?? 音声認識: 停止中';
       voiceStatus.className = 'voice-status stopped';
     }
 
