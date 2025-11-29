@@ -1082,65 +1082,24 @@ const { apiBaseUrl = '' } = Astro.props;
         .toLowerCase();
     }
 
-    // 特殊パターンを事前に処理する関数
+    // 特殊パターンを事前に処理する関数（案1: シンプル正規表現）
     function preprocessSpecialPatterns(text: string): string {
-      // より包括的なパターンマッチング
-      const specialPatterns = [
-        // 「?を教えて」系
-        /(.+)を教えて$/,
-        /(.+)を教えてください$/,
-        /(.+)を教えてほしい$/,
-        // 「?を探して」系
-        /(.+)を探して$/,
-        /(.+)を探してください$/,
-        /(.+)を探してほしい$/,
-        // 「?を知りたい」系
-        /(.+)を知りたい$/,
-        /(.+)を知りたいです$/,
-        // 「?を紹介して」系
-        /(.+)を紹介して$/,
-        /(.+)を紹介してください$/,
-        /(.+)を紹介してほしい$/,
-        // 「?をおすすめして」系
-        /(.+)をおすすめして$/,
-        /(.+)をおすすめしてください$/,
-        // 「?を見つけて」系
-        /(.+)を見つけて$/,
-        /(.+)を見つけてほしい$/,
-        // 「?を探したい」系
-        /(.+)を探したい$/,
-        /(.+)を探したいです$/,
-        // 「?を食べたい」系
-        /(.+)を食べたい$/,
-        /(.+)を食べたいです$/,
-        // 「?に行きたい」系
-        /(.+)に行きたい$/,
-        /(.+)に行きたいです$/,
-        // 「?を予約したい」系
-        /(.+)を予約したい$/,
-        /(.+)を予約したいです$/,
-        // 末尾の句点を考慮
-        /(.+)を教えて。$/,
-        /(.+)を探して。$/,
-        /(.+)を知りたい。$/,
-        /(.+)を紹介して。$/,
-        /(.+)をおすすめして。$/,
-        /(.+)を見つけて。$/,
-        /(.+)を探したい。$/,
-        /(.+)を食べたい。$/,
-        /(.+)に行きたい。$/,
-        /(.+)を予約したい。$/
-      ];
-      
-      for (const pattern of specialPatterns) {
-        const match = text.match(pattern);
-        if (match) {
-          console.log(`[特殊パターン処理] "${text}" → "${match[1]}"`);
-          return match[1]; // 動詞部分を除去したコア部分を返す
-        }
-      }
-      
-      return text; // パターンに一致しない場合は元のテキストを返す
+      let cleaned = text;
+
+      // 句点を削除
+      cleaned = cleaned.replace(/[。、！？]$/g, '');
+
+      // 動詞パターンを一括削除
+      cleaned = cleaned.replace(
+        /(を|に)(教えて|紹介して|探して|知りたい|おすすめして|見つけて|食べたい|行きたい|予約したい)(ください|ほしい|です|ね)?$/,
+        ''
+      );
+
+      // 末尾の助詞を削除
+      cleaned = cleaned.replace(/[をに]$/, '');
+
+      console.log(`[クリーニング] "${text}" → "${cleaned}"`);
+      return cleaned.trim();
     }
 
     // 理解応答を分割する関数
@@ -1227,32 +1186,53 @@ const { apiBaseUrl = '' } = Astro.props;
       return conditionPatterns.some(pattern => pattern.test(word));
     }
 
-    // 意図の構築
+    // 意図の構築（案3: 形態素解析改善）
     function buildIntent(morphemes: any[]): { locations: string[]; foods: string[]; conditions: string[]; coreRequest: string } {
-      const words = morphemes.map(m => classifyWord(m));
-      
       const intent = {
         locations: [] as string[],
         foods: [] as string[],
         conditions: [] as string[],
         coreRequest: ''
       };
-      
-      // 単語をグルーピング
-      for (const word of words) {
-        switch (word.type) {
-          case 'location':
-            intent.locations.push(word.word);
-            break;
-          case 'food':
-            intent.foods.push(word.word);
-            break;
-          case 'condition':
-            intent.conditions.push(word.word);
-            break;
+
+      let coreWords: string[] = [];
+
+      // 形態素を分類して抽出
+      for (const morpheme of morphemes) {
+        const { surface_form, pos, pos_detail_1 } = morpheme;
+
+        // 動詞・助詞・助動詞を除外
+        if (pos === '動詞' || pos === '助詞' || pos === '助動詞') {
+          continue;
+        }
+
+        // 地名（固有名詞-地域）
+        if (pos === '名詞' && pos_detail_1 === '固有名詞' && /地域/.test(morpheme.pos_detail_2 || '')) {
+          intent.locations.push(surface_form);
+          coreWords.push(surface_form);
+          continue;
+        }
+
+        // 食べ物関連名詞
+        if (pos === '名詞' && isFoodRelated(surface_form)) {
+          intent.foods.push(surface_form);
+          coreWords.push(surface_form);
+          continue;
+        }
+
+        // 形容詞・形容動詞
+        if (pos === '形容詞' || pos === '形容動詞') {
+          intent.conditions.push(surface_form);
+          coreWords.push(surface_form);
+          continue;
+        }
+
+        // その他の名詞（一般・固有名詞）
+        if (pos === '名詞') {
+          coreWords.push(surface_form);
         }
       }
-      
+
       // コアリクエストを構築
       if (intent.locations.length > 0 && intent.foods.length > 0) {
         intent.coreRequest = `${intent.locations[0]}の${intent.foods[0]}`;
@@ -1260,10 +1240,13 @@ const { apiBaseUrl = '' } = Astro.props;
         intent.coreRequest = `${intent.locations[0]}のお店`;
       } else if (intent.foods.length > 0) {
         intent.coreRequest = `${intent.foods[0]}のお店`;
+      } else if (coreWords.length > 0) {
+        // 名詞のみを結合
+        intent.coreRequest = coreWords.join('');
       } else {
         intent.coreRequest = 'ご希望のお店';
       }
-      
+
       return intent;
     }
 
