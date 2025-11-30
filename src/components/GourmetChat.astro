@@ -940,35 +940,20 @@ const { apiBaseUrl = '' } = Astro.props;
               const understandingResponse = await generateUnderstandingResponse(data.transcript);
               console.log(`[理解応答] "${data.transcript}" → "${understandingResponse}"`);
               
-              // 応答を分割
-              const responses = splitUnderstandingResponse(understandingResponse);
-              
-              // 1つ目の応答を再生
-              if (responses.length > 0) {
-                if (isTTSEnabled && isUserInteracted) {
-                  await speakTextGCP(responses[0], false);
-                }
-                addMessage('assistant', responses[0]);
-              }
+// 分割せずにそのまま応答を再生
+if (isTTSEnabled && isUserInteracted) {
+  await speakTextGCP(understandingResponse, false);
+}
+addMessage('assistant', understandingResponse);
 
-              // 3秒後に2つ目の応答を再生
-              if (responses.length > 1) {
-                setTimeout(async () => {
-                  if (isTTSEnabled && isUserInteracted) {
-                    await speakTextGCP(responses[1], false);
-                  }
-                  addMessage('assistant', responses[1]);
-                }, 3000);
-              }
-
-              // さらに3秒後に追加の応答を再生（合計6秒後）
-              setTimeout(async () => {
-                const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ち下さい。";
-                if (isTTSEnabled && isUserInteracted) {
-                  await speakTextGCP(additionalResponse, false);
-                }
-                addMessage('assistant', additionalResponse);
-              }, 6000);
+// 3秒後に追加の応答を再生
+setTimeout(async () => {
+  const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ち下さい。";
+  if (isTTSEnabled && isUserInteracted) {
+    await speakTextGCP(additionalResponse, false);
+  }
+  addMessage('assistant', additionalResponse);
+}, 3000);
               
             } else {
               // 形態素解析未準備時はフォールバック（分割しない）
@@ -1082,25 +1067,20 @@ const { apiBaseUrl = '' } = Astro.props;
         .toLowerCase();
     }
 
-    // 特殊パターンを事前に処理する関数（案1: シンプル正規表現）
-    function preprocessSpecialPatterns(text: string): string {
-      let cleaned = text;
-
-      // 句点を削除
-      cleaned = cleaned.replace(/[。、！？]$/g, '');
-
-      // 動詞パターンを一括削除
-      cleaned = cleaned.replace(
-        /(を|に)(教えて|紹介して|探して|知りたい|おすすめして|見つけて|食べたい|行きたい|予約したい)(ください|ほしい|です|ね)?$/,
-        ''
-      );
-
-      // 末尾の助詞を削除
-      cleaned = cleaned.replace(/[をに]$/, '');
-
-      console.log(`[クリーニング] "${text}" → "${cleaned}"`);
-      return cleaned.trim();
-    }
+// 特殊パターンを事前に処理する関数（案1 + 案3: 強化版）
+function preprocessSpecialPatterns(text) {
+  console.log('[クリーニング] 入力:', text);
+  
+  // 余分な空白や記号を除去
+  let cleaned = text
+    .replace(/\s+/g, ' ')  // 連続する空白を1つに
+    .replace(/[。、！？\.\?\!]+/g, '。')  // 文末記号を統一
+    .replace(/[?～]/g, '~')  // 波線を統一
+    .trim();
+  
+  console.log('[クリーニング] 出力:', cleaned);
+  return cleaned;
+}
 
     // 理解応答を分割する関数
     function splitUnderstandingResponse(response: string): string[] {
@@ -1118,137 +1098,72 @@ const { apiBaseUrl = '' } = Astro.props;
       return [response];
     }
 
-    // 単語の意味的分類
-    function classifyWord(morpheme: any): { type: string; word: string } {
-      const { surface_form, pos, pos_detail1 } = morpheme;
-      
-      // 地名候補
-      if (pos === '固有名詞' && pos_detail1 === '地域') {
-        return { type: 'location', word: surface_form };
-      }
-      
-      // 食べ物候補
-      if (pos === '名詞' && isFoodRelated(surface_form)) {
-        return { type: 'food', word: surface_form };
-      }
-      
-      // 条件修飾語
-      if (pos === '名詞' || pos === '形容詞') {
-        if (isConditionWord(surface_form)) {
-          return { type: 'condition', word: surface_form };
-        }
-      }
-      
-      // 動詞（除去対象）
-      if (pos === '動詞') {
-        return { type: 'verb', word: surface_form };
-      }
-      
-      return { type: 'other', word: surface_form };
+function buildIntent(morphemes) {
+  const intent = {
+    locations: [],
+    foods: [],
+    conditions: [],
+    coreRequest: ''
+  };
+
+  let coreWords = [];
+
+  // 形態素を分類して抽出
+  for (const morpheme of morphemes) {
+    const { surface_form, pos, pos_detail_1 } = morpheme;
+
+    // 動詞・助詞・助動詞を除外
+    if (pos === '動詞' || pos === '助詞' || pos === '助動詞') {
+      continue;
     }
 
-    // 食べ物関連語の判定
-    function isFoodRelated(word: string): boolean {
-      const foodPatterns = [
-        /料理$/, /料理店$/, /屋$/,
-        /食堂$/, /軒$/, /店$/,
-        /イタリアン$/, /フレンチ$/, /中華$/,
-        /ラーメン/, /寿司/, /カフェ/, /居酒屋/,
-        /焼肉/, /天ぷら/, /そば/, /うどん/,
-        /ピザ/, /ハンバーガー/, /中華/
-      ];
-      
-      return foodPatterns.some(pattern => pattern.test(word));
+    // 地名（固有名詞-地域）
+    if (pos === '名詞' && pos_detail_1 === '固有名詞' && /地域/.test(morpheme.pos_detail_2 || '')) {
+      intent.locations.push(surface_form);
+      coreWords.push(surface_form);
+      continue;
     }
 
-    // 条件語の判定
-    function isConditionWord(word: string): boolean {
-      const conditionPatterns = [
-        /人気$/, /安い$/, /高い$/,
-        /おしゃれ$/, /綺麗$/,
-        /静か$/, /賑やか$/,
-        /ミシュラン/, /インスタ/,
-        /女子/, /女性/, /デート$/,
-        /バズる/, /話題$/, /有名$/,
-        /おすすめ/, /お勧め$/,
-        /美味しい/, /美味い$/,
-        /綺麗$/, /きれい$/,
-        /安い$/, /やすい$/,
-        /高い$/, /高級$/,
-        /新しい$/, /新しく$/,
-        /古い$/, /昔ながら/,
-        // 追加：リクエスト動詞パターン
-        /教えて$/, /探して$/, /知りたい$/,
-        /紹介して$/, /おすすめして$/,
-        /見つけて$/, /探したい$/
-      ];
-      
-      return conditionPatterns.some(pattern => pattern.test(word));
+    // 食べ物関連名詞（テーブルを使わずに直接判定）
+    if (pos === '名詞' && (
+      /料理|食堂|軒|店|屋|カフェ|居酒屋|ラーメン|寿司|焼肉|天ぷら|そば|うどん|ピザ|ハンバーガー|イタリアン|フレンチ|中華/.test(surface_form)
+    )) {
+      intent.foods.push(surface_form);
+      coreWords.push(surface_form);
+      continue;
     }
 
-    // 意図の構築（案3: 形態素解析改善）
-    function buildIntent(morphemes: any[]): { locations: string[]; foods: string[]; conditions: string[]; coreRequest: string } {
-      const intent = {
-        locations: [] as string[],
-        foods: [] as string[],
-        conditions: [] as string[],
-        coreRequest: ''
-      };
-
-      let coreWords: string[] = [];
-
-      // 形態素を分類して抽出
-      for (const morpheme of morphemes) {
-        const { surface_form, pos, pos_detail_1 } = morpheme;
-
-        // 動詞・助詞・助動詞を除外
-        if (pos === '動詞' || pos === '助詞' || pos === '助動詞') {
-          continue;
-        }
-
-        // 地名（固有名詞-地域）
-        if (pos === '名詞' && pos_detail_1 === '固有名詞' && /地域/.test(morpheme.pos_detail_2 || '')) {
-          intent.locations.push(surface_form);
-          coreWords.push(surface_form);
-          continue;
-        }
-
-        // 食べ物関連名詞
-        if (pos === '名詞' && isFoodRelated(surface_form)) {
-          intent.foods.push(surface_form);
-          coreWords.push(surface_form);
-          continue;
-        }
-
-        // 形容詞・形容動詞
-        if (pos === '形容詞' || pos === '形容動詞') {
-          intent.conditions.push(surface_form);
-          coreWords.push(surface_form);
-          continue;
-        }
-
-        // その他の名詞（一般・固有名詞）
-        if (pos === '名詞') {
-          coreWords.push(surface_form);
-        }
-      }
-
-      // コアリクエストを構築
-      if (intent.locations.length > 0 && intent.foods.length > 0) {
-        intent.coreRequest = `${intent.locations[0]}の${intent.foods[0]}`;
-      } else if (intent.locations.length > 0) {
-        intent.coreRequest = `${intent.locations[0]}のお店`;
-      } else if (intent.foods.length > 0) {
-        intent.coreRequest = `${intent.foods[0]}のお店`;
-      } else if (coreWords.length > 0) {
-        // 名詞のみを結合
-        intent.coreRequest = coreWords.join('');
-      } else {
-        intent.coreRequest = 'ご希望のお店';
-      }
-
-      return intent;
+    // 条件修飾語（テーブルを使わずに直接判定）
+    if (pos === '形容詞' || pos === '形容動詞' || (
+      pos === '名詞' && /人気|安い|高い|おしゃれ|綺麗|きれい|静か|賑やか|ミシュラン|インスタ|女子|女性|デート|バズる|話題|有名|おすすめ|お勧め|美味しい|美味い|新しい|新しく|古い|昔ながら/.test(surface_form)
+    )) {
+      intent.conditions.push(surface_form);
+      coreWords.push(surface_form);
+      continue;
     }
+
+    // その他の名詞（一般・固有名詞）
+    if (pos === '名詞') {
+      coreWords.push(surface_form);
+    }
+  }
+
+  // コアリクエストを構築
+  if (intent.locations.length > 0 && intent.foods.length > 0) {
+    intent.coreRequest = `${intent.locations[0]}の${intent.foods[0]}`;
+  } else if (intent.locations.length > 0) {
+    intent.coreRequest = `${intent.locations[0]}のお店`;
+  } else if (intent.foods.length > 0) {
+    intent.coreRequest = `${intent.foods[0]}のお店`;
+  } else if (coreWords.length > 0) {
+    // 名詞のみを結合
+    intent.coreRequest = coreWords.join('');
+  } else {
+    intent.coreRequest = 'ご希望のお店';
+  }
+
+  return intent;
+}
 
     // 意図から自然な応答を生成
     function generateResponseFromIntent(intent: any): string {
@@ -1302,12 +1217,11 @@ const { apiBaseUrl = '' } = Astro.props;
       }
     }
 
-    // フォールバック応答生成
-    function generateFallbackResponse(text: string): string {
-      // 簡易パターンマッチング
-      const core = text.replace(/を(?:紹介して|教えて|探して|知りたい|食べたい|行きたい)$/, '');
-      return `${core}ですね、お調べしますので、少々お待ちください。`;
-    }
+        // フォールバック応答生成
+        function generateFallbackResponse(text: string): string {
+          // ユーザーのメッセージを正確に繰り返す
+          return `"${text}" とのこと。お調べしますので、少々お待ち下さい。`;
+        }
 
     // 初期化
     async function initialize() {
@@ -1506,35 +1420,20 @@ const { apiBaseUrl = '' } = Astro.props;
             console.log(`[フォールバック応答] "${transcript}" → "${understandingResponse}"`);
           }
 
-          // 応答を分割
-          const responses = splitUnderstandingResponse(understandingResponse);
-          
-          // 1つ目の応答を再生（オウム返し部分）
-          if (responses.length > 0) {
-            if (isTTSEnabled && isUserInteracted) {
-              await speakTextGCP(responses[0], false);
-            }
-            addMessage('assistant', responses[0]);
-          }
+// 分割せずにそのまま応答を再生
+if (isTTSEnabled && isUserInteracted) {
+  await speakTextGCP(understandingResponse, false);
+}
+addMessage('assistant', understandingResponse);
 
-          // 5秒後に2つ目の応答を再生（「お調べしますので...」部分）
-          if (responses.length > 1) {
-            setTimeout(async () => {
-              if (isTTSEnabled && isUserInteracted) {
-                await speakTextGCP(responses[1], false);
-              }
-              addMessage('assistant', responses[1]);
-            }, 5000);
-          }
-
-          // さらに3秒後に追加の応答を再生（合計8秒後）
-          setTimeout(async () => {
-            const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
-            if (isTTSEnabled && isUserInteracted) {
-              await speakTextGCP(additionalResponse, false);
-            }
-            addMessage('assistant', additionalResponse);
-          }, 8000);
+// 5秒後に追加の応答を再生
+setTimeout(async () => {
+  const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
+  if (isTTSEnabled && isUserInteracted) {
+    await speakTextGCP(additionalResponse, false);
+  }
+  addMessage('assistant', additionalResponse);
+}, 5000);
 
           // 並列でメッセージ送信
           if (userInput.value.trim()) {
@@ -1673,57 +1572,158 @@ const { apiBaseUrl = '' } = Astro.props;
         // 先行TTSを停止
         stopCurrentAudio();
 
-        // ショップデータの有無で読み上げ内容を変える
-        if (data.shops && data.shops.length > 0) {
-          // ショップデータを保存し、予約依頼ボタンを有効化
-          currentShops = data.shops;
-          reservationBtn.disabled = false;
+// ショップデータの有無で読み上げ内容を変える
+if (data.shops && data.shops.length > 0) {
+  // ショップデータを保存し、予約依頼ボタンを有効化
+  currentShops = data.shops;
+  reservationBtn.disabled = false;
 
-          // 短い定型文を即座に再生（完了まで待つ）
-          await speakTextGCP(`お待たせしました。${data.shops.length}件のお店をご案内します。`);
+  // 詳細情報の音声合成をバックグラウンドで開始（並列実行）
+  const synthesisPromise = (async () => {
+    try {
+      const cleanText = stripMarkdown(data.response);
+      
+      const response = await fetch(`${apiBase}/api/tts/synthesize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: cleanText,
+          language_code: 'ja-JP',
+          voice_name: 'ja-JP-Chirp3-HD-Leda'
+        })
+      });
 
-          // 詳細情報を読み上げ（前の音声を停止しない）
-          speakTextGCP(data.response, false);
+      const synthesisResult = await response.json();
+      
+      if (synthesisResult.success && synthesisResult.audio) {
+        return `data:audio/mp3;base64,${synthesisResult.audio}`;
+      }
+    } catch (error) {
+      console.error('[並列音声合成] エラー:', error);
+    }
+    return null;
+  })();
 
-          // ショップカード表示
-          const event = new CustomEvent('displayShops', {
-            detail: { shops: data.shops }
+  // 短い定型文を即座に再生（完了まで待つ）
+  await speakTextGCP(`お待たせしました。${data.shops.length}件のお店をご案内します。`);
+
+  // 合成済みの音声を再生
+  const audioData = await synthesisPromise;
+  
+  if (audioData && isTTSEnabled && isUserInteracted) {
+    try {
+      stopCurrentAudio();
+      const audio = new Audio(audioData);
+      currentAudio = audio;
+      
+      audio.onended = () => {
+        currentAudio = null;
+        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+        voiceStatus.className = 'voice-status stopped';
+      };
+
+      voiceStatus.innerHTML = '&#128266; 音声再生中...';
+      voiceStatus.className = 'voice-status speaking';
+
+      await audio.play();
+    } catch (error) {
+      console.error('[並列音声再生] エラー:', error);
+      voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+      voiceStatus.className = 'voice-status stopped';
+    }
+  }
+
+  // ショップカード表示
+  const event = new CustomEvent('displayShops', {
+    detail: { shops: data.shops }
+  });
+  document.dispatchEvent(event);
+
+  // セクションにクラスを追加
+  const section = document.getElementById('shopListSection');
+  if (section) {
+    section.classList.add('has-shops');
+  }
+} else {
+  // ショップデータがない場合の処理
+  if (data.response) {
+    // レスポンスからショップ情報をパースして抽出を試みる
+    const extractedShops = extractShopsFromResponse(data.response);
+    if (extractedShops.length > 0) {
+      // ショップデータを保存し、予約依頼ボタンを有効化
+      currentShops = extractedShops;
+      reservationBtn.disabled = false;
+
+      // 短い定型文を即座に再生（完了まで待つ）
+      await speakTextGCP(`お待たせしました。${extractedShops.length}件のお店をご案内します。`);
+
+      // 詳細情報の音声合成をバックグラウンドで開始（並列実行）
+      const synthesisPromise = (async () => {
+        try {
+          const cleanText = stripMarkdown(data.response);
+          
+          const response = await fetch(`${apiBase}/api/tts/synthesize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: cleanText,
+              language_code: 'ja-JP',
+              voice_name: 'ja-JP-Chirp3-HD-Leda'
+            })
           });
-          document.dispatchEvent(event);
 
-          // セクションにクラスを追加
-          const section = document.getElementById('shopListSection');
-          if (section) {
-            section.classList.add('has-shops');
+          const synthesisResult = await response.json();
+          
+          if (synthesisResult.success && synthesisResult.audio) {
+            return `data:audio/mp3;base64,${synthesisResult.audio}`;
           }
-        } else {
-          // レスポンスからショップ情報をパースして抽出を試みる
-          const extractedShops = extractShopsFromResponse(data.response);
-          if (extractedShops.length > 0) {
-            // ショップデータを保存し、予約依頼ボタンを有効化
-            currentShops = extractedShops;
-            reservationBtn.disabled = false;
-
-            // 短い定型文を即座に再生（完了まで待つ）
-            await speakTextGCP(`お待たせしました。${extractedShops.length}件のお店をご案内します。`);
-
-            // 詳細情報を読み上げ（前の音声を停止しない）
-            speakTextGCP(data.response, false);
-
-            const event = new CustomEvent('displayShops', {
-              detail: { shops: extractedShops }
-            });
-            document.dispatchEvent(event);
-
-            const section = document.getElementById('shopListSection');
-            if (section) {
-              section.classList.add('has-shops');
-            }
-          } else {
-            // ショップなしの通常会話は全文読み上げ
-            speakTextGCP(data.response);
-          }
+        } catch (error) {
+          console.error('[並列音声合成] エラー:', error);
         }
+        return null;
+      })();
+
+      // 合成済みの音声を再生
+      const audioData = await synthesisPromise;
+      
+      if (audioData && isTTSEnabled && isUserInteracted) {
+        try {
+          stopCurrentAudio();
+          const audio = new Audio(audioData);
+          currentAudio = audio;
+          
+          audio.onended = () => {
+            currentAudio = null;
+            voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+            voiceStatus.className = 'voice-status stopped';
+          };
+
+          voiceStatus.innerHTML = '&#128266; 音声再生中...';
+          voiceStatus.className = 'voice-status speaking';
+
+          await audio.play();
+        } catch (error) {
+          console.error('[並列音声再生] エラー:', error);
+          voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+          voiceStatus.className = 'voice-status stopped';
+        }
+      }
+
+      const event = new CustomEvent('displayShops', {
+        detail: { shops: extractedShops }
+      });
+      document.dispatchEvent(event);
+
+      const section = document.getElementById('shopListSection');
+      if (section) {
+        section.classList.add('has-shops');
+      }
+    } else {
+      // ショップなしの通常会話は全文読み上げ
+      speakTextGCP(data.response);
+    }
+  }
+}
 
       } catch (error) {
         console.error('送信エラー:', error);
