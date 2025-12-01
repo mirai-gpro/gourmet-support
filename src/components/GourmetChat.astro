@@ -396,8 +396,6 @@ const { apiBaseUrl = '' } = Astro.props;
 
 <!-- Socket.IO クライアントライブラリ（WebSocket Streaming STT用） -->
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-<!-- kuromoji.js 形態素解析ライブラリ -->
-<script src="https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dist/kuromoji.min.js"></script>
 
 <script>
   // グルメチャット機能
@@ -450,11 +448,6 @@ const { apiBaseUrl = '' } = Astro.props;
     let audioWorkletNode: AudioWorkletNode | null = null;
     let streamingTranscript = ''; // リアルタイム認識結果
     let isStreamingSTT = false; // Streaming STT使用フラグ
-
-    // 形態素解析関連
-    let tokenizer: any = null;
-    let morphologyReady = false;
-    const responseCache = new Map<string, string>(); // 応答キャッシュ
 
     // ユーザーインタラクション検出
     function enableAudioPlayback() {
@@ -935,34 +928,21 @@ const { apiBaseUrl = '' } = Astro.props;
             // チャットに即答メッセージを追加
             addMessage('assistant', ack.text);
 
-            // 第2段階：形態素解析ベースの理解応答（分割再生）
-            if (morphologyReady) {
-              const understandingResponse = await generateUnderstandingResponse(data.transcript);
-              console.log(`[理解応答] "${data.transcript}" → "${understandingResponse}"`);
-              
-// 分割せずにそのまま応答を再生
-if (isTTSEnabled && isUserInteracted) {
-  await speakTextGCP(understandingResponse, false);
-}
-addMessage('assistant', understandingResponse);
-
-// 3秒後に追加の応答を再生
-setTimeout(async () => {
-  const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ち下さい。";
-  if (isTTSEnabled && isUserInteracted) {
-    await speakTextGCP(additionalResponse, false);
-  }
-  addMessage('assistant', additionalResponse);
-}, 3000);
-              
-            } else {
-              // 形態素解析未準備時はフォールバック（分割しない）
-              const fallbackResponse = generateFallbackResponse(data.transcript);
-              if (isTTSEnabled && isUserInteracted) {
-                await speakTextGCP(fallbackResponse, false);
-              }
-              addMessage('assistant', fallbackResponse);
+            // 第2段階：シンプルなオウム返し応答
+            const fallbackResponse = generateFallbackResponse(data.transcript);
+            if (isTTSEnabled && isUserInteracted) {
+              await speakTextGCP(fallbackResponse, false);
             }
+            addMessage('assistant', fallbackResponse);
+
+            // 3秒後に追加の応答を再生
+            setTimeout(async () => {
+              const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
+              if (isTTSEnabled && isUserInteracted) {
+                await speakTextGCP(additionalResponse, false);
+              }
+              addMessage('assistant', additionalResponse);
+            }, 3000);
 
             // 並列でメッセージ送信（待たない）
             if (!isRecording && userInput.value.trim()) {
@@ -1038,190 +1018,10 @@ setTimeout(async () => {
       }
     }
 
-    // 形態素解析の初期化
-    async function initializeMorphology() {
-      if (typeof kuromoji === 'undefined') {
-        console.warn('[形態素解析] kuromoji.jsが読み込まれていません');
-        return;
-      }
-
-      try {
-        console.log('[形態素解析] 辞書を初期化中...');
-        tokenizer = await kuromoji.builder({ 
-          dicPath: "https://cdn.jsdelivr.net/npm/kuromoji@0.1.2/dict/"
-        }).build();
-        morphologyReady = true;
-        console.log('[形態素解析] 初期化完了');
-      } catch (error) {
-        console.error('[形態素解析] 初期化失敗:', error);
-        morphologyReady = false;
-      }
+    // シンプルなオウム返し応答
+    function generateFallbackResponse(text: string): string {
+      return `"${text}"とのこと。お調べしますので、少々お待ちください。`;
     }
-
-    // キャッシュキー生成
-    function generateCacheKey(text: string): string {
-      return text
-        .replace(/[。、！？]/g, '')
-        .replace(/\s+/g, ' ')
-        .trim()
-        .toLowerCase();
-    }
-
-// 特殊パターンを事前に処理する関数（案1 + 案3: 強化版）
-function preprocessSpecialPatterns(text) {
-  console.log('[クリーニング] 入力:', text);
-  
-  // 余分な空白や記号を除去
-  let cleaned = text
-    .replace(/\s+/g, ' ')  // 連続する空白を1つに
-    .replace(/[。、！？\.\?\!]+/g, '。')  // 文末記号を統一
-    .replace(/[?～]/g, '~')  // 波線を統一
-    .trim();
-  
-  console.log('[クリーニング] 出力:', cleaned);
-  return cleaned;
-}
-
-    // 理解応答を分割する関数
-    function splitUnderstandingResponse(response: string): string[] {
-      // 「ですね、」で分割
-      const parts = response.split('ですね、');
-      
-      if (parts.length === 2) {
-        return [
-          parts[0] + 'ですね',  // 「原宿で美味しいお店ですね」
-          parts[1]             // 「お調べしますので、少々お待き下さい。」
-        ];
-      }
-      
-      // 分割できない場合はそのまま返す
-      return [response];
-    }
-
-function buildIntent(morphemes) {
-  const intent = {
-    locations: [],
-    foods: [],
-    conditions: [],
-    coreRequest: ''
-  };
-
-  let coreWords = [];
-
-  // 形態素を分類して抽出
-  for (const morpheme of morphemes) {
-    const { surface_form, pos, pos_detail_1 } = morpheme;
-
-    // 動詞・助詞・助動詞を除外
-    if (pos === '動詞' || pos === '助詞' || pos === '助動詞') {
-      continue;
-    }
-
-    // 地名（固有名詞-地域）
-    if (pos === '名詞' && pos_detail_1 === '固有名詞' && /地域/.test(morpheme.pos_detail_2 || '')) {
-      intent.locations.push(surface_form);
-      coreWords.push(surface_form);
-      continue;
-    }
-
-    // 食べ物関連名詞（テーブルを使わずに直接判定）
-    if (pos === '名詞' && (
-      /料理|食堂|軒|店|屋|カフェ|居酒屋|ラーメン|寿司|焼肉|天ぷら|そば|うどん|ピザ|ハンバーガー|イタリアン|フレンチ|中華/.test(surface_form)
-    )) {
-      intent.foods.push(surface_form);
-      coreWords.push(surface_form);
-      continue;
-    }
-
-    // 条件修飾語（テーブルを使わずに直接判定）
-    if (pos === '形容詞' || pos === '形容動詞' || (
-      pos === '名詞' && /人気|安い|高い|おしゃれ|綺麗|きれい|静か|賑やか|ミシュラン|インスタ|女子|女性|デート|バズる|話題|有名|おすすめ|お勧め|美味しい|美味い|新しい|新しく|古い|昔ながら/.test(surface_form)
-    )) {
-      intent.conditions.push(surface_form);
-      coreWords.push(surface_form);
-      continue;
-    }
-
-    // その他の名詞（一般・固有名詞）
-    if (pos === '名詞') {
-      coreWords.push(surface_form);
-    }
-  }
-
-  // コアリクエストを構築
-  if (intent.locations.length > 0 && intent.foods.length > 0) {
-    intent.coreRequest = `${intent.locations[0]}の${intent.foods[0]}`;
-  } else if (intent.locations.length > 0) {
-    intent.coreRequest = `${intent.locations[0]}のお店`;
-  } else if (intent.foods.length > 0) {
-    intent.coreRequest = `${intent.foods[0]}のお店`;
-  } else if (coreWords.length > 0) {
-    // 名詞のみを結合
-    intent.coreRequest = coreWords.join('');
-  } else {
-    intent.coreRequest = 'ご希望のお店';
-  }
-
-  return intent;
-}
-
-    // 意図から自然な応答を生成
-    function generateResponseFromIntent(intent: any): string {
-      const { locations, foods, conditions, coreRequest } = intent;
-      
-      // 条件部分を構築
-      let conditionPart = '';
-      if (conditions.length > 0) {
-        conditionPart = conditions.join('、') + ' ';
-      }
-      
-      return `${conditionPart}${coreRequest}ですね、お調べしますので、少々お待ちください。`;
-    }
-
-    // 形態素解析ベースの応答生成
-    async function generateUnderstandingResponse(text: string): Promise<string> {
-      console.time('形態素解析');
-      
-      try {
-        // 特殊パターンの事前処理を最初に行う
-        const preprocessedText = preprocessSpecialPatterns(text);
-        
-        // キャッシュチェック
-        const cacheKey = generateCacheKey(preprocessedText);
-        if (responseCache.has(cacheKey)) {
-          console.log('[キャッシュヒット]', cacheKey);
-          console.timeEnd('形態素解析（キャッシュヒット）');
-          return responseCache.get(cacheKey)!;
-        }
-        
-        // 形態素解析実行
-        const morphemes = tokenizer.tokenize(preprocessedText);
-        const intent = buildIntent(morphemes);
-        const response = generateResponseFromIntent(intent);
-        
-        // キャッシュに保存
-        responseCache.set(cacheKey, response);
-        
-        console.log('[形態素解析結果]', { 
-          original: text, 
-          preprocessed: preprocessedText,
-          intent, 
-          response 
-        });
-        console.timeEnd('形態素解析');
-        return response;
-      } catch (error) {
-        console.error('形態素解析失敗:', error);
-        console.timeEnd('形態素解析');
-        return generateFallbackResponse(text);
-      }
-    }
-
-        // フォールバック応答生成
-        function generateFallbackResponse(text: string): string {
-          // ユーザーのメッセージを正確に繰り返す
-          return `"${text}" とのこと。お調べしますので、少々お待ち下さい。`;
-        }
 
     // 初期化
     async function initialize() {
@@ -1243,7 +1043,10 @@ function buildIntent(morphemes) {
           "確認しますので、少々お待ちください。",
           "お調べします。",
           "かしこまりました。",
-          "はい、承知しました。"
+          "はい、承知しました。",
+          "ご希望に合うお店を5件ご紹介します。",
+          "ご希望に合うお店を3件ご紹介します。",
+          "ご希望に合うお店をご紹介します。"
         ];
 
         const ackPromises = ackTexts.map(async (text) => {
@@ -1283,9 +1086,6 @@ function buildIntent(morphemes) {
 
         // 案2: WebSocket Streaming STT接続を初期化
         initializeWebSocketSTT();
-
-        // 形態素解析の初期化（バックグラウンドで）
-        initializeMorphology();
 
       } catch (error) {
         console.error('初期化エラー:', error);
@@ -1401,7 +1201,7 @@ function buildIntent(morphemes) {
       // 録音を停止
       stopStreamingSTT();
 
-      // 第2段階：形態素解析ベースの理解応答（分割再生）
+      // 第2段階：シンプルなオウム返し応答
       (async () => {
         try {
           // 第1段階の即答が終わるのを待つ
@@ -1409,31 +1209,23 @@ function buildIntent(morphemes) {
             await firstAckPromise;
           }
 
-          // 形態素解析ベースの応答生成
-          let understandingResponse: string;
-          if (morphologyReady) {
-            understandingResponse = await generateUnderstandingResponse(transcript);
-            console.log(`[理解応答] "${transcript}" → "${understandingResponse}"`);
-          } else {
-            // 形態素解析未準備時はフォールバック
-            understandingResponse = generateFallbackResponse(transcript);
-            console.log(`[フォールバック応答] "${transcript}" → "${understandingResponse}"`);
+          // シンプルなオウム返し応答
+          const fallbackResponse = generateFallbackResponse(transcript);
+          console.log(`[フォールバック応答] "${transcript}" → "${fallbackResponse}"`);
+
+          if (isTTSEnabled && isUserInteracted) {
+            await speakTextGCP(fallbackResponse, false);
           }
+          addMessage('assistant', fallbackResponse);
 
-// 分割せずにそのまま応答を再生
-if (isTTSEnabled && isUserInteracted) {
-  await speakTextGCP(understandingResponse, false);
-}
-addMessage('assistant', understandingResponse);
-
-// 5秒後に追加の応答を再生
-setTimeout(async () => {
-  const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
-  if (isTTSEnabled && isUserInteracted) {
-    await speakTextGCP(additionalResponse, false);
-  }
-  addMessage('assistant', additionalResponse);
-}, 5000);
+          // 5秒後に追加の応答を再生
+          setTimeout(async () => {
+            const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
+            if (isTTSEnabled && isUserInteracted) {
+              await speakTextGCP(additionalResponse, false);
+            }
+            addMessage('assistant', additionalResponse);
+          }, 5000);
 
           // 並列でメッセージ送信
           if (userInput.value.trim()) {
@@ -1507,8 +1299,8 @@ setTimeout(async () => {
 
     // メッセージ送信
     async function sendMessage() {
-      enableAudioPlayback();
-
+      let firstAckPromise: Promise<void> | null = null; // ?? 即答待機用Promise
+      
       const message = userInput.value.trim();
       if (!message || isProcessing) return;
 
@@ -1527,17 +1319,66 @@ setTimeout(async () => {
       // 案1: 即答は transcribeAudio() で既に再生済み（音声入力の場合）
       // テキスト入力の場合のみここで即答を生成
       if (!isFromVoiceInput) {
+        console.log(`[DEBUG] テキスト入力の即答処理を開始`);
         const ack = selectSmartAcknowledgment(message);
-        console.log(`[即答/テキスト] ${ack.logText}`);
+        console.log(`[DEBUG] 即答テキスト: "${ack.text}"`);
 
-        const preGeneratedAudio = preGeneratedAcks.get(ack.text);
-        if (preGeneratedAudio && isTTSEnabled && isUserInteracted) {
-          const audio = new Audio(`data:audio/mp3;base64,${preGeneratedAudio}`);
-          currentAudio = audio;
-          audio.onended = () => { currentAudio = null; };
-          audio.play().catch(err => console.error('[即答] 音声再生エラー:', err));
-        }
+        // チャットに即答メッセージを追加
         addMessage('assistant', ack.text);
+
+        // 音声再生処理
+        if (isTTSEnabled) {
+          try {
+            const preGeneratedAudio = preGeneratedAcks.get(ack.text);
+            
+            if (preGeneratedAudio && isUserInteracted) {
+              console.log(`[DEBUG] 事前生成音声を再生します`);
+              // ?? 音声再生完了を待てるようにPromise化
+              firstAckPromise = new Promise<void>((resolve) => {
+                const audio = new Audio(`data:audio/mp3;base64,${preGeneratedAudio}`);
+                currentAudio = audio;
+                audio.onended = () => {
+                  console.log(`[DEBUG] 事前生成音声の再生が完了しました`);
+                  currentAudio = null;
+                  resolve();  // 再生完了を通知
+                };
+                audio.play().catch(err => {
+                  console.error('[即答] 音声再生エラー:', err);
+                  resolve();  // エラー時も続行
+                });
+              });
+            } else {
+              console.log(`[DEBUG] フォールバック音声を再生します`);
+              // フォールバック時もPromise化
+              firstAckPromise = speakTextGCP(ack.text, false);
+            }
+          } catch (error) {
+            console.error(`[DEBUG] 音声再生でエラーが発生しました:`, error);
+          }
+        }
+
+        // 第1段階の即答が終わるのを待つ
+        if (firstAckPromise) {
+          await firstAckPromise;
+        }
+
+        // 第2段階：シンプルなオウム返し応答
+        const fallbackResponse = generateFallbackResponse(message);
+        console.log(`[DEBUG] 第2段階応答: "${fallbackResponse}"`);
+        if (isTTSEnabled && isUserInteracted) {
+          await speakTextGCP(fallbackResponse, false);
+        }
+        addMessage('assistant', fallbackResponse);
+
+        // 3秒後に追加の応答を再生
+        setTimeout(async () => {
+          const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
+          console.log(`[DEBUG] 追加応答: "${additionalResponse}"`);
+          if (isTTSEnabled && isUserInteracted) {
+            await speakTextGCP(additionalResponse, false);
+          }
+          addMessage('assistant', additionalResponse);
+        }, 3000);
       }
 
       // フラグをリセット
@@ -1578,62 +1419,7 @@ if (data.shops && data.shops.length > 0) {
   currentShops = data.shops;
   reservationBtn.disabled = false;
 
-  // 詳細情報の音声合成をバックグラウンドで開始（並列実行）
-  const synthesisPromise = (async () => {
-    try {
-      const cleanText = stripMarkdown(data.response);
-      
-      const response = await fetch(`${apiBase}/api/tts/synthesize`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          text: cleanText,
-          language_code: 'ja-JP',
-          voice_name: 'ja-JP-Chirp3-HD-Leda'
-        })
-      });
-
-      const synthesisResult = await response.json();
-      
-      if (synthesisResult.success && synthesisResult.audio) {
-        return `data:audio/mp3;base64,${synthesisResult.audio}`;
-      }
-    } catch (error) {
-      console.error('[並列音声合成] エラー:', error);
-    }
-    return null;
-  })();
-
-  // 短い定型文を即座に再生（完了まで待つ）
-  await speakTextGCP(`お待たせしました。${data.shops.length}件のお店をご案内します。`);
-
-  // 合成済みの音声を再生
-  const audioData = await synthesisPromise;
-  
-  if (audioData && isTTSEnabled && isUserInteracted) {
-    try {
-      stopCurrentAudio();
-      const audio = new Audio(audioData);
-      currentAudio = audio;
-      
-      audio.onended = () => {
-        currentAudio = null;
-        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
-        voiceStatus.className = 'voice-status stopped';
-      };
-
-      voiceStatus.innerHTML = '&#128266; 音声再生中...';
-      voiceStatus.className = 'voice-status speaking';
-
-      await audio.play();
-    } catch (error) {
-      console.error('[並列音声再生] エラー:', error);
-      voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
-      voiceStatus.className = 'voice-status stopped';
-    }
-  }
-
-  // ショップカード表示
+  // $2705 まずショップカード表示を最優先(TTS前に即座に実行)
   const event = new CustomEvent('displayShops', {
     detail: { shops: data.shops }
   });
@@ -1644,6 +1430,146 @@ if (data.shops && data.shops.length > 0) {
   if (section) {
     section.classList.add('has-shops');
   }
+
+// ✅ TTSは非同期で並列実行(await しない = カード表示をブロックしない)
+(async () => {
+  try {
+    // パート1：定型文を即座に再生
+    await speakTextGCP(`お待たせしました。`);
+
+    // LLMの応答を解析して定型文と店舗情報を分離
+    const lines = data.response.split('\n\n');
+    let introText = "";
+    let shopLines = lines;
+
+    // 最初の行が定型文かチェック
+    if (lines[0].includes('ご希望に合うお店') && lines[0].includes('ご紹介します')) {
+      introText = lines[0]; // 定型文を抽出
+      shopLines = lines.slice(1); // 残りが店舗情報
+    }
+
+// パート2：定型文を事前生成音声から即時再生
+let introPart2Promise: Promise<void> | null = null;
+if (introText && isTTSEnabled && isUserInteracted) {
+  const preGeneratedIntro = preGeneratedAcks.get(introText);
+  if (preGeneratedIntro) {
+    introPart2Promise = new Promise<void>((resolve) => {
+      const audio = new Audio(`data:audio/mp3;base64,${preGeneratedIntro}`);
+      currentAudio = audio;
+      audio.onended = () => {
+        currentAudio = null;
+        resolve();
+      };
+      audio.play();
+    });
+  } else {
+    introPart2Promise = speakTextGCP(introText, false);
+  }
+}
+
+// パート3：1軒目 + 2軒目以降を並行して音声合成開始
+let firstShopAudioPromise: Promise<string | null> | null = null;
+let remainingAudioPromise: Promise<string | null> | null = null;
+
+if (shopLines.length > 0 && isTTSEnabled && isUserInteracted) {
+  const firstShop = shopLines[0];
+  const restShops = shopLines.slice(1).join('\n\n');
+
+  // ⭐ 1軒目の音声合成を即座に開始（並行処理）
+  firstShopAudioPromise = (async () => {
+    const cleanText = stripMarkdown(firstShop);
+    const response = await fetch(`${apiBase}/api/tts/synthesize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: cleanText,
+        language_code: 'ja-JP',
+        voice_name: 'ja-JP-Chirp3-HD-Leda'
+      })
+    });
+    const result = await response.json();
+    return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
+  })();
+
+  // ⭐ 2軒目以降も同時に音声合成開始（並行処理）
+  if (restShops) {
+    remainingAudioPromise = (async () => {
+      const cleanText = stripMarkdown(restShops);
+      const response = await fetch(`${apiBase}/api/tts/synthesize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: cleanText,
+          language_code: 'ja-JP',
+          voice_name: 'ja-JP-Chirp3-HD-Leda'
+        })
+      });
+      const result = await response.json();
+      return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
+    })();
+  }
+}
+
+// パート2の再生完了を待つ
+if (introPart2Promise) {
+  await introPart2Promise;
+}
+
+// 1軒目の音声合成完了を待って再生
+if (firstShopAudioPromise) {
+  const firstShopAudio = await firstShopAudioPromise;
+  if (firstShopAudio) {
+    stopCurrentAudio();
+    const audio = new Audio(firstShopAudio);
+    currentAudio = audio;
+    
+    // 1軒目の再生完了を待つ
+    await new Promise<void>((resolve) => {
+      audio.onended = () => {
+        currentAudio = null;
+        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+        voiceStatus.className = 'voice-status stopped';
+        resolve();
+      };
+      
+      voiceStatus.innerHTML = '&#128266; 音声再生中...';
+      voiceStatus.className = 'voice-status speaking';
+      
+      audio.play();
+    });
+
+    // 2軒目以降の音声合成完了を待って再生
+    if (remainingAudioPromise) {
+      const remainingAudio = await remainingAudioPromise;
+      if (remainingAudio) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        stopCurrentAudio();
+        const audioElement = new Audio(remainingAudio);
+        currentAudio = audioElement;
+        
+        await new Promise<void>((resolve) => {
+          audioElement.onended = () => {
+            currentAudio = null;
+            voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+            voiceStatus.className = 'voice-status stopped';
+            resolve();
+          };
+          
+          voiceStatus.innerHTML = '&#128266; 音声再生中...';
+          voiceStatus.className = 'voice-status speaking';
+          
+          audioElement.play();
+        });
+      }
+    }
+  }
+}
+  } catch (error) {
+    console.error('[TTS] ショップ情報読み上げエラー:', error);
+  }
+})(); // ✅ 即座に実行するが、完了を待たない
+
 } else {
   // ショップデータがない場合の処理
   if (data.response) {
@@ -1654,61 +1580,7 @@ if (data.shops && data.shops.length > 0) {
       currentShops = extractedShops;
       reservationBtn.disabled = false;
 
-      // 短い定型文を即座に再生（完了まで待つ）
-      await speakTextGCP(`お待たせしました。${extractedShops.length}件のお店をご案内します。`);
-
-      // 詳細情報の音声合成をバックグラウンドで開始（並列実行）
-      const synthesisPromise = (async () => {
-        try {
-          const cleanText = stripMarkdown(data.response);
-          
-          const response = await fetch(`${apiBase}/api/tts/synthesize`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              text: cleanText,
-              language_code: 'ja-JP',
-              voice_name: 'ja-JP-Chirp3-HD-Leda'
-            })
-          });
-
-          const synthesisResult = await response.json();
-          
-          if (synthesisResult.success && synthesisResult.audio) {
-            return `data:audio/mp3;base64,${synthesisResult.audio}`;
-          }
-        } catch (error) {
-          console.error('[並列音声合成] エラー:', error);
-        }
-        return null;
-      })();
-
-      // 合成済みの音声を再生
-      const audioData = await synthesisPromise;
-      
-      if (audioData && isTTSEnabled && isUserInteracted) {
-        try {
-          stopCurrentAudio();
-          const audio = new Audio(audioData);
-          currentAudio = audio;
-          
-          audio.onended = () => {
-            currentAudio = null;
-            voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
-            voiceStatus.className = 'voice-status stopped';
-          };
-
-          voiceStatus.innerHTML = '&#128266; 音声再生中...';
-          voiceStatus.className = 'voice-status speaking';
-
-          await audio.play();
-        } catch (error) {
-          console.error('[並列音声再生] エラー:', error);
-          voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
-          voiceStatus.className = 'voice-status stopped';
-        }
-      }
-
+      // $2705 まずショップカード表示を最優先(TTS前に即座に実行)
       const event = new CustomEvent('displayShops', {
         detail: { shops: extractedShops }
       });
@@ -1718,13 +1590,150 @@ if (data.shops && data.shops.length > 0) {
       if (section) {
         section.classList.add('has-shops');
       }
+// ✅ TTSは非同期で並列実行(await しない)
+(async () => {
+  try {
+    // パート1：定型文を即座に再生
+    await speakTextGCP(`お待たせしました。`);
+
+    // LLMの応答を解析して定型文と店舗情報を分離
+    const lines = data.response.split('\n\n');
+    let introText = "";
+    let shopLines = lines;
+
+    // 最初の行が定型文かチェック
+    if (lines[0].includes('ご希望に合うお店') && lines[0].includes('ご紹介します')) {
+      introText = lines[0]; // 定型文を抽出
+      shopLines = lines.slice(1); // 残りが店舗情報
+    }
+
+ // パート2：定型文を事前生成音声から即時再生
+let introPart2Promise: Promise<void> | null = null;
+if (introText && isTTSEnabled && isUserInteracted) {
+  const preGeneratedIntro = preGeneratedAcks.get(introText);
+  if (preGeneratedIntro) {
+    introPart2Promise = new Promise<void>((resolve) => {
+      const audio = new Audio(`data:audio/mp3;base64,${preGeneratedIntro}`);
+      currentAudio = audio;
+      audio.onended = () => {
+        currentAudio = null;
+        resolve();
+      };
+      audio.play();
+    });
+  } else {
+    introPart2Promise = speakTextGCP(introText, false);
+  }
+}
+
+// パート3：1軒目 + 2軒目以降を並行して音声合成開始
+let firstShopAudioPromise: Promise<string | null> | null = null;
+let remainingAudioPromise: Promise<string | null> | null = null;
+
+if (shopLines.length > 0 && isTTSEnabled && isUserInteracted) {
+  const firstShop = shopLines[0];
+  const restShops = shopLines.slice(1).join('\n\n');
+
+  // ⭐ 1軒目の音声合成を即座に開始（並行処理）
+  firstShopAudioPromise = (async () => {
+    const cleanText = stripMarkdown(firstShop);
+    const response = await fetch(`${apiBase}/api/tts/synthesize`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        text: cleanText,
+        language_code: 'ja-JP',
+        voice_name: 'ja-JP-Chirp3-HD-Leda'
+      })
+    });
+    const result = await response.json();
+    return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
+  })();
+
+  // ⭐ 2軒目以降も同時に音声合成開始（並行処理）
+  if (restShops) {
+    remainingAudioPromise = (async () => {
+      const cleanText = stripMarkdown(restShops);
+      const response = await fetch(`${apiBase}/api/tts/synthesize`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          text: cleanText,
+          language_code: 'ja-JP',
+          voice_name: 'ja-JP-Chirp3-HD-Leda'
+        })
+      });
+      const result = await response.json();
+      return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
+    })();
+  }
+}
+
+// パート2の再生完了を待つ
+if (introPart2Promise) {
+  await introPart2Promise;
+}
+
+// 1軒目の音声合成完了を待って再生
+if (firstShopAudioPromise) {
+  const firstShopAudio = await firstShopAudioPromise;
+  if (firstShopAudio) {
+    stopCurrentAudio();
+    const audio = new Audio(firstShopAudio);
+    currentAudio = audio;
+    
+    // 1軒目の再生完了を待つ
+    await new Promise<void>((resolve) => {
+      audio.onended = () => {
+        currentAudio = null;
+        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+        voiceStatus.className = 'voice-status stopped';
+        resolve();
+      };
+      
+      voiceStatus.innerHTML = '&#128266; 音声再生中...';
+      voiceStatus.className = 'voice-status speaking';
+      
+      audio.play();
+    });
+
+    // 2軒目以降の音声合成完了を待って再生
+    if (remainingAudioPromise) {
+      const remainingAudio = await remainingAudioPromise;
+      if (remainingAudio) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        stopCurrentAudio();
+        const audioElement = new Audio(remainingAudio);
+        currentAudio = audioElement;
+        
+        await new Promise<void>((resolve) => {
+          audioElement.onended = () => {
+            currentAudio = null;
+            voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+            voiceStatus.className = 'voice-status stopped';
+            resolve();
+          };
+          
+          voiceStatus.innerHTML = '&#128266; 音声再生中...';
+          voiceStatus.className = 'voice-status speaking';
+          
+          audioElement.play();
+        });
+      }
+    }
+  }
+}
+  } catch (error) {
+    console.error('[TTS] ショップ情報読み上げエラー:', error);
+  }
+})(); // ✅ 即座に実行するが、完了を待たない
     } else {
       // ショップなしの通常会話は全文読み上げ
       speakTextGCP(data.response);
     }
   }
 }
-
       } catch (error) {
         console.error('送信エラー:', error);
         showError('メッセージの送信に失敗しました。');
@@ -1733,7 +1742,13 @@ if (data.shops && data.shops.length > 0) {
         sendBtn.disabled = false;
         micBtn.disabled = false;
         userInput.disabled = false;
-        userInput.focus();
+        
+        // ショップカードが表示される場合はフォーカスしない
+        if (currentShops.length === 0) {
+          userInput.focus();
+        } else {
+          userInput.blur();
+        }
       }
     }
 
