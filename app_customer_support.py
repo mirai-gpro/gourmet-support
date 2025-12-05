@@ -738,25 +738,27 @@ class SupportAssistant:
     def generate_final_summary(self):
         """最終要約を生成"""
         all_messages = self.session.get_messages()
-        conversation_text = self._format_conversation(all_messages)
-        
+        # 最新50件に制限（プロンプト長制限対策）
+        recent_messages = all_messages[-50:] if len(all_messages) > 50 else all_messages
+        conversation_text = self._format_conversation(recent_messages)
+
         summary_prompt = prompt_manager.get(
             'final_summary',
             conversation_text=conversation_text,
             timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
-        
+
         try:
             response = model.generate_content(summary_prompt)
             summary = response.text
-            
+
             self.session.update_status(
                 'completed',
                 inquiry_summary=summary
             )
-            
+
             return summary
-            
+
         except Exception as e:
             logger.error(f"[Assistant] 要約生成エラー: {e}")
             return "要約の生成中にエラーが発生しました。"
@@ -803,19 +805,21 @@ class SupportAssistant:
     def _build_prompt(self, history, current_message, stage_instruction):
         """プロンプトを構築"""
         prompt_parts = []
-        
+
         prompt_parts.append(f"システム指示:\n{self.system_prompt}\n")
-        
+
         if history:
+            # 最新10件の会話のみを含める（プロンプト長制限対策）
+            recent_history = history[-10:] if len(history) > 10 else history
             prompt_parts.append("会話履歴:")
-            for msg in history:
+            for msg in recent_history:
                 role_name = "ユーザー" if msg['role'] == 'user' else "アシスタント"
                 prompt_parts.append(f"{role_name}: {msg['content']}")
             prompt_parts.append("")
-        
+
         prompt_parts.append(stage_instruction)
         prompt_parts.append(f"\n【ユーザーの発言】\n{current_message}")
-        
+
         return "\n".join(prompt_parts)
     
     def _generate_summary(self, user_message, assistant_response):
