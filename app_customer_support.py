@@ -99,6 +99,9 @@ GOOGLE_GEOCODING_API_KEY = os.getenv('GOOGLE_GEOCODING_API_KEY', GOOGLE_PLACES_A
 # ホットペッパーAPI
 HOTPEPPER_API_KEY = os.getenv('HOTPEPPER_API_KEY', 'c22031a566715e40')
 
+# TripAdvisor Content API
+TRIPADVISOR_API_KEY = os.getenv('TRIPADVISOR_API_KEY', '')
+
 # Google Custom Search API(食べログ検索用)
 GOOGLE_CSE_API_KEY = os.getenv('GOOGLE_CSE_API_KEY', '')
 GOOGLE_CSE_ID = os.getenv('GOOGLE_CSE_ID', '')
@@ -183,6 +186,129 @@ def search_hotpepper(shop_name: str, area: str = '', geo_info: dict = None) -> s
     except Exception as e:
         logger.error(f"[Hotpepper API] エラー: {e}")
         return None
+
+# ========================================
+# TripAdvisor Content API 連携
+# ========================================
+
+def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = None, language: str = 'en') -> dict:
+    """
+    TripAdvisor Location Search APIで店舗のlocation_idを検索
+    """
+    if not TRIPADVISOR_API_KEY:
+        logger.warning("[TripAdvisor API] APIキーが設定されていません")
+        return None
+
+    try:
+        url = 'https://api.content.tripadvisor.com/api/v1/location/search'
+
+        params = {
+            'key': TRIPADVISOR_API_KEY,
+            'searchQuery': shop_name,
+            'language': language
+        }
+
+        # 座標がある場合は追加
+        if lat is not None and lng is not None:
+            params['latLong'] = f"{lat},{lng}"
+
+        headers = {
+            'accept': 'application/json'
+        }
+
+        logger.info(f"[TripAdvisor API] Location Search: {shop_name} ({language})")
+
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+            if data.get('data') and len(data['data']) > 0:
+                location = data['data'][0]
+                location_id = location.get('location_id')
+                logger.info(f"[TripAdvisor API] Location found: {location_id}")
+                return {
+                    'location_id': location_id,
+                    'name': location.get('name'),
+                    'address': location.get('address_obj', {}).get('address_string', '')
+                }
+            else:
+                logger.info(f"[TripAdvisor API] Location not found for: {shop_name}")
+                return None
+        else:
+            logger.warning(f"[TripAdvisor API] Search failed: {response.status_code}")
+            return None
+
+    except Exception as e:
+        logger.error(f"[TripAdvisor API] Error: {e}")
+        return None
+
+
+def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
+    """
+    TripAdvisor Location Details APIで評価情報を取得
+    """
+    if not TRIPADVISOR_API_KEY or not location_id:
+        return None
+
+    try:
+        url = f'https://api.content.tripadvisor.com/api/v1/location/{location_id}/details'
+
+        params = {
+            'key': TRIPADVISOR_API_KEY,
+            'language': language
+        }
+
+        headers = {
+            'accept': 'application/json'
+        }
+
+        logger.info(f"[TripAdvisor API] Getting details for location: {location_id}")
+
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+
+        if response.status_code == 200:
+            data = response.json()
+            rating = data.get('rating')
+            num_reviews = data.get('num_reviews', 0)
+            web_url = data.get('web_url')
+
+            logger.info(f"[TripAdvisor API] Details: rating={rating}, reviews={num_reviews}")
+
+            return {
+                'rating': float(rating) if rating else None,
+                'num_reviews': num_reviews,
+                'web_url': web_url,
+                'location_id': location_id
+            }
+        else:
+            logger.warning(f"[TripAdvisor API] Details failed: {response.status_code}")
+            return None
+
+    except Exception as e:
+        logger.error(f"[TripAdvisor API] Error: {e}")
+        return None
+
+
+def get_tripadvisor_data(shop_name: str, lat: float = None, lng: float = None, language: str = 'en') -> dict:
+    """
+    TripAdvisor APIで店舗情報を取得（検索 + 詳細）
+    """
+    # Location IDを検索
+    location_data = search_tripadvisor_location(shop_name, lat, lng, language)
+    if not location_data:
+        return None
+
+    # 詳細情報を取得
+    details = get_tripadvisor_details(location_data['location_id'], language)
+    if not details:
+        return None
+
+    return {
+        'rating': details['rating'],
+        'num_reviews': details['num_reviews'],
+        'web_url': details['web_url'],
+        'location_id': details['location_id']
+    }
 
 # ========================================
 # Google Geocoding API 連携
@@ -561,6 +687,40 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
             # ぐるなびURL
             gnavi_query = f"{shop_name}+{area}+ぐるなび".replace(' ', '+')
             shop['gnavi_url'] = f"https://www.google.com/search?q={gnavi_query}"
+
+        # TripAdvisor（日本語以外、または日本語で海外の場合）
+        should_show_tripadvisor = (
+            language != 'ja' or
+            (language == 'ja' and geo_info and geo_info.get('country_code') != 'JP')
+        )
+
+        if should_show_tripadvisor:
+            lat = place_data.get('lat')
+            lng = place_data.get('lng')
+
+            # TripAdvisor APIの言語コードマッピング
+            tripadvisor_lang_map = {
+                'ja': 'ja',
+                'en': 'en',
+                'zh': 'zh',  # Simplified Chinese
+                'ko': 'ko'
+            }
+            tripadvisor_language = tripadvisor_lang_map.get(language, 'en')
+
+            tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, tripadvisor_language)
+
+            if not tripadvisor_data:
+                # Places名で再検索
+                places_name = place_data.get('name', '')
+                if places_name and places_name != shop_name:
+                    logger.info(f"[TripAdvisor] Places名で再検索: {places_name}")
+                    tripadvisor_data = get_tripadvisor_data(places_name, lat, lng, tripadvisor_language)
+
+            if tripadvisor_data:
+                shop['tripadvisor_url'] = tripadvisor_data.get('web_url')
+                shop['tripadvisor_rating'] = tripadvisor_data.get('rating')
+                shop['tripadvisor_reviews'] = tripadvisor_data.get('num_reviews')
+                logger.info(f"[TripAdvisor] データ追加: {shop_name}, rating={tripadvisor_data.get('rating')}, reviews={tripadvisor_data.get('num_reviews')}")
 
         enriched_shops.append(shop)
 

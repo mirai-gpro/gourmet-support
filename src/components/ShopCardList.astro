@@ -415,6 +415,48 @@ const { apiBaseUrl = '' } = Astro.props;
     opacity: 0.6;
   }
 
+  /* TripAdvisor評価の○スタイル */
+  .shop-card-list :global(.tripadvisor-rating) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circles) {
+    display: flex;
+    gap: 2px;
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circle) {
+    width: 14px;
+    height: 14px;
+    color: #00af87;
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circle.filled) {
+    color: #00af87;
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circle.empty) {
+    color: rgba(255, 255, 255, 0.4);
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .circle.half) {
+    color: #00af87;
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .rating-score) {
+    font-size: 11px;
+    font-weight: 700;
+    color: white;
+  }
+
+  .shop-card-list :global(.tripadvisor-rating .review-count) {
+    font-size: 10px;
+    color: rgba(255, 255, 255, 0.8);
+  }
+
   /* 空状態 */
   .shop-card-list :global(.empty-state) {
     text-align: center;
@@ -490,11 +532,55 @@ const { apiBaseUrl = '' } = Astro.props;
     tabelog_url?: string;
     gnavi_url?: string;
     tripadvisor_url?: string;
+    tripadvisor_rating?: number;
+    tripadvisor_reviews?: number;
   }
 
   class ShopCardManager {
     private container: HTMLElement;
     private currentLanguage: string = 'ja'; // デフォルトは日本語
+    private i18n = {
+      ja: {
+        tripadvisorTitle: 'TripAdvisor',
+        tripadvisorSubtitle: 'レビュー・写真',
+        tabelogTitle: '食べログ',
+        tabelogSubtitle: '口コミ・写真',
+        hotpepperTitle: 'ホットペッパー',
+        hotpepperSubtitle: '予約・クーポン',
+        gnaviTitle: 'ぐるなび',
+        gnaviSubtitle: 'お店情報'
+      },
+      en: {
+        tripadvisorTitle: 'TripAdvisor',
+        tripadvisorSubtitle: 'Reviews & Photos',
+        tabelogTitle: 'Tabelog',
+        tabelogSubtitle: 'Reviews & Ratings',
+        hotpepperTitle: 'Hotpepper',
+        hotpepperSubtitle: 'Reservations & Coupons',
+        gnaviTitle: 'Gnavi',
+        gnaviSubtitle: 'Restaurant Info'
+      },
+      zh: {
+        tripadvisorTitle: 'TripAdvisor',
+        tripadvisorSubtitle: '评论和照片',
+        tabelogTitle: 'Tabelog',
+        tabelogSubtitle: '评论和评分',
+        hotpepperTitle: 'Hotpepper',
+        hotpepperSubtitle: '预订和优惠券',
+        gnaviTitle: 'Gnavi',
+        gnaviSubtitle: '餐厅信息'
+      },
+      ko: {
+        tripadvisorTitle: 'TripAdvisor',
+        tripadvisorSubtitle: '리뷰 및 사진',
+        tabelogTitle: 'Tabelog',
+        tabelogSubtitle: '리뷰 및 평점',
+        hotpepperTitle: 'Hotpepper',
+        hotpepperSubtitle: '예약 및 쿠폰',
+        gnaviTitle: 'Gnavi',
+        gnaviSubtitle: '음식점 정보'
+      }
+    };
 
     constructor(containerId: string) {
       this.container = document.getElementById(containerId)!;
@@ -504,6 +590,12 @@ const { apiBaseUrl = '' } = Astro.props;
     setLanguage(language: string) {
       this.currentLanguage = language;
       console.log('[ShopCardList] Language set to:', language);
+    }
+
+    // 翻訳ヘルパー
+    private t(key: string): string {
+      const langData = this.i18n[this.currentLanguage as keyof typeof this.i18n] || this.i18n.en;
+      return langData[key as keyof typeof langData] || key;
     }
 
     // ショップリストを表示
@@ -637,6 +729,45 @@ const { apiBaseUrl = '' } = Astro.props;
       return html;
     }
 
+    // TripAdvisor評価の○（円）の生成
+    private createCirclesHtml(rating: number): string {
+      let html = '';
+      const fullCircles = Math.floor(rating);
+      const hasHalfCircle = rating % 1 >= 0.5;
+
+      for (let i = 0; i < 5; i++) {
+        if (i < fullCircles) {
+          // 塗りつぶし○
+          html += `
+            <svg class="circle filled" viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="12" cy="12" r="10"/>
+            </svg>
+          `;
+        } else if (i === fullCircles && hasHalfCircle) {
+          // 半分塗りつぶし○
+          html += `
+            <svg class="circle half" viewBox="0 0 24 24">
+              <defs>
+                <linearGradient id="half-${i}">
+                  <stop offset="50%" stop-color="currentColor"/>
+                  <stop offset="50%" stop-color="transparent"/>
+                </linearGradient>
+              </defs>
+              <circle cx="12" cy="12" r="10" fill="url(#half-${i})" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+          `;
+        } else {
+          // 空○
+          html += `
+            <svg class="circle empty" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+              <circle cx="12" cy="12" r="10" stroke-width="1.5"/>
+            </svg>
+          `;
+        }
+      }
+      return html;
+    }
+
     // おすすめポイントの生成
     private createHighlightsHtml(highlights: string[]): string {
       if (highlights.length === 0) return '';
@@ -765,6 +896,10 @@ const { apiBaseUrl = '' } = Astro.props;
         // 1. TripAdvisor
         if (shop.tripadvisor_url) {
           const escapedUrl = shop.tripadvisor_url.replace(/'/g, "\\'");
+          const circlesHtml = shop.tripadvisor_rating ? this.createCirclesHtml(shop.tripadvisor_rating) : '';
+          const ratingValue = shop.tripadvisor_rating ? shop.tripadvisor_rating.toFixed(1) : '';
+          const reviewCount = shop.tripadvisor_reviews || 0;
+
           links.push(`
             <a href="${shop.tripadvisor_url}" target="_blank" rel="noopener noreferrer" class="link-btn tripadvisor" onclick="return openLinkPopup(event, '${escapedUrl}')">
               <div class="link-btn-content">
@@ -775,8 +910,14 @@ const { apiBaseUrl = '' } = Astro.props;
                   </svg>
                 </div>
                 <div class="link-text">
-                  <div class="link-title">TripAdvisor</div>
-                  <div class="link-subtitle">Reviews & Photos</div>
+                  <div class="link-title">${this.t('tripadvisorTitle')}</div>
+                  ${circlesHtml ? `
+                    <div class="tripadvisor-rating">
+                      <div class="circles">${circlesHtml}</div>
+                      <span class="rating-score">${ratingValue}</span>
+                      <span class="review-count">(${reviewCount})</span>
+                    </div>
+                  ` : `<div class="link-subtitle">${this.t('tripadvisorSubtitle')}</div>`}
                 </div>
               </div>
               <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -803,8 +944,8 @@ const { apiBaseUrl = '' } = Astro.props;
                   </svg>
                 </div>
                 <div class="link-text">
-                  <div class="link-title">Tabelog</div>
-                  <div class="link-subtitle">Reviews & Ratings</div>
+                  <div class="link-title">${this.t('tabelogTitle')}</div>
+                  <div class="link-subtitle">${this.t('tabelogSubtitle')}</div>
                 </div>
               </div>
               <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
