@@ -10,7 +10,7 @@ const { apiBaseUrl = '' } = Astro.props;
 <div class="reservation-modal-overlay" id="reservationModalOverlay" data-api-base={apiBaseUrl}>
   <div class="reservation-modal" id="reservationModal">
     <div class="modal-header">
-      <h2>&#128222; 予約依頼</h2>
+      <h2 id="modalTitle">&#128222; 予約依頼</h2>
       <button class="close-btn" id="closeReservationModal">&times;</button>
     </div>
 
@@ -18,24 +18,24 @@ const { apiBaseUrl = '' } = Astro.props;
       <!-- 店舗選択エリア -->
       <div class="shop-selection-area">
         <div class="section-header">
-          <h3>&#127942; お店を選択</h3>
+          <h3 id="shopSelectTitle">&#127942; お店を選択</h3>
           <p class="selection-guide" id="selectionGuide">優先順にクリックしてください（最大3件）</p>
           <button class="reset-btn" id="resetSelection">やり直し</button>
         </div>
         <div class="shop-list-compact" id="shopListCompact">
           <!-- 店舗リストはJSで動的に追加 -->
         </div>
-        <p class="priority-note">
+        <p class="priority-note" id="priorityNote">
           &#8505; ①→②→③の順で電話します。予約成立時点で終了します。
         </p>
       </div>
 
       <!-- 共通設定エリア -->
       <div class="common-settings" id="commonSettings">
-        <h3>&#128203; 予約内容</h3>
+        <h3 id="contentTitle">&#128203; 予約内容</h3>
 
         <div class="form-row">
-          <label>&#128101; 人数</label>
+          <label id="guestCountLabel">&#128101; 人数</label>
           <select id="guestCount">
             <option value="1">1名</option>
             <option value="2" selected>2名</option>
@@ -51,14 +51,14 @@ const { apiBaseUrl = '' } = Astro.props;
         </div>
 
         <div class="form-row">
-          <label>&#128197; 希望日</label>
+          <label id="dateLabel">&#128197; 希望日</label>
           <input type="date" id="reservationDate" />
         </div>
 
         <div class="form-row">
-          <label>&#9200; 開始時間</label>
+          <label id="timeLabel">&#9200; 開始時間</label>
           <select id="startTime">
-            <option value="">選択してください</option>
+            <option value="" id="selectPlaceholder">選択してください</option>
             <option value="11:00">11:00</option>
             <option value="11:30">11:30</option>
             <option value="12:00">12:00</option>

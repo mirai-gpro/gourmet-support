@@ -769,7 +769,27 @@ class SupportAssistant:
             stage_instruction = prompt_manager.get('conversation_stage_instruction', language=self.language)
 
         if is_followup:
-            stage_instruction += f"\n\n【現在提案中の店舗情報】\n{self._format_current_shops(current_shops)}\n\nユーザーは上記の店舗について質問しています。店舗情報を参照して回答してください。"
+            # 深掘り質問用の多言語メッセージ
+            followup_messages = {
+                'ja': {
+                    'header': '【現在提案中の店舗情報】',
+                    'footer': 'ユーザーは上記の店舗について質問しています。店舗情報を参照して回答してください。'
+                },
+                'en': {
+                    'header': '【Currently Proposed Restaurants】',
+                    'footer': 'The user is asking about the restaurants listed above. Please refer to the restaurant information when answering.'
+                },
+                'zh': {
+                    'header': '【当前推荐的餐厅信息】',
+                    'footer': '用户正在询问上述餐厅的信息。请参考餐厅信息进行回答。'
+                },
+                'ko': {
+                    'header': '【현재 제안 중인 음식점 정보】',
+                    'footer': '사용자가 위 음식점에 대해 질문하고 있습니다. 음식점 정보를 참고하여 답변해 주세요.'
+                }
+            }
+            current_followup_msg = followup_messages.get(self.language, followup_messages['ja'])
+            stage_instruction += f"\n\n{current_followup_msg['header']}\n{self._format_current_shops(current_shops)}\n\n{current_followup_msg['footer']}"
 
         prompt = self._build_prompt(history, user_message, stage_instruction)
 
@@ -785,7 +805,15 @@ class SupportAssistant:
             summary = None
             if conversation_stage == 'conversation':
                 if parsed_shops:
-                    summary = f"{len(parsed_shops)}軒のお店を提案しました。"
+                    # 多言語サマリー
+                    summary_messages = {
+                        'ja': lambda count: f"{count}軒のお店を提案しました。",
+                        'en': lambda count: f"Suggested {count} restaurants.",
+                        'zh': lambda count: f"推荐了{count}家餐厅。",
+                        'ko': lambda count: f"{count}곳의 음식점을 제안했습니다."
+                    }
+                    summary_func = summary_messages.get(self.language, summary_messages['ja'])
+                    summary = summary_func(len(parsed_shops))
                 else:
                     summary = self._generate_summary(user_message, parsed_message)
 
@@ -836,18 +864,51 @@ class SupportAssistant:
 
     def _format_current_shops(self, shops):
         """店舗情報を整形してプロンプトに追加"""
+        # 多言語ラベル
+        shop_labels = {
+            'ja': {
+                'description': '説明',
+                'specialty': '看板メニュー',
+                'price': '予算',
+                'atmosphere': '雰囲気',
+                'features': '特色'
+            },
+            'en': {
+                'description': 'Description',
+                'specialty': 'Specialty',
+                'price': 'Price Range',
+                'atmosphere': 'Atmosphere',
+                'features': 'Features'
+            },
+            'zh': {
+                'description': '说明',
+                'specialty': '招牌菜',
+                'price': '预算',
+                'atmosphere': '氛围',
+                'features': '特色'
+            },
+            'ko': {
+                'description': '설명',
+                'specialty': '대표 메뉴',
+                'price': '예산',
+                'atmosphere': '분위기',
+                'features': '특색'
+            }
+        }
+
+        current_shop_labels = shop_labels.get(self.language, shop_labels['ja'])
         lines = []
         for i, shop in enumerate(shops, 1):
             lines.append(f"{i}. {shop.get('name', '')} ({shop.get('area', '')})")
-            lines.append(f"   - 説明: {shop.get('description', '')}")
+            lines.append(f"   - {current_shop_labels['description']}: {shop.get('description', '')}")
             if shop.get('specialty'):
-                lines.append(f"   - 看板メニュー: {shop.get('specialty')}")
+                lines.append(f"   - {current_shop_labels['specialty']}: {shop.get('specialty')}")
             if shop.get('price_range'):
-                lines.append(f"   - 予算: {shop.get('price_range')}")
+                lines.append(f"   - {current_shop_labels['price']}: {shop.get('price_range')}")
             if shop.get('atmosphere'):
-                lines.append(f"   - 雰囲気: {shop.get('atmosphere')}")
+                lines.append(f"   - {current_shop_labels['atmosphere']}: {shop.get('atmosphere')}")
             if shop.get('features'):
-                lines.append(f"   - 特色: {shop.get('features')}")
+                lines.append(f"   - {current_shop_labels['features']}: {shop.get('features')}")
             lines.append("")
         return "\n".join(lines)
 
@@ -877,19 +938,52 @@ class SupportAssistant:
 
     def _build_prompt(self, history, current_message, stage_instruction):
         """プロンプトを構築"""
+        # 多言語ラベル
+        labels = {
+            'ja': {
+                'system': 'システム指示',
+                'history': '会話履歴',
+                'user': 'ユーザー',
+                'assistant': 'アシスタント',
+                'current': '【ユーザーの発言】'
+            },
+            'en': {
+                'system': 'System Instructions',
+                'history': 'Conversation History',
+                'user': 'User',
+                'assistant': 'Assistant',
+                'current': '【Current User Message】'
+            },
+            'zh': {
+                'system': '系统指示',
+                'history': '对话历史',
+                'user': '用户',
+                'assistant': '助手',
+                'current': '【用户的发言】'
+            },
+            'ko': {
+                'system': '시스템 지시',
+                'history': '대화 기록',
+                'user': '사용자',
+                'assistant': '어시스턴트',
+                'current': '【사용자의 발언】'
+            }
+        }
+
+        current_labels = labels.get(self.language, labels['ja'])
         prompt_parts = []
 
-        prompt_parts.append(f"システム指示:\n{self.system_prompt}\n")
+        prompt_parts.append(f"{current_labels['system']}:\n{self.system_prompt}\n")
 
         if history:
-            prompt_parts.append("会話履歴:")
+            prompt_parts.append(f"{current_labels['history']}:")
             for msg in history:
-                role_name = "ユーザー" if msg['role'] == 'user' else "アシスタント"
+                role_name = current_labels['user'] if msg['role'] == 'user' else current_labels['assistant']
                 prompt_parts.append(f"{role_name}: {msg['content']}")
             prompt_parts.append("")
 
         prompt_parts.append(stage_instruction)
-        prompt_parts.append(f"\n【ユーザーの発言】\n{current_message}")
+        prompt_parts.append(f"\n{current_labels['current']}\n{current_message}")
 
         return "\n".join(prompt_parts)
 
@@ -912,10 +1006,19 @@ class SupportAssistant:
 
     def _format_conversation(self, messages):
         """会話ログを整形"""
+        # 多言語ラベル
+        role_labels = {
+            'ja': {'user': 'ユーザー', 'assistant': 'アシスタント'},
+            'en': {'user': 'User', 'assistant': 'Assistant'},
+            'zh': {'user': '用户', 'assistant': '助手'},
+            'ko': {'user': '사용자', 'assistant': '어시스턴트'}
+        }
+
+        current_role_labels = role_labels.get(self.language, role_labels['ja'])
         lines = []
         for msg in messages:
             if msg.get('type') == 'chat':
-                role = "ユーザー" if msg['role'] == 'user' else "アシスタント"
+                role = current_role_labels['user'] if msg['role'] == 'user' else current_role_labels['assistant']
                 lines.append(f"{role}: {msg['content']}")
         return "\n".join(lines)
 
@@ -1004,6 +1107,28 @@ def chat():
         response_text = result['response']
         is_followup = result.get('is_followup', False)
 
+        # 多言語メッセージ辞書
+        shop_messages = {
+            'ja': {
+                'intro': lambda count: f"ご希望に合うお店を{count}件ご紹介します。\n\n",
+                'not_found': "申し訳ございません。条件に合うお店が見つかりませんでした。別の条件でお探しいただけますか?"
+            },
+            'en': {
+                'intro': lambda count: f"Here are {count} restaurant recommendations for you.\n\n",
+                'not_found': "Sorry, we couldn't find any restaurants matching your criteria. Would you like to search with different conditions?"
+            },
+            'zh': {
+                'intro': lambda count: f"为您推荐{count}家餐厅。\n\n",
+                'not_found': "很抱歉，没有找到符合条件的餐厅。您要用其他条件搜索吗？"
+            },
+            'ko': {
+                'intro': lambda count: f"추천 음식점 {count}곳을 소개해 드립니다.\n\n",
+                'not_found': "죄송합니다. 조건에 맞는 음식점을 찾을 수 없었습니다. 다른 조건으로 찾아보시겠습니까?"
+            }
+        }
+
+        current_messages = shop_messages.get(language, shop_messages['ja'])
+
         if shops and not is_followup:
             original_count = len(shops)
             area = extract_area_from_text(user_message, language)
@@ -1023,10 +1148,10 @@ def chat():
                     else:
                         shop_list.append(f"{i}. **{name}**: {description}")
 
-                response_text = f"ご希望に合うお店を{len(shops)}件ご紹介します。\n\n" + "\n\n".join(shop_list)
-                logger.info(f"[Chat] {len(shops)}件のショップデータを返却(元: {original_count}件)")
+                response_text = current_messages['intro'](len(shops)) + "\n\n".join(shop_list)
+                logger.info(f"[Chat] {len(shops)}件のショップデータを返却(元: {original_count}件, 言語: {language})")
             else:
-                response_text = "申し訳ございません。条件に合うお店が見つかりませんでした。別の条件でお探しいただけますか?"
+                response_text = current_messages['not_found']
                 logger.warning(f"[Chat] 全店舗が除外されました(元: {original_count}件)")
 
         elif is_followup:
