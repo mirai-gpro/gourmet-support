@@ -8,6 +8,16 @@ const { apiBaseUrl = '' } = Astro.props;
 ---
 
 <div class="gourmet-chat-container" data-api-base={apiBaseUrl}>
+  <!-- 言語選択UI -->
+  <div class="language-selector">
+    <select id="languageSelect" class="language-dropdown">
+      <option value="ja">日本語 (Japanese)</option>
+      <option value="en">English</option>
+      <option value="zh">中文 (Chinese)</option>
+      <option value="ko">한국어 (Korean)</option>
+    </select>
+  </div>
+
   <div class="voice-status stopped" id="voiceStatus">
     &#127908; 音声認識: 停止中
   </div>
@@ -36,7 +46,7 @@ const { apiBaseUrl = '' } = Astro.props;
     </div>
     <div class="input-actions">
       <button class="btn btn-reservation" id="reservationBtn" disabled>
-        &#128222; 予約依頼する
+        📞 予約依頼する
       </button>
     </div>
   </div>
@@ -54,6 +64,36 @@ const { apiBaseUrl = '' } = Astro.props;
     flex-direction: column;
     overflow: hidden;
     margin: 0 auto;
+  }
+
+  .language-selector {
+    padding: 12px 16px;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+  }
+
+  .language-dropdown {
+    padding: 6px 12px;
+    border: 2px solid white;
+    border-radius: 20px;
+    background: rgba(255, 255, 255, 0.95);
+    color: #667eea;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    outline: none;
+    transition: all 0.2s;
+  }
+
+  .language-dropdown:hover {
+    background: white;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  }
+
+  .language-dropdown:focus {
+    border-color: #fbbf24;
   }
 
   .chat-header {
@@ -393,6 +433,150 @@ const { apiBaseUrl = '' } = Astro.props;
 <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 
 <script>
+  // 多言語対応i18nオブジェクト
+  const i18n = {
+    ja: {
+      voiceStatusStopped: '🎤 音声認識: 停止中',
+      voiceStatusListening: '🎤 話してください...',
+      voiceStatusRecording: '🎤 録音中...',
+      voiceStatusWaiting: '🎤 認識待機中...',
+      voiceStatusRecognizing: '🔊 音声認識中...',
+      voiceStatusSynthesizing: '🔊 音声合成中...',
+      voiceStatusSpeaking: '🔊 音声再生中...',
+      voiceStatusComplete: '✅ 認識完了',
+      inputPlaceholder: 'メッセージを入力...',
+      btnVoiceInput: '音声入力',
+      btnTTSOn: '音声読み上げON',
+      btnTTSOff: '音声読み上げOFF',
+      btnSend: '送信',
+      btnReservation: '📞 予約依頼する',
+      clickPrompt: '音声を再生するには、画面をクリックしてください',
+      recordingTimeLimit: '録音時間が上限（55秒）に達したため自動停止しました',
+      micAccessError: 'マイクアクセスエラー:',
+      voiceNotRecognized: '音声が認識されませんでした',
+      sttError: '音声認識エラー:',
+      initError: '初期化に失敗しました。ページを再読み込みしてください。',
+      searchError: 'お店を検索してからご利用ください。',
+      loadingMessage: '提案するお店の情報を探しています。少々お待ちください...',
+      summaryTitle: '📋 質問要約書',
+      summaryFooter: '担当スタッフが内容を確認し、追ってご連絡いたします。',
+      ackConfirm: '確認しますので、少々お待ちください。',
+      ackSearch: 'お調べします。',
+      ackUnderstood: 'かしこまりました。',
+      ackYes: 'はい、承知しました。',
+      fallbackResponse: (text: string) => `"${text}"とのこと。お調べしますので、少々お待ちください。`,
+      additionalResponse: '只今、お店の情報を確認中です。もう少々お待ちください。',
+      ttsIntro: 'お待たせしました。'
+    },
+    en: {
+      voiceStatusStopped: '🎤 Voice Recognition: Stopped',
+      voiceStatusListening: '🎤 Please speak...',
+      voiceStatusRecording: '🎤 Recording...',
+      voiceStatusWaiting: '🎤 Waiting for recognition...',
+      voiceStatusRecognizing: '🔊 Recognizing voice...',
+      voiceStatusSynthesizing: '🔊 Synthesizing voice...',
+      voiceStatusSpeaking: '🔊 Playing audio...',
+      voiceStatusComplete: '✅ Recognition complete',
+      inputPlaceholder: 'Enter message...',
+      btnVoiceInput: 'Voice input',
+      btnTTSOn: 'Voice reading ON',
+      btnTTSOff: 'Voice reading OFF',
+      btnSend: 'Send',
+      btnReservation: '📞 Request reservation',
+      clickPrompt: 'Click the screen to play audio',
+      recordingTimeLimit: 'Recording stopped automatically (55s limit reached)',
+      micAccessError: 'Microphone access error:',
+      voiceNotRecognized: 'Voice not recognized',
+      sttError: 'Voice recognition error:',
+      initError: 'Initialization failed. Please reload the page.',
+      searchError: 'Please search for restaurants first.',
+      loadingMessage: 'Searching for restaurant recommendations. Please wait...',
+      summaryTitle: '📋 Inquiry Summary',
+      summaryFooter: 'Our staff will review your inquiry and contact you shortly.',
+      ackConfirm: 'Let me check. Please wait a moment.',
+      ackSearch: 'Let me look that up.',
+      ackUnderstood: 'Understood.',
+      ackYes: 'Yes, I understand.',
+      fallbackResponse: (text: string) => `You said "${text}". Let me search for that. Please wait.`,
+      additionalResponse: 'Currently searching for restaurant information. Please wait a moment.',
+      ttsIntro: 'Thank you for waiting.'
+    },
+    zh: {
+      voiceStatusStopped: '🎤 语音识别: 已停止',
+      voiceStatusListening: '🎤 请说话...',
+      voiceStatusRecording: '🎤 录音中...',
+      voiceStatusWaiting: '🎤 等待识别...',
+      voiceStatusRecognizing: '🔊 识别语音中...',
+      voiceStatusSynthesizing: '🔊 语音合成中...',
+      voiceStatusSpeaking: '🔊 播放音频中...',
+      voiceStatusComplete: '✅ 识别完成',
+      inputPlaceholder: '输入消息...',
+      btnVoiceInput: '语音输入',
+      btnTTSOn: '语音朗读开启',
+      btnTTSOff: '语音朗读关闭',
+      btnSend: '发送',
+      btnReservation: '📞 申请预约',
+      clickPrompt: '点击屏幕播放音频',
+      recordingTimeLimit: '录音已自动停止（达到55秒上限）',
+      micAccessError: '麦克风访问错误:',
+      voiceNotRecognized: '未识别到语音',
+      sttError: '语音识别错误:',
+      initError: '初始化失败。请重新加载页面。',
+      searchError: '请先搜索餐厅。',
+      loadingMessage: '正在搜索推荐餐厅。请稍候...',
+      summaryTitle: '📋 咨询摘要',
+      summaryFooter: '我们的工作人员将审核您的咨询并尽快联系您。',
+      ackConfirm: '我确认一下。请稍等。',
+      ackSearch: '我查一下。',
+      ackUnderstood: '明白了。',
+      ackYes: '好的，我知道了。',
+      fallbackResponse: (text: string) => `您说"${text}"。我搜索一下。请稍等。`,
+      additionalResponse: '正在确认餐厅信息。请稍候。',
+      ttsIntro: '让您久等了。'
+    },
+    ko: {
+      voiceStatusStopped: '🎤 음성 인식: 정지됨',
+      voiceStatusListening: '🎤 말씀해 주세요...',
+      voiceStatusRecording: '🎤 녹음 중...',
+      voiceStatusWaiting: '🎤 인식 대기 중...',
+      voiceStatusRecognizing: '🔊 음성 인식 중...',
+      voiceStatusSynthesizing: '🔊 음성 합성 중...',
+      voiceStatusSpeaking: '🔊 오디오 재생 중...',
+      voiceStatusComplete: '✅ 인식 완료',
+      inputPlaceholder: '메시지 입력...',
+      btnVoiceInput: '음성 입력',
+      btnTTSOn: '음성 읽기 켜짐',
+      btnTTSOff: '음성 읽기 꺼짐',
+      btnSend: '전송',
+      btnReservation: '📞 예약 신청',
+      clickPrompt: '오디오를 재생하려면 화면을 클릭하세요',
+      recordingTimeLimit: '녹음이 자동으로 중지되었습니다 (55초 제한 도달)',
+      micAccessError: '마이크 액세스 오류:',
+      voiceNotRecognized: '음성이 인식되지 않았습니다',
+      sttError: '음성 인식 오류:',
+      initError: '초기화 실패. 페이지를 새로고침하세요.',
+      searchError: '먼저 레스토랑을 검색하세요.',
+      loadingMessage: '추천 레스토랑을 검색 중입니다. 잠시만 기다려주세요...',
+      summaryTitle: '📋 문의 요약',
+      summaryFooter: '담당자가 문의 내용을 검토하고 곧 연락드리겠습니다.',
+      ackConfirm: '확인하겠습니다. 잠시만 기다려주세요.',
+      ackSearch: '찾아보겠습니다.',
+      ackUnderstood: '알겠습니다.',
+      ackYes: '네, 알겠습니다.',
+      fallbackResponse: (text: string) => `"${text}"라고 말씀하셨네요. 검색해 보겠습니다. 잠시만 기다려주세요.`,
+      additionalResponse: '지금 레스토랑 정보를 확인 중입니다. 잠시만 기다려주세요.',
+      ttsIntro: '기다려 주셔서 감사합니다.'
+    }
+  };
+
+  // TTS/STT言語コードマッピング
+  const LANGUAGE_CODE_MAP = {
+    ja: { tts: 'ja-JP', stt: 'ja-JP', voice: 'ja-JP-Chirp3-HD-Leda' },
+    en: { tts: 'en-US', stt: 'en-US', voice: 'en-US-Studio-O' },
+    zh: { tts: 'cmn-CN', stt: 'cmn-CN', voice: 'cmn-CN-Wavenet-A' },
+    ko: { tts: 'ko-KR', stt: 'ko-KR', voice: 'ko-KR-Wavenet-A' }
+  };
+
   // グルメチャット機能
   document.addEventListener('DOMContentLoaded', () => {
     const container = document.querySelector('.gourmet-chat-container') as HTMLElement;
@@ -408,8 +592,10 @@ const { apiBaseUrl = '' } = Astro.props;
     const speakerBtn = document.getElementById('speakerBtn') as HTMLButtonElement;
     const reservationBtn = document.getElementById('reservationBtn') as HTMLButtonElement;
     const voiceStatus = document.getElementById('voiceStatus')!;
+    const languageSelect = document.getElementById('languageSelect') as HTMLSelectElement;
 
     // 状態
+    let currentLanguage: 'ja' | 'en' | 'zh' | 'ko' = 'ja'; // デフォルト言語
     let sessionId: string | null = null;
     let isProcessing = false;
     let currentStage = 'conversation';
@@ -423,6 +609,32 @@ const { apiBaseUrl = '' } = Astro.props;
     let isUserInteracted = false;
     let currentShops: any[] = []; // 現在表示中のショップリスト
     let isFromVoiceInput = false; // 音声入力からの送信かどうかを追跡
+
+    // 翻訳ヘルパー関数
+    function t(key: string, ...args: any[]): string {
+      const translation = i18n[currentLanguage][key];
+      if (typeof translation === 'function') {
+        return translation(...args);
+      }
+      return translation || key;
+    }
+
+    // UI言語を更新
+    function updateUILanguage() {
+      voiceStatus.innerHTML = t('voiceStatusStopped');
+      userInput.placeholder = t('inputPlaceholder');
+      micBtn.title = t('btnVoiceInput');
+      speakerBtn.title = isTTSEnabled ? t('btnTTSOn') : t('btnTTSOff');
+      sendBtn.textContent = t('btnSend');
+      reservationBtn.innerHTML = t('btnReservation');
+    }
+
+    // 言語選択イベント
+    languageSelect.addEventListener('change', () => {
+      currentLanguage = languageSelect.value as 'ja' | 'en' | 'zh' | 'ko';
+      updateUILanguage();
+      console.log(`[Language] 言語切替: ${currentLanguage}`);
+    });
 
     // 事前生成音声（案1: 高速応答用）
     let preGeneratedAcks: Map<string, string> = new Map(); // key: テキスト, value: base64 MP3
@@ -459,7 +671,7 @@ const { apiBaseUrl = '' } = Astro.props;
       prompt.className = 'click-prompt';
       prompt.innerHTML = `
         <p>&#128266;</p>
-        <p>音声を再生するには、画面をクリックしてください</p>
+        <p>${t('clickPrompt')}</p>
         <p>&#128266;</p>
       `;
       prompt.addEventListener('click', enableAudioPlayback);
@@ -514,16 +726,17 @@ const { apiBaseUrl = '' } = Astro.props;
       console.log('[TTS] cleanText:', cleanText.substring(0, 50) + '...', '文字数:', cleanText.length);
 
       try {
-        voiceStatus.innerHTML = '&#128266; 音声合成中...';
+        voiceStatus.innerHTML = t('voiceStatusSynthesizing');
         voiceStatus.className = 'voice-status speaking';
 
+        const langConfig = LANGUAGE_CODE_MAP[currentLanguage];
         const response = await fetch(`${apiBase}/api/tts/synthesize`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             text: cleanText,
-            language_code: 'ja-JP',
-            voice_name: 'ja-JP-Chirp3-HD-Leda'
+            language_code: langConfig.tts,
+            voice_name: langConfig.voice
           })
         });
 
@@ -541,7 +754,7 @@ const { apiBaseUrl = '' } = Astro.props;
           const playPromise = new Promise<void>((resolve) => {
             audio.onended = () => {
               console.log('[TTS] 音声再生完了');
-              voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+              voiceStatus.innerHTML = t('voiceStatusStopped');
               voiceStatus.className = 'voice-status stopped';
               currentAudio = null;
               resolve();
@@ -549,7 +762,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
             audio.onerror = () => {
               console.log('[TTS] 音声再生エラー');
-              voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+              voiceStatus.innerHTML = t('voiceStatusStopped');
               voiceStatus.className = 'voice-status stopped';
               resolve();
             };
@@ -560,13 +773,13 @@ const { apiBaseUrl = '' } = Astro.props;
             await playPromise; // 再生完了を待つ
           } else {
             showClickPrompt();
-            voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+            voiceStatus.innerHTML = t('voiceStatusStopped');
             voiceStatus.className = 'voice-status stopped';
           }
         }
       } catch (error) {
         console.error('[TTS] Error:', error);
-        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+        voiceStatus.innerHTML = t('voiceStatusStopped');
         voiceStatus.className = 'voice-status stopped';
       }
     }
@@ -700,9 +913,9 @@ const { apiBaseUrl = '' } = Astro.props;
               clearTimeout(silenceTimer);
               silenceTimer = null;
             }
-            voiceStatus.innerHTML = '&#127908; 録音中...';
+            voiceStatus.innerHTML = t('voiceStatusRecording');
           } else if (hasSpoken && !silenceTimer) {
-            voiceStatus.innerHTML = '&#127908; 認識待機中...';
+            voiceStatus.innerHTML = t('voiceStatusWaiting');
             silenceTimer = window.setTimeout(() => {
               console.log('[VAD] 無音検出 - 自動停止');
               stopStreamingSTT();
@@ -711,12 +924,13 @@ const { apiBaseUrl = '' } = Astro.props;
         }, 100);
 
         // WebSocketストリーム開始通知
-        socket.emit('start_stream', { language_code: 'ja-JP' });
+        const langConfig = LANGUAGE_CODE_MAP[currentLanguage];
+        socket.emit('start_stream', { language_code: langConfig.stt });
 
         isRecording = true;
         micBtn.classList.add('recording');
         micBtn.innerHTML = '&#9209;';
-        voiceStatus.innerHTML = '&#127908; 話してください...';
+        voiceStatus.innerHTML = t('voiceStatusListening');
         voiceStatus.className = 'voice-status listening';
 
         console.log('[WebSocket STT] ストリーミング録音開始');
@@ -726,13 +940,13 @@ const { apiBaseUrl = '' } = Astro.props;
           if (isRecording) {
             console.log('[Recording] 最大録音時間に達したため自動停止');
             stopStreamingSTT();
-            addMessage('system', '録音時間が上限（55秒）に達したため自動停止しました');
+            addMessage('system', t('recordingTimeLimit'));
           }
         }, MAX_RECORDING_TIME);
 
       } catch (error) {
         console.error('[WebSocket STT] 録音開始エラー:', error);
-        addMessage('system', `マイクアクセスエラー: ${(error as Error).message}`);
+        addMessage('system', `${t('micAccessError')} ${(error as Error).message}`);
       }
     }
 
@@ -808,9 +1022,9 @@ const { apiBaseUrl = '' } = Astro.props;
               clearTimeout(silenceTimer);
               silenceTimer = null;
             }
-            voiceStatus.innerHTML = '&#127908; 録音中...';
+            voiceStatus.innerHTML = t('voiceStatusRecording');
           } else if (hasSpoken && !silenceTimer) {
-            voiceStatus.innerHTML = '&#127908; 認識待機中...';
+            voiceStatus.innerHTML = t('voiceStatusWaiting');
             silenceTimer = window.setTimeout(() => {
               autoStopRecording();
             }, SILENCE_DURATION);
@@ -842,7 +1056,7 @@ const { apiBaseUrl = '' } = Astro.props;
         isRecording = true;
         micBtn.classList.add('recording');
         micBtn.innerHTML = '&#9209;';
-        voiceStatus.innerHTML = '&#127908; 話してください...';
+        voiceStatus.innerHTML = t('voiceStatusListening');
         voiceStatus.className = 'voice-status listening';
 
         recordingTimer = window.setTimeout(() => {
@@ -853,20 +1067,20 @@ const { apiBaseUrl = '' } = Astro.props;
             isRecording = false;
             micBtn.classList.remove('recording');
             micBtn.innerHTML = '&#127908;';
-            addMessage('system', '録音時間が上限（55秒）に達したため自動停止しました');
+            addMessage('system', t('recordingTimeLimit'));
           }
         }, MAX_RECORDING_TIME);
 
       } catch (error) {
         console.error('[Recording] Error:', error);
-        addMessage('system', `マイクアクセスエラー: ${(error as Error).message}`);
+        addMessage('system', `${t('micAccessError')} ${(error as Error).message}`);
       }
     }
 
     // 音声認識
     async function transcribeAudio(audioBlob: Blob) {
       try {
-        voiceStatus.innerHTML = '&#128260; 音声認識中...';
+        voiceStatus.innerHTML = t('voiceStatusRecognizing');
         voiceStatus.className = 'voice-status';
 
         const reader = new FileReader();
@@ -876,12 +1090,13 @@ const { apiBaseUrl = '' } = Astro.props;
           const base64Audio = (reader.result as string).split(',')[1];
 
           // 一時的にバッチSTTに戻す（動作確認用）
+          const langConfig = LANGUAGE_CODE_MAP[currentLanguage];
           const response = await fetch(`${apiBase}/api/stt/transcribe`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               audio: base64Audio,
-              language_code: 'ja-JP'
+              language_code: langConfig.stt
             })
           });
 
@@ -889,7 +1104,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
           if (data.success && data.transcript) {
             userInput.value = data.transcript;
-            voiceStatus.innerHTML = '&#9989; 認識完了';
+            voiceStatus.innerHTML = t('voiceStatusComplete');
             voiceStatus.className = 'voice-status';
 
             // ユーザーメッセージを追加
@@ -932,7 +1147,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
             // 3秒後に追加の応答を再生
             setTimeout(async () => {
-              const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
+              const additionalResponse = t('additionalResponse');
               if (isTTSEnabled && isUserInteracted) {
                 await speakTextGCP(additionalResponse, false);
               }
@@ -945,17 +1160,17 @@ const { apiBaseUrl = '' } = Astro.props;
               sendMessage(); // awaitしない = 並列実行
             }
 
-            voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+            voiceStatus.innerHTML = t('voiceStatusStopped');
             voiceStatus.className = 'voice-status stopped';
           } else {
-            voiceStatus.innerHTML = '音声が認識されませんでした';
+            voiceStatus.innerHTML = t('voiceNotRecognized');
           }
         };
 
       } catch (error) {
         console.error('[STT] Error:', error);
-        addMessage('system', `音声認識エラー: ${(error as Error).message}`);
-        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+        addMessage('system', `${t('sttError')} ${(error as Error).message}`);
+        voiceStatus.innerHTML = t('voiceStatusStopped');
         voiceStatus.className = 'voice-status stopped';
       }
     }
@@ -964,34 +1179,34 @@ const { apiBaseUrl = '' } = Astro.props;
     function selectSmartAcknowledgment(userMessage: string): { text: string, logText: string } {
       const messageLower = userMessage.trim();
 
-      // 質問形式（明確な疑問文）
-      if (/ございますか|でしょうか|いかがですか|ありますか/.test(messageLower)) {
+      // 質問形式（明確な疑問文）- 日本語のみパターンマッチ、他言語はデフォルト
+      if (currentLanguage === 'ja' && /ございますか|でしょうか|いかがですか|ありますか/.test(messageLower)) {
         return {
-          text: "確認しますので、少々お待ちください。",
-          logText: "質問形式 → 「確認しますので、少々お待ちください。」"
+          text: t('ackConfirm'),
+          logText: `質問形式 → 「${t('ackConfirm')}」`
         };
       }
 
       // 場所・エリアの質問
-      if (/どこ|場所|エリア|地域|駅/.test(messageLower)) {
+      if (currentLanguage === 'ja' && /どこ|場所|エリア|地域|駅/.test(messageLower)) {
         return {
-          text: "お調べします。",
-          logText: "場所の質問 → 「お調べします。」"
+          text: t('ackSearch'),
+          logText: `場所の質問 → 「${t('ackSearch')}」`
         };
       }
 
       // 検索・探す
-      if (/探して|探し|教えて|おすすめ|紹介/.test(messageLower)) {
+      if (currentLanguage === 'ja' && /探して|探し|教えて|おすすめ|紹介/.test(messageLower)) {
         return {
-          text: "かしこまりました。",
-          logText: "検索依頼 → 「かしこまりました。」"
+          text: t('ackUnderstood'),
+          logText: `検索依頼 → 「${t('ackUnderstood')}」`
         };
       }
 
       // デフォルト: シンプルな確認
       return {
-        text: "はい、承知しました。",
-        logText: "デフォルト → 「はい、承知しました。」"
+        text: t('ackYes'),
+        logText: `デフォルト → 「${t('ackYes')}」`
       };
     }
 
@@ -1005,7 +1220,7 @@ const { apiBaseUrl = '' } = Astro.props;
       enableAudioPlayback();
       isTTSEnabled = !isTTSEnabled;
       speakerBtn.innerHTML = isTTSEnabled ? '&#128266;' : '&#128263;';
-      speakerBtn.title = isTTSEnabled ? '音声読み上げON' : '音声読み上げOFF';
+      speakerBtn.title = isTTSEnabled ? t('btnTTSOn') : t('btnTTSOff');
       speakerBtn.className = isTTSEnabled ? 'btn btn-icon btn-speaker' : 'btn btn-icon btn-speaker disabled';
 
       if (!isTTSEnabled) {
@@ -1015,7 +1230,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
     // シンプルなオウム返し応答
     function generateFallbackResponse(text: string): string {
-      return `"${text}"とのこと。お調べしますので、少々お待ちください。`;
+      return t('fallbackResponse', text);
     }
 
     // 初期化
@@ -1024,7 +1239,10 @@ const { apiBaseUrl = '' } = Astro.props;
         const response = await fetch(`${apiBase}/api/session/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_info: {} })
+          body: JSON.stringify({
+            user_info: {},
+            language: currentLanguage
+          })
         });
 
         const data = await response.json();
@@ -1035,15 +1253,14 @@ const { apiBaseUrl = '' } = Astro.props;
         // 案1: 即答用音声を事前生成（並列実行）
         console.log('[初期化] 即答用音声を事前生成中...');
         const ackTexts = [
-          "確認しますので、少々お待ちください。",
-          "お調べします。",
-          "かしこまりました。",
-          "はい、承知しました。",
-          "ご希望に合うお店を5件ご紹介します。",
-          "ご希望に合うお店を3件ご紹介します。",
-          "ご希望に合うお店をご紹介します。"
+          t('ackConfirm'),
+          t('ackSearch'),
+          t('ackUnderstood'),
+          t('ackYes'),
+          t('ttsIntro')
         ];
 
+        const langConfig = LANGUAGE_CODE_MAP[currentLanguage];
         const ackPromises = ackTexts.map(async (text) => {
           try {
             const ackResponse = await fetch(`${apiBase}/api/tts/synthesize`, {
@@ -1051,8 +1268,8 @@ const { apiBaseUrl = '' } = Astro.props;
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
                 text: text,
-                language_code: 'ja-JP',
-                voice_name: 'ja-JP-Chirp3-HD-Leda'
+                language_code: langConfig.tts,
+                voice_name: langConfig.voice
               })
             });
             const ackData = await ackResponse.json();
@@ -1082,9 +1299,12 @@ const { apiBaseUrl = '' } = Astro.props;
         // 案2: WebSocket Streaming STT接続を初期化
         initializeWebSocketSTT();
 
+        // UI言語を初期化
+        updateUILanguage();
+
       } catch (error) {
         console.error('初期化エラー:', error);
-        showError('初期化に失敗しました。ページを再読み込みしてください。');
+        showError(t('initError'));
       }
     }
 
@@ -1137,7 +1357,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
         socket.on('error', (data: any) => {
           console.error('[WebSocket STT] エラー:', data.message);
-          addMessage('system', `音声認識エラー: ${data.message}`);
+          addMessage('system', `${t('sttError')} ${data.message}`);
         });
 
       } catch (error) {
@@ -1151,7 +1371,7 @@ const { apiBaseUrl = '' } = Astro.props;
       // まずストリーミングを完全停止
       stopStreamingSTT();
 
-      voiceStatus.innerHTML = '✅ 認識完了';
+      voiceStatus.innerHTML = t('voiceStatusComplete');
       voiceStatus.className = 'voice-status';
 
       // 入力欄に認識結果を設定
@@ -1215,7 +1435,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
           // 5秒後に追加の応答を再生
           setTimeout(async () => {
-            const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
+            const additionalResponse = t('additionalResponse');
             if (isTTSEnabled && isUserInteracted) {
               await speakTextGCP(additionalResponse, false);
             }
@@ -1244,7 +1464,7 @@ const { apiBaseUrl = '' } = Astro.props;
         }
       })();
 
-      voiceStatus.innerHTML = '🎤 音声認識: 停止中';
+      voiceStatus.innerHTML = t('voiceStatusStopped');
       voiceStatus.className = 'voice-status stopped';
     }
 
@@ -1367,7 +1587,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
         // 3秒後に追加の応答を再生
         setTimeout(async () => {
-          const additionalResponse = "只今、お店の情報を確認中です。もう少々お待ちください。";
+          const additionalResponse = t('additionalResponse');
           console.log(`[DEBUG] 追加応答: "${additionalResponse}"`);
           if (isTTSEnabled && isUserInteracted) {
             await speakTextGCP(additionalResponse, false);
@@ -1389,7 +1609,8 @@ const { apiBaseUrl = '' } = Astro.props;
           body: JSON.stringify({
             session_id: sessionId,
             message: message,
-            stage: currentStage
+            stage: currentStage,
+            language: currentLanguage
           })
         });
 
@@ -1430,7 +1651,7 @@ if (data.shops && data.shops.length > 0) {
 (async () => {
   try {
     // パート1：定型文を即座に再生
-    await speakTextGCP(`お待たせしました。`);
+    await speakTextGCP(t('ttsIntro'));
 
     // LLMの応答を解析して定型文と店舗情報を分離
     const lines = data.response.split('\n\n');
@@ -1471,6 +1692,7 @@ if (shopLines.length > 0 && isTTSEnabled && isUserInteracted) {
   const restShops = shopLines.slice(1).join('\n\n');
 
   // ⏩ 1軒目の音声合成を即座に開始（並行処理）
+  const shopLangConfig = LANGUAGE_CODE_MAP[currentLanguage];
   firstShopAudioPromise = (async () => {
     const cleanText = stripMarkdown(firstShop);
     const response = await fetch(`${apiBase}/api/tts/synthesize`, {
@@ -1478,8 +1700,8 @@ if (shopLines.length > 0 && isTTSEnabled && isUserInteracted) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: cleanText,
-        language_code: 'ja-JP',
-        voice_name: 'ja-JP-Chirp3-HD-Leda'
+        language_code: shopLangConfig.tts,
+        voice_name: shopLangConfig.voice
       })
     });
     const result = await response.json();
@@ -1495,8 +1717,8 @@ if (shopLines.length > 0 && isTTSEnabled && isUserInteracted) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: cleanText,
-          language_code: 'ja-JP',
-          voice_name: 'ja-JP-Chirp3-HD-Leda'
+          language_code: shopLangConfig.tts,
+          voice_name: shopLangConfig.voice
         })
       });
       const result = await response.json();
@@ -1522,12 +1744,12 @@ if (firstShopAudioPromise) {
     await new Promise<void>((resolve) => {
       audio.onended = () => {
         currentAudio = null;
-        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+        voiceStatus.innerHTML = t('voiceStatusStopped');
         voiceStatus.className = 'voice-status stopped';
         resolve();
       };
 
-      voiceStatus.innerHTML = '&#128266; 音声再生中...';
+      voiceStatus.innerHTML = t('voiceStatusSpeaking');
       voiceStatus.className = 'voice-status speaking';
 
       audio.play();
@@ -1589,7 +1811,7 @@ if (firstShopAudioPromise) {
 (async () => {
   try {
     // パート1：定型文を即座に再生
-    await speakTextGCP(`お待たせしました。`);
+    await speakTextGCP(t('ttsIntro'));
 
     // LLMの応答を解析して定型文と店舗情報を分離
     const lines = data.response.split('\n\n');
@@ -1630,6 +1852,7 @@ if (shopLines.length > 0 && isTTSEnabled && isUserInteracted) {
   const restShops = shopLines.slice(1).join('\n\n');
 
   // ⏩ 1軒目の音声合成を即座に開始（並行処理）
+  const shopLangConfig = LANGUAGE_CODE_MAP[currentLanguage];
   firstShopAudioPromise = (async () => {
     const cleanText = stripMarkdown(firstShop);
     const response = await fetch(`${apiBase}/api/tts/synthesize`, {
@@ -1637,8 +1860,8 @@ if (shopLines.length > 0 && isTTSEnabled && isUserInteracted) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         text: cleanText,
-        language_code: 'ja-JP',
-        voice_name: 'ja-JP-Chirp3-HD-Leda'
+        language_code: shopLangConfig.tts,
+        voice_name: shopLangConfig.voice
       })
     });
     const result = await response.json();
@@ -1654,8 +1877,8 @@ if (shopLines.length > 0 && isTTSEnabled && isUserInteracted) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           text: cleanText,
-          language_code: 'ja-JP',
-          voice_name: 'ja-JP-Chirp3-HD-Leda'
+          language_code: shopLangConfig.tts,
+          voice_name: shopLangConfig.voice
         })
       });
       const result = await response.json();
@@ -1681,12 +1904,12 @@ if (firstShopAudioPromise) {
     await new Promise<void>((resolve) => {
       audio.onended = () => {
         currentAudio = null;
-        voiceStatus.innerHTML = '&#127908; 音声認識: 停止中';
+        voiceStatus.innerHTML = t('voiceStatusStopped');
         voiceStatus.className = 'voice-status stopped';
         resolve();
       };
 
-      voiceStatus.innerHTML = '&#128266; 音声再生中...';
+      voiceStatus.innerHTML = t('voiceStatusSpeaking');
       voiceStatus.className = 'voice-status speaking';
 
       audio.play();
@@ -1750,7 +1973,7 @@ if (firstShopAudioPromise) {
     // 予約依頼モーダルを開く
     function openReservationModal() {
       if (currentShops.length === 0) {
-        showError('お店を検索してからご利用ください。');
+        showError(t('searchError'));
         return;
       }
 
@@ -1807,7 +2030,7 @@ if (firstShopAudioPromise) {
       contentDiv.innerHTML = `
         <div class="loading"></div>
         <p style="margin-top: 8px; font-size: 13px; color: #6b7280;">
-          提案するお店の情報を探しています。少々お待ちください...
+          ${t('loadingMessage')}
         </p>
       `;
 
@@ -1829,10 +2052,10 @@ if (firstShopAudioPromise) {
       const summaryDiv = document.createElement('div');
       summaryDiv.className = 'final-summary';
       summaryDiv.innerHTML = `
-        <h3>&#128203; 質問要約書</h3>
+        <h3>${t('summaryTitle')}</h3>
         <div class="final-summary-content">${summary}</div>
         <p style="margin-top: 12px; font-size: 12px; color: #6b7280;">
-          担当スタッフが内容を確認し、追ってご連絡いたします。
+          ${t('summaryFooter')}
         </p>
       `;
       chatArea.appendChild(summaryDiv);
