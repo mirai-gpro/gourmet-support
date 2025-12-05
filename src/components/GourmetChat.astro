@@ -441,6 +441,7 @@ const { apiBaseUrl = '' } = Astro.props;
       shopListTitle: 'おすすめのお店',
       shopListEmpty: 'チャットで検索すると、ここにお店が表示されます',
       footerMessage: '素敵なグルメ体験をお楽しみください',
+      initialGreeting: 'こんにちは!グルメサポートAIです。\n\n本日はどのようなお店をお探ししましょうか?',
       voiceStatusStopped: '🎤 音声認識: 停止中',
       voiceStatusListening: '🎤 話してください...',
       voiceStatusRecording: '🎤 録音中...',
@@ -479,6 +480,7 @@ const { apiBaseUrl = '' } = Astro.props;
       shopListTitle: 'Recommended Restaurants',
       shopListEmpty: 'Search in the chat to see restaurants here',
       footerMessage: 'Enjoy your wonderful dining experience',
+      initialGreeting: 'Hello! I\'m the Gourmet Support AI.\n\nWhat kind of restaurant are you looking for today? I can help you find restaurants anywhere in the world.',
       voiceStatusStopped: '🎤 Voice Recognition: Stopped',
       voiceStatusListening: '🎤 Please speak...',
       voiceStatusRecording: '🎤 Recording...',
@@ -517,6 +519,7 @@ const { apiBaseUrl = '' } = Astro.props;
       shopListTitle: '推荐餐厅',
       shopListEmpty: '在聊天中搜索后，餐厅将显示在这里',
       footerMessage: '祝您享受美好的美食体验',
+      initialGreeting: '您好！我是美食支持AI。\n\n今天您想找什么样的餐厅呢？我可以帮您搜索全球各地的餐厅。',
       voiceStatusStopped: '🎤 语音识别: 已停止',
       voiceStatusListening: '🎤 请说话...',
       voiceStatusRecording: '🎤 录音中...',
@@ -555,6 +558,7 @@ const { apiBaseUrl = '' } = Astro.props;
       shopListTitle: '추천 레스토랑',
       shopListEmpty: '채팅에서 검색하면 여기에 레스토랑이 표시됩니다',
       footerMessage: '멋진 미식 경험을 즐기세요',
+      initialGreeting: '안녕하세요! 미식 지원 AI입니다.\n\n오늘은 어떤 음식점을 찾으시나요? 전 세계 어디든 음식점을 검색해 드릴 수 있습니다.',
       voiceStatusStopped: '🎤 음성 인식: 정지됨',
       voiceStatusListening: '🎤 말씀해 주세요...',
       voiceStatusRecording: '🎤 녹음 중...',
@@ -661,6 +665,15 @@ const { apiBaseUrl = '' } = Astro.props;
       if (shopListTitle) shopListTitle.innerHTML = `&#127869; ${t('shopListTitle')}`;
       if (shopListEmpty) shopListEmpty.textContent = t('shopListEmpty');
       if (pageFooter) pageFooter.innerHTML = `${t('footerMessage')} &#10024;`;
+
+      // チャットの最初の挨拶メッセージを更新
+      const initialMessage = chatArea.querySelector('.message.assistant[data-initial="true"]');
+      if (initialMessage) {
+        const messageText = initialMessage.querySelector('.message-text');
+        if (messageText) {
+          messageText.textContent = t('initialGreeting');
+        }
+      }
     }
 
     // 言語選択イベント
@@ -1282,7 +1295,8 @@ const { apiBaseUrl = '' } = Astro.props;
         const data = await response.json();
         sessionId = data.session_id;
 
-        addMessage('assistant', data.initial_message);
+        // ローカルi18nから初期挨拶メッセージを表示（言語切り替え対応）
+        addMessage('assistant', t('initialGreeting'), null, true);
 
         // 案1: 即答用音声を事前生成（並列実行）
         console.log('[初期化] 即答用音声を事前生成中...');
@@ -1318,7 +1332,7 @@ const { apiBaseUrl = '' } = Astro.props;
 
         // 初期メッセージのTTSと並列実行
         await Promise.all([
-          speakTextGCP(data.initial_message),
+          speakTextGCP(t('initialGreeting')),
           ...ackPromises
         ]);
 
@@ -2019,9 +2033,14 @@ if (firstShopAudioPromise) {
     }
 
     // メッセージ追加
-    function addMessage(role: string, content: string, summary: string | null = null) {
+    function addMessage(role: string, content: string, summary: string | null = null, isInitial: boolean = false) {
       const messageDiv = document.createElement('div');
       messageDiv.className = `message ${role}`;
+
+      // 初期メッセージの場合、data-initial属性を追加
+      if (isInitial) {
+        messageDiv.setAttribute('data-initial', 'true');
+      }
 
       const avatar = document.createElement('div');
       avatar.className = 'message-avatar';
@@ -2029,7 +2048,12 @@ if (firstShopAudioPromise) {
 
       const contentDiv = document.createElement('div');
       contentDiv.className = 'message-content';
-      contentDiv.textContent = content;
+
+      // メッセージテキスト用のspan要素を作成
+      const messageText = document.createElement('span');
+      messageText.className = 'message-text';
+      messageText.textContent = content;
+      contentDiv.appendChild(messageText);
 
       messageDiv.appendChild(avatar);
 
