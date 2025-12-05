@@ -141,8 +141,8 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
 <body>
   <div class="page-container">
     <header class="page-header">
-      <h1>&#127869; グルメサポートAI</h1>
-      <p>AIがあなたにぴったりのお店をご提案します</p>
+      <h1 id="pageTitle">&#127869; グルメサポートAI</h1>
+      <p id="pageSubtitle">AIがあなたにぴったりのお店をご提案します</p>
     </header>
 
     <main class="main-content">
@@ -152,14 +152,14 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
 
       <section class="shop-list-section" id="shopListSection">
         <div class="shop-list-header">
-          <h2>&#127869; おすすめのお店</h2>
-          <p>チャットで検索すると、ここにお店が表示されます</p>
+          <h2 id="shopListTitle">&#127869; おすすめのお店</h2>
+          <p id="shopListEmpty">チャットで検索すると、ここにお店が表示されます</p>
         </div>
         <ShopCardList apiBaseUrl={apiBaseUrl} />
       </section>
     </main>
 
-    <footer class="page-footer">
+    <footer class="page-footer" id="pageFooter">
       素敵なグルメ体験をお楽しみください &#10024;
     </footer>
   </div>

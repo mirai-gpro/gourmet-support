@@ -436,6 +436,11 @@ const { apiBaseUrl = '' } = Astro.props;
   // 多言語対応i18nオブジェクト
   const i18n = {
     ja: {
+      pageTitle: 'グルメサポートAI',
+      pageSubtitle: 'AIがあなたにぴったりのお店をご提案します',
+      shopListTitle: 'おすすめのお店',
+      shopListEmpty: 'チャットで検索すると、ここにお店が表示されます',
+      footerMessage: '素敵なグルメ体験をお楽しみください',
       voiceStatusStopped: '🎤 音声認識: 停止中',
       voiceStatusListening: '🎤 話してください...',
       voiceStatusRecording: '🎤 録音中...',
@@ -469,6 +474,11 @@ const { apiBaseUrl = '' } = Astro.props;
       ttsIntro: 'お待たせしました。'
     },
     en: {
+      pageTitle: 'Gourmet Support AI',
+      pageSubtitle: 'AI will suggest the perfect restaurant for you',
+      shopListTitle: 'Recommended Restaurants',
+      shopListEmpty: 'Search in the chat to see restaurants here',
+      footerMessage: 'Enjoy your wonderful dining experience',
       voiceStatusStopped: '🎤 Voice Recognition: Stopped',
       voiceStatusListening: '🎤 Please speak...',
       voiceStatusRecording: '🎤 Recording...',
@@ -502,6 +512,11 @@ const { apiBaseUrl = '' } = Astro.props;
       ttsIntro: 'Thank you for waiting.'
     },
     zh: {
+      pageTitle: '美食支持AI',
+      pageSubtitle: 'AI为您推荐完美的餐厅',
+      shopListTitle: '推荐餐厅',
+      shopListEmpty: '在聊天中搜索后，餐厅将显示在这里',
+      footerMessage: '祝您享受美好的美食体验',
       voiceStatusStopped: '🎤 语音识别: 已停止',
       voiceStatusListening: '🎤 请说话...',
       voiceStatusRecording: '🎤 录音中...',
@@ -535,6 +550,11 @@ const { apiBaseUrl = '' } = Astro.props;
       ttsIntro: '让您久等了。'
     },
     ko: {
+      pageTitle: '미식 지원 AI',
+      pageSubtitle: 'AI가 완벽한 레스토랑을 추천해 드립니다',
+      shopListTitle: '추천 레스토랑',
+      shopListEmpty: '채팅에서 검색하면 여기에 레스토랑이 표시됩니다',
+      footerMessage: '멋진 미식 경험을 즐기세요',
       voiceStatusStopped: '🎤 음성 인식: 정지됨',
       voiceStatusListening: '🎤 말씀해 주세요...',
       voiceStatusRecording: '🎤 녹음 중...',
@@ -621,12 +641,26 @@ const { apiBaseUrl = '' } = Astro.props;
 
     // UI言語を更新
     function updateUILanguage() {
+      // チャットコンポーネント内の要素
       voiceStatus.innerHTML = t('voiceStatusStopped');
       userInput.placeholder = t('inputPlaceholder');
       micBtn.title = t('btnVoiceInput');
       speakerBtn.title = isTTSEnabled ? t('btnTTSOn') : t('btnTTSOff');
       sendBtn.textContent = t('btnSend');
       reservationBtn.innerHTML = t('btnReservation');
+
+      // ページ全体の要素（index.astro内）
+      const pageTitle = document.getElementById('pageTitle');
+      const pageSubtitle = document.getElementById('pageSubtitle');
+      const shopListTitle = document.getElementById('shopListTitle');
+      const shopListEmpty = document.getElementById('shopListEmpty');
+      const pageFooter = document.getElementById('pageFooter');
+
+      if (pageTitle) pageTitle.innerHTML = `&#127869; ${t('pageTitle')}`;
+      if (pageSubtitle) pageSubtitle.textContent = t('pageSubtitle');
+      if (shopListTitle) shopListTitle.innerHTML = `&#127869; ${t('shopListTitle')}`;
+      if (shopListEmpty) shopListEmpty.textContent = t('shopListEmpty');
+      if (pageFooter) pageFooter.innerHTML = `${t('footerMessage')} &#10024;`;
     }
 
     // 言語選択イベント
