@@ -634,7 +634,7 @@ class SupportSession:
         self.collection = db.collection('support_sessions')
         self.doc_ref = self.collection.document(self.session_id)
 
-    def initialize(self, user_info=None):
+    def initialize(self, user_info=None, language='ja'):
         """新規セッション初期化"""
         data = {
             'session_id': self.session_id,
@@ -643,12 +643,13 @@ class SupportSession:
             'messages': [],
             'status': 'active',
             'user_info': user_info or {},
+            'language': language,  # ユーザー言語を保存
             'summary': None,
             'inquiry_summary': None,
             'current_shops': []
         }
         self.doc_ref.set(data)
-        logger.info(f"[Session] 新規作成: {self.session_id}")
+        logger.info(f"[Session] 新規作成: {self.session_id}, 言語: {language}")
         return data
 
     def add_message(self, role, content, message_type='chat'):
@@ -712,17 +713,23 @@ class SupportSession:
         doc = self.doc_ref.get()
         return doc.to_dict() if doc.exists else None
 
+    def get_language(self):
+        """セッション言語を取得"""
+        data = self.get_data()
+        return data.get('language', 'ja') if data else 'ja'
+
 
 class SupportAssistant:
     """サポートアシスタント"""
 
     def __init__(self, session: SupportSession):
         self.session = session
-        self.system_prompt = prompt_manager.get('support_system')
+        self.language = session.get_language()
+        self.system_prompt = prompt_manager.get('support_system', language=self.language)
 
     def get_initial_message(self):
         """初回メッセージ"""
-        return prompt_manager.get('initial_greeting')
+        return prompt_manager.get('initial_greeting', language=self.language)
 
     def is_followup_question(self, user_message, current_shops):
         """深掘り質問かどうかを判定"""
@@ -749,9 +756,9 @@ class SupportAssistant:
         is_followup = self.is_followup_question(user_message, current_shops)
 
         if conversation_stage == 'inquiry':
-            stage_instruction = prompt_manager.get('inquiry_stage_instruction')
+            stage_instruction = prompt_manager.get('inquiry_stage_instruction', language=self.language)
         else:
-            stage_instruction = prompt_manager.get('conversation_stage_instruction')
+            stage_instruction = prompt_manager.get('conversation_stage_instruction', language=self.language)
 
         if is_followup:
             stage_instruction += f"\n\n【現在提案中の店舗情報】\n{self._format_current_shops(current_shops)}\n\nユーザーは上記の店舗について質問しています。店舗情報を参照して回答してください。"
@@ -799,6 +806,7 @@ class SupportAssistant:
 
         summary_prompt = prompt_manager.get(
             'final_summary',
+            language=self.language,
             conversation_text=conversation_text,
             timestamp=datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         )
@@ -881,6 +889,7 @@ class SupportAssistant:
         """会話の要約を生成"""
         summary_prompt = prompt_manager.get(
             'conversation_summary',
+            language=self.language,
             user_message=user_message,
             assistant_response=assistant_response
         )
@@ -922,14 +931,17 @@ def start_session():
     try:
         data = request.json or {}
         user_info = data.get('user_info', {})
+        language = data.get('language', 'ja')  # デフォルトは日本語
 
         session = SupportSession()
-        session.initialize(user_info)
+        session.initialize(user_info, language=language)
 
         assistant = SupportAssistant(session)
         initial_message = assistant.get_initial_message()
 
         session.add_message('assistant', initial_message, 'chat')
+
+        logger.info(f"[API] セッション開始: {session.session_id}, 言語: {language}")
 
         return jsonify({
             'session_id': session.session_id,
