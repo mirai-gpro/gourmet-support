@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Node (Astro frontend)
+node_modules/
+dist/
+.astro/
+
+# Documentation
+README.md
+docs/
+
+# Tests
+tests/
+*.test.py

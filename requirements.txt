@@ -7,3 +7,4 @@ google-cloud-texttospeech
 google-cloud-speech
 requests
 python-dotenv
+gunicorn
