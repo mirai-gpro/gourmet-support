@@ -188,7 +188,7 @@ def search_hotpepper(shop_name: str, area: str = '', geo_info: dict = None) -> s
 # Google Geocoding API 連携
 # ========================================
 
-def get_region_from_area(area: str) -> dict:
+def get_region_from_area(area: str, language: str = 'ja') -> dict:
     """
     Geocoding APIでエリアの地域情報(国、都道府県/州、座標)を取得
     """
@@ -204,7 +204,7 @@ def get_region_from_area(area: str) -> dict:
         params = {
             'address': area,
             'key': GOOGLE_GEOCODING_API_KEY,
-            'language': 'ja'
+            'language': language
         }
 
         logger.info(f"[Geocoding API] エリア検索: {area}")
@@ -263,7 +263,7 @@ def get_region_from_area(area: str) -> dict:
 # Google Places API 連携
 # ========================================
 
-def get_place_phone(place_id: str) -> str:
+def get_place_phone(place_id: str, language: str = 'ja') -> str:
     """
     Place Details APIで電話番号を取得
     """
@@ -276,7 +276,7 @@ def get_place_phone(place_id: str) -> str:
             'place_id': place_id,
             'fields': 'formatted_phone_number,international_phone_number',
             'key': GOOGLE_PLACES_API_KEY,
-            'language': 'ja'
+            'language': language
         }
 
         response = requests.get(details_url, params=params, timeout=10)
@@ -303,7 +303,7 @@ def get_place_phone(place_id: str) -> str:
         return None
 
 
-def search_place(shop_name: str, area: str = '', geo_info: dict = None) -> dict:
+def search_place(shop_name: str, area: str = '', geo_info: dict = None, language: str = 'ja') -> dict:
     """
     Google Places APIで店舗を検索 (改善版)
     """
@@ -325,7 +325,7 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None) -> dict:
         params = {
             'query': query,
             'key': GOOGLE_PLACES_API_KEY,
-            'language': 'ja',
+            'language': language,
             'type': 'restaurant'
         }
 
@@ -381,7 +381,7 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None) -> dict:
         }
 
         # Place Details APIで電話番号を取得
-        phone = get_place_phone(place_id)
+        phone = get_place_phone(place_id, language)
         if phone:
             result['phone'] = phone
 
@@ -396,11 +396,11 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None) -> dict:
         return None
 
 
-def enrich_shops_with_photos(shops: list, area: str = '') -> list:
+def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') -> list:
     """ショップリストにGoogle Places APIのデータを追加"""
     enriched_shops = []
 
-    geo_info = get_region_from_area(area) if area else None
+    geo_info = get_region_from_area(area, language) if area else None
     if geo_info:
         logger.info(f"[Enrich] エリア地域情報: {area} → region={geo_info.get('region')}, country={geo_info.get('country')}, formatted={geo_info.get('formatted_address')}")
 
@@ -410,7 +410,7 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
         if not shop_name:
             continue
 
-        place_data = search_place(shop_name, area, geo_info)
+        place_data = search_place(shop_name, area, geo_info, language)
 
         if not place_data:
             logger.warning(f"[Places API] 店舗が見つからないため除外: {shop_name}")
@@ -568,7 +568,7 @@ def enrich_shops_with_photos(shops: list, area: str = '') -> list:
     return enriched_shops
 
 
-def extract_area_from_text(text: str) -> str:
+def extract_area_from_text(text: str, language: str = 'ja') -> str:
     """
     テキストからエリア名を抽出(Geocoding APIで動的に検証)
     """
@@ -586,7 +586,7 @@ def extract_area_from_text(text: str) -> str:
         match = re.search(pattern, text)
         if match:
             candidate = match.group(1)
-            geo_info = get_region_from_area(candidate)
+            geo_info = get_region_from_area(candidate, language)
             if geo_info and geo_info.get('region'):
                 logger.info(f"[Extract Area] エリア抽出成功: '{candidate}' from '{text}'")
                 return candidate
@@ -717,6 +717,14 @@ class SupportSession:
         """セッション言語を取得"""
         data = self.get_data()
         return data.get('language', 'ja') if data else 'ja'
+
+    def update_language(self, language: str):
+        """セッション言語を更新"""
+        self.doc_ref.update({
+            'language': language,
+            'updated_at': firestore.SERVER_TIMESTAMP
+        })
+        logger.info(f"[Session] 言語更新: {language}")
 
 
 class SupportAssistant:
@@ -964,6 +972,7 @@ def chat():
         session_id = data.get('session_id')
         user_message = data.get('message')
         stage = data.get('stage', 'conversation')
+        language = data.get('language', 'ja')  # 言語パラメータを取得
 
         if not session_id or not user_message:
             return jsonify({'error': 'session_idとmessageが必要です'}), 400
@@ -973,6 +982,12 @@ def chat():
 
         if not session_data:
             return jsonify({'error': 'セッションが見つかりません'}), 404
+
+        # 言語が変更されている場合、セッションを更新
+        current_language = session.get_language()
+        if language != current_language:
+            session.update_language(language)
+            logger.info(f"[Chat] 言語切り替え: {current_language} -> {language}")
 
         session.add_message('user', user_message, 'chat')
 
@@ -991,11 +1006,11 @@ def chat():
 
         if shops and not is_followup:
             original_count = len(shops)
-            area = extract_area_from_text(user_message)
+            area = extract_area_from_text(user_message, language)
             logger.info(f"[Chat] 抽出エリア: '{area}' from '{user_message}'")
 
             # Places APIで写真を取得
-            shops = enrich_shops_with_photos(shops, area)
+            shops = enrich_shops_with_photos(shops, area, language)
 
             if shops:
                 shop_list = []

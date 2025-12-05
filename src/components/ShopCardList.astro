@@ -508,10 +508,12 @@ const { apiBaseUrl = '' } = Astro.props;
 
     // ショップリストを表示
     displayShops(shops: ShopData[], language?: string) {
+      console.log('[ShopCardList] displayShops called with language:', language, 'shops:', shops);
       if (language) {
         this.currentLanguage = language;
+        console.log('[ShopCardList] Language set to:', language);
       }
-      console.log('[ShopCardList] displayShops called with:', shops);
+      console.log('[ShopCardList] Current language:', this.currentLanguage);
       this.container.innerHTML = '';
 
       if (!shops || shops.length === 0) {
