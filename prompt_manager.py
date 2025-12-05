@@ -41,12 +41,7 @@ class PromptManager:
 
     def _initialize(self):
         """初期化処理"""
-        # 優先順位1: ローカルJSONファイル
-        if self._load_from_local_json():
-            logger.info("[PromptManager] ✅ ローカルJSONファイルから読み込み成功")
-            return
-
-        # 優先順位2: GCS（バケット設定時のみ）
+        # 優先順位1: GCS（デプロイ不要で修正可能）
         if self.bucket_name:
             try:
                 self.client = storage.Client()
@@ -58,6 +53,11 @@ class PromptManager:
                     return
             except Exception as e:
                 logger.error(f"[PromptManager] GCS初期化失敗: {e}")
+
+        # 優先順位2: ローカルJSONファイル（GCS障害時のフォールバック）
+        if self._load_from_local_json():
+            logger.info("[PromptManager] ⚠️ ローカルJSONから読み込み（GCS未使用）")
+            return
 
         # 優先順位3: デフォルト（ハードコード）
         logger.warning("[PromptManager] ⚠️ デフォルトプロンプト使用")
@@ -96,7 +96,7 @@ class PromptManager:
 
     def _load_from_gcs(self) -> bool:
         """
-        GCSからプロンプトを読み込み（レガシー互換用）
+        GCSからプロンプトを読み込み（多言語JSON対応 + .txtフォールバック）
 
         Returns:
             読み込み成功したかどうか
@@ -105,8 +105,29 @@ class PromptManager:
             return False
 
         try:
-            # prompts/ ディレクトリ内の .txt ファイルを読み込み
             blobs = list(self.bucket.list_blobs(prefix="prompts/"))
+
+            # 優先順位1: JSONファイルを読み込み（多言語対応）
+            json_loaded = False
+            for lang in ['ja', 'en', 'zh', 'ko']:
+                json_blob_name = f"prompts/{lang}.json"
+                json_blob = self.bucket.blob(json_blob_name)
+
+                if json_blob.exists():
+                    try:
+                        content = json_blob.download_as_text(encoding='utf-8')
+                        self.prompts_cache[lang] = json.loads(content)
+                        json_loaded = True
+                        logger.info(f"[PromptManager] GCS JSON読み込み成功: {lang} ({len(self.prompts_cache[lang])}個のキー)")
+                    except Exception as e:
+                        logger.error(f"[PromptManager] GCS JSON読み込み失敗 ({lang}): {e}")
+
+            if json_loaded:
+                self.last_loaded = datetime.now()
+                return True
+
+            # 優先順位2: .txtファイルを読み込み（後方互換性）
+            logger.info("[PromptManager] JSON未検出、.txtファイルを読み込み")
 
             loaded_count = 0
             if 'ja' not in self.prompts_cache:
@@ -118,11 +139,11 @@ class PromptManager:
                     content = blob.download_as_text(encoding='utf-8')
                     self.prompts_cache['ja'][key] = content
                     loaded_count += 1
-                    logger.debug(f"[PromptManager] GCS読み込み: {key} ({len(content)}文字)")
+                    logger.debug(f"[PromptManager] GCS .txt読み込み: {key} ({len(content)}文字)")
 
             if loaded_count > 0:
                 self.last_loaded = datetime.now()
-                logger.info(f"[PromptManager] GCSから{loaded_count}個のプロンプトを読み込み完了")
+                logger.info(f"[PromptManager] GCSから{loaded_count}個の.txtプロンプトを読み込み完了")
                 return True
 
         except Exception as e:
