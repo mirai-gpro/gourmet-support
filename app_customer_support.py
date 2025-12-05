@@ -217,7 +217,8 @@ def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = 
             params['latLong'] = f"{lat},{lng}"
 
         headers = {
-            'accept': 'application/json'
+            'accept': 'application/json',
+            'Referer': 'https://gourmet-support-6s2ds5mdba-uc.a.run.app'
         }
 
         logger.info(f"[TripAdvisor API] Location Search: {shop_name} ({language})")
@@ -263,7 +264,8 @@ def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
         }
 
         headers = {
-            'accept': 'application/json'
+            'accept': 'application/json',
+            'Referer': 'https://gourmet-support-6s2ds5mdba-uc.a.run.app'
         }
 
         logger.info(f"[TripAdvisor API] Getting details for location: {location_id}")
