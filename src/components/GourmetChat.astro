@@ -1637,7 +1637,7 @@ if (data.shops && data.shops.length > 0) {
 
   // ✅ まずショップカード表示を最優先（TTS前に即座に実行）
   const event = new CustomEvent('displayShops', {
-    detail: { shops: data.shops }
+    detail: { shops: data.shops, language: currentLanguage }
   });
   document.dispatchEvent(event);
 
@@ -1799,7 +1799,7 @@ if (firstShopAudioPromise) {
 
       // ✅ まずショップカード表示を最優先（TTS前に即座に実行）
       const event = new CustomEvent('displayShops', {
-        detail: { shops: extractedShops }
+        detail: { shops: extractedShops, language: currentLanguage }
       });
       document.dispatchEvent(event);
 

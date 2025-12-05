@@ -351,6 +351,12 @@ const { apiBaseUrl = '' } = Astro.props;
     border-color: #fdba74;
   }
 
+  .shop-card-list :global(.link-btn.tripadvisor) {
+    background: linear-gradient(135deg, #34e0a1 0%, #00af87 100%);
+    color: white;
+    box-shadow: 0 4px 12px rgba(0, 175, 135, 0.3);
+  }
+
   .shop-card-list :global(.link-btn-content) {
     display: flex;
     align-items: center;
@@ -383,6 +389,10 @@ const { apiBaseUrl = '' } = Astro.props;
   .shop-card-list :global(.link-btn.tabelog .link-icon) {
     background: #f97316;
     color: white;
+  }
+
+  .shop-card-list :global(.link-btn.tripadvisor .link-icon) {
+    background: rgba(255, 255, 255, 0.2);
   }
 
   .shop-card-list :global(.link-text) {
@@ -479,17 +489,28 @@ const { apiBaseUrl = '' } = Astro.props;
     maps_url?: string;
     tabelog_url?: string;
     gnavi_url?: string;
+    tripadvisor_url?: string;
   }
 
   class ShopCardManager {
     private container: HTMLElement;
+    private currentLanguage: string = 'ja'; // デフォルトは日本語
 
     constructor(containerId: string) {
       this.container = document.getElementById(containerId)!;
     }
 
+    // 言語を設定
+    setLanguage(language: string) {
+      this.currentLanguage = language;
+      console.log('[ShopCardList] Language set to:', language);
+    }
+
     // ショップリストを表示
-    displayShops(shops: ShopData[]) {
+    displayShops(shops: ShopData[], language?: string) {
+      if (language) {
+        this.currentLanguage = language;
+      }
       console.log('[ShopCardList] displayShops called with:', shops);
       this.container.innerHTML = '';
 
@@ -654,82 +675,142 @@ const { apiBaseUrl = '' } = Astro.props;
       `;
     }
 
-    // リンクボタンの生成
+    // リンクボタンの生成（言語別）
     private createLinksHtml(shop: ShopData): string {
       const links: string[] = [];
+      const isJapanese = this.currentLanguage === 'ja';
 
-      // 1. 食べログ
-      if (shop.tabelog_url) {
-        const escapedUrl = shop.tabelog_url.replace(/'/g, "\\'");
-        const isGoogleSearch = shop.tabelog_url.includes('google.com/search');
-        const onclickAttr = isGoogleSearch
-          ? `onclick="return handleTabelogSearch(event, '${escapedUrl}')"`
-          : `onclick="return openLinkPopup(event, '${escapedUrl}')"`;
+      // 日本語: ホットペッパー、食べログ、Google Maps（現行通り）
+      // その他の言語: TripAdvisor、食べログのみ
 
-        links.push(`
-          <a href="${shop.tabelog_url}" target="_blank" rel="noopener noreferrer" class="link-btn tabelog" ${onclickAttr}>
-            <div class="link-btn-content">
-              <div class="link-icon">
-                <svg fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2V6h2V4h-4zm4 0v8h2V6h2V4h-4z"/>
-                </svg>
-              </div>
-              <div class="link-text">
-                <div class="link-title">食べログ</div>
-                <div class="link-subtitle">口コミ・写真</div>
-              </div>
-            </div>
-            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-            </svg>
-          </a>
-        `);
-      }
+      if (isJapanese) {
+        // 日本語版: 従来のリンク構成
+        // 1. 食べログ
+        if (shop.tabelog_url) {
+          const escapedUrl = shop.tabelog_url.replace(/'/g, "\\'");
+          const isGoogleSearch = shop.tabelog_url.includes('google.com/search');
+          const onclickAttr = isGoogleSearch
+            ? `onclick="return handleTabelogSearch(event, '${escapedUrl}')"`
+            : `onclick="return openLinkPopup(event, '${escapedUrl}')"`;
 
-      // 2. ぐるなび
-      if (shop.gnavi_url) {
-        const escapedUrl = shop.gnavi_url.replace(/'/g, "\\'");
-        links.push(`
-          <a href="${shop.gnavi_url}" target="_blank" rel="noopener noreferrer" class="link-btn gnavi" onclick="return openLinkPopup(event, '${escapedUrl}')">
-            <div class="link-btn-content">
-              <div class="link-icon">
-                <svg fill="currentColor" viewBox="0 0 24 24">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
-                </svg>
+          links.push(`
+            <a href="${shop.tabelog_url}" target="_blank" rel="noopener noreferrer" class="link-btn tabelog" ${onclickAttr}>
+              <div class="link-btn-content">
+                <div class="link-icon">
+                  <svg fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2V6h2V4h-4zm4 0v8h2V6h2V4h-4z"/>
+                  </svg>
+                </div>
+                <div class="link-text">
+                  <div class="link-title">食べログ</div>
+                  <div class="link-subtitle">口コミ・写真</div>
+                </div>
               </div>
-              <div class="link-text">
-                <div class="link-title">ぐるなび</div>
-                <div class="link-subtitle">お店情報</div>
-              </div>
-            </div>
-            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-            </svg>
-          </a>
-        `);
-      }
+              <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+              </svg>
+            </a>
+          `);
+        }
 
-      // 3. ホットペッパー
-      if (shop.hotpepper_url) {
-        const escapedUrl = shop.hotpepper_url.replace(/'/g, "\\'");
-        links.push(`
-          <a href="${shop.hotpepper_url}" target="_blank" rel="noopener noreferrer" class="link-btn hotpepper" onclick="return openLinkPopup(event, '${escapedUrl}')">
-            <div class="link-btn-content">
-              <div class="link-icon">
-                <svg fill="currentColor" viewBox="0 0 20 20">
-                  <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
-                </svg>
+        // 2. ぐるなび
+        if (shop.gnavi_url) {
+          const escapedUrl = shop.gnavi_url.replace(/'/g, "\\'");
+          links.push(`
+            <a href="${shop.gnavi_url}" target="_blank" rel="noopener noreferrer" class="link-btn gnavi" onclick="return openLinkPopup(event, '${escapedUrl}')">
+              <div class="link-btn-content">
+                <div class="link-icon">
+                  <svg fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
+                  </svg>
+                </div>
+                <div class="link-text">
+                  <div class="link-title">ぐるなび</div>
+                  <div class="link-subtitle">お店情報</div>
+                </div>
               </div>
-              <div class="link-text">
-                <div class="link-title">ホットペッパー</div>
-                <div class="link-subtitle">予約・クーポン</div>
+              <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+              </svg>
+            </a>
+          `);
+        }
+
+        // 3. ホットペッパー
+        if (shop.hotpepper_url) {
+          const escapedUrl = shop.hotpepper_url.replace(/'/g, "\\'");
+          links.push(`
+            <a href="${shop.hotpepper_url}" target="_blank" rel="noopener noreferrer" class="link-btn hotpepper" onclick="return openLinkPopup(event, '${escapedUrl}')">
+              <div class="link-btn-content">
+                <div class="link-icon">
+                  <svg fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M6 2a1 1 0 00-1 1v1H4a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V6a2 2 0 00-2-2h-1V3a1 1 0 10-2 0v1H7V3a1 1 0 00-1-1zm0 5a1 1 0 000 2h8a1 1 0 100-2H6z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+                <div class="link-text">
+                  <div class="link-title">ホットペッパー</div>
+                  <div class="link-subtitle">予約・クーポン</div>
+                </div>
               </div>
-            </div>
-            <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-            </svg>
-          </a>
-        `);
+              <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+              </svg>
+            </a>
+          `);
+        }
+      } else {
+        // 多言語版: TripAdvisor + 食べログのみ
+        // 1. TripAdvisor
+        if (shop.tripadvisor_url) {
+          const escapedUrl = shop.tripadvisor_url.replace(/'/g, "\\'");
+          links.push(`
+            <a href="${shop.tripadvisor_url}" target="_blank" rel="noopener noreferrer" class="link-btn tripadvisor" onclick="return openLinkPopup(event, '${escapedUrl}')">
+              <div class="link-btn-content">
+                <div class="link-icon">
+                  <svg fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z"/>
+                    <circle cx="12" cy="12" r="3"/>
+                  </svg>
+                </div>
+                <div class="link-text">
+                  <div class="link-title">TripAdvisor</div>
+                  <div class="link-subtitle">Reviews & Photos</div>
+                </div>
+              </div>
+              <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+              </svg>
+            </a>
+          `);
+        }
+
+        // 2. 食べログ（多言語版でも表示）
+        if (shop.tabelog_url) {
+          const escapedUrl = shop.tabelog_url.replace(/'/g, "\\'");
+          const isGoogleSearch = shop.tabelog_url.includes('google.com/search');
+          const onclickAttr = isGoogleSearch
+            ? `onclick="return handleTabelogSearch(event, '${escapedUrl}')"`
+            : `onclick="return openLinkPopup(event, '${escapedUrl}')"`;
+
+          links.push(`
+            <a href="${shop.tabelog_url}" target="_blank" rel="noopener noreferrer" class="link-btn tabelog" ${onclickAttr}>
+              <div class="link-btn-content">
+                <div class="link-icon">
+                  <svg fill="currentColor" viewBox="0 0 24 24">
+                    <path d="M11 9H9V2H7v7H5V2H3v7c0 2.12 1.66 3.84 3.75 3.97V22h2.5v-9.03C11.34 12.84 13 11.12 13 9V2h-2v7zm5-3v8h2V6h2V4h-4zm4 0v8h2V6h2V4h-4z"/>
+                  </svg>
+                </div>
+                <div class="link-text">
+                  <div class="link-title">Tabelog</div>
+                  <div class="link-subtitle">Reviews & Ratings</div>
+                </div>
+              </div>
+              <svg class="link-arrow" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+              </svg>
+            </a>
+          `);
+        }
       }
 
       return links.join('');
@@ -752,7 +833,8 @@ const { apiBaseUrl = '' } = Astro.props;
     // カスタムイベントをリッスン
     document.addEventListener('displayShops', ((event: CustomEvent) => {
       if (event.detail && event.detail.shops) {
-        manager.displayShops(event.detail.shops);
+        const language = event.detail.language || 'ja';
+        manager.displayShops(event.detail.shops, language);
       }
     }) as EventListener);
   });
