@@ -79,7 +79,7 @@ const { apiBaseUrl = '' } = Astro.props;
         </div>
 
         <div class="form-row time-flexibility">
-          <label>&#9201; 時間の許容範囲</label>
+          <label id="timeFlexibilityLabel">&#9201; 時間の許容範囲</label>
           <div class="radio-group">
             <label class="radio-label">
               <input type="radio" name="timeFlexibility" value="exact" checked />
@@ -101,7 +101,7 @@ const { apiBaseUrl = '' } = Astro.props;
         </div>
 
         <div class="form-row">
-          <label>&#129681; 席の希望</label>
+          <label id="seatPreferenceLabel">&#129681; 席の希望</label>
           <div class="checkbox-group">
             <label class="checkbox-label">
               <input type="checkbox" name="seatType" value="table" checked />
@@ -119,7 +119,7 @@ const { apiBaseUrl = '' } = Astro.props;
         </div>
 
         <div class="form-row">
-          <label>&#128221; その他の希望</label>
+          <label id="otherRequestsLabel">&#128221; その他の希望</label>
           <div class="textarea-with-mic">
             <textarea id="otherRequests" placeholder="誕生日ケーキ、アレルギー対応、禁煙席など"></textarea>
             <button type="button" class="mic-btn" id="otherRequestsMic" title="音声入力">
@@ -144,13 +144,13 @@ const { apiBaseUrl = '' } = Astro.props;
 
       <!-- 予約者情報 -->
       <div class="reserver-info">
-        <h3>&#128100; 予約者情報</h3>
+        <h3 id="reserverInfoTitle">&#128100; 予約者情報</h3>
         <div class="form-row">
-          <label>お名前</label>
+          <label id="reserverNameLabel">お名前</label>
           <input type="text" id="reserverName" value="山田太郎" placeholder="予約者のお名前" />
         </div>
         <div class="form-row">
-          <label>&#128241; 携帯番号</label>
+          <label id="reserverPhoneLabel">&#128241; 携帯番号</label>
           <input type="tel" id="reserverPhone" value="09012345678" placeholder="090xxxxxxxx" />
           <p class="field-hint">※ 店舗への連絡先として伝えます</p>
         </div>
@@ -1618,6 +1618,10 @@ const { apiBaseUrl = '' } = Astro.props;
     const selectPlaceholder = document.getElementById('selectPlaceholder');
     if (selectPlaceholder) selectPlaceholder.textContent = t('reservationSelectPlaceholder');
 
+    // 時間の許容範囲ラベル
+    const timeFlexibilityLabel = document.getElementById('timeFlexibilityLabel');
+    if (timeFlexibilityLabel) timeFlexibilityLabel.innerHTML = `&#9201; ${t('reservationTimeFlexibility')}`;
+
     // 時間の許容範囲
     const timeFlexibilityLabels = document.querySelectorAll('.time-flexibility label span');
     if (timeFlexibilityLabels.length >= 4) {
@@ -1626,6 +1630,10 @@ const { apiBaseUrl = '' } = Astro.props;
       (timeFlexibilityLabels[2] as HTMLElement).textContent = t('reservationTimePlus60');
       (timeFlexibilityLabels[3] as HTMLElement).textContent = t('reservationTimePlus90');
     }
+
+    // 席の希望ラベル
+    const seatPreferenceLabel = document.getElementById('seatPreferenceLabel');
+    if (seatPreferenceLabel) seatPreferenceLabel.innerHTML = `&#129681; ${t('reservationSeatPreference')}`;
 
     // 席の希望
     const seatLabels = document.querySelectorAll('label[class="checkbox-label"] span');
@@ -1643,6 +1651,10 @@ const { apiBaseUrl = '' } = Astro.props;
       }
     });
 
+    // その他の希望ラベル
+    const otherRequestsLabel = document.getElementById('otherRequestsLabel');
+    if (otherRequestsLabel) otherRequestsLabel.innerHTML = `&#128221; ${t('reservationOtherRequests')}`;
+
     // その他の希望
     const otherRequestsTextarea = document.getElementById('otherRequests') as HTMLTextAreaElement;
     if (otherRequestsTextarea) {
@@ -1654,6 +1666,18 @@ const { apiBaseUrl = '' } = Astro.props;
     if (perShopBtn && !perShopBtn.classList.contains('active')) {
       perShopBtn.innerHTML = `&#9881; ${t('reservationPerShopBtn')}`;
     }
+
+    // 予約者情報タイトル
+    const reserverInfoTitle = document.getElementById('reserverInfoTitle');
+    if (reserverInfoTitle) reserverInfoTitle.innerHTML = `&#128100; ${t('reservationReserverInfo')}`;
+
+    // お名前ラベル
+    const reserverNameLabel = document.getElementById('reserverNameLabel');
+    if (reserverNameLabel) reserverNameLabel.textContent = t('reservationReserverName');
+
+    // 携帯番号ラベル
+    const reserverPhoneLabel = document.getElementById('reserverPhoneLabel');
+    if (reserverPhoneLabel) reserverPhoneLabel.innerHTML = `&#128241; ${t('reservationReserverPhone')}`;
 
     // 予約者情報
     const reserverName = document.getElementById('reserverName') as HTMLInputElement;
