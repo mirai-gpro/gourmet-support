@@ -1,0 +1,9 @@
+flask
+flask-cors
+flask-socketio
+google-generativeai
+google-cloud-firestore
+google-cloud-texttospeech
+google-cloud-speech
+requests
+python-dotenv

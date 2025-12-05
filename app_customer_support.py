@@ -27,6 +27,10 @@ from google.cloud import speech
 from prompt_manager import PromptManager
 import threading
 import queue
+from dotenv import load_dotenv
+
+# .envファイルを読み込む
+load_dotenv()
 
 # ロギング設定
 logging.basicConfig(
