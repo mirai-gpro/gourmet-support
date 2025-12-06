@@ -511,12 +511,21 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
 
         maps_url = f"https://www.google.com/maps/place/?q=place_id:{place_id}"
 
+        # address_componentsから国コードを取得
+        country_code = None
+        if place.get('address_components'):
+            for component in place['address_components']:
+                if 'country' in component.get('types', []):
+                    country_code = component.get('short_name')
+                    break
+
         result = {
             'place_id': place_id,
             'name': place.get('name'),
             'rating': place.get('rating'),
             'user_ratings_total': place.get('user_ratings_total'),
             'formatted_address': place.get('formatted_address'),
+            'country_code': country_code,
             'photo_url': photo_url,
             'maps_url': maps_url,
             'phone': None  # Place Details APIで取得
@@ -652,18 +661,12 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         if place_data.get('place_id'):
             shop['place_id'] = place_data['place_id']
 
-        # --- 【修正箇所】判定ロジックの改善 ---
-
-        # 店舗の実際の住所から国を判定
-        shop_address = place_data.get('formatted_address', '')
-        is_japan_shop = '日本' in shop_address
+        # 店舗の国コードから判定
+        shop_country_code = place_data.get('country_code')
+        is_japan_shop = (shop_country_code == 'JP')
 
         # TripAdvisorを表示しないのは「日本語 AND 日本国内店舗」の場合のみ
         should_show_tripadvisor = not (language == 'ja' and is_japan_shop)
-
-        logger.info(f"[TripAdvisor判定] shop={shop_name}, language={language}, address={shop_address}, is_japan={is_japan_shop}, show={should_show_tripadvisor}")
-
-        # ------------------------------------
 
         # 日本国内の場合のリンク生成 (ホットペッパー/食べログ/ぐるなび)
         if is_japan_shop:
