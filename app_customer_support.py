@@ -542,9 +542,12 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
     """ショップリストにGoogle Places APIのデータを追加"""
     enriched_shops = []
 
+    logger.info(f"[Enrich] 開始: area='{area}', language={language}, shops={len(shops)}件")
     geo_info = get_region_from_area(area, language) if area else None
     if geo_info:
-        logger.info(f"[Enrich] エリア地域情報: {area} → region={geo_info.get('region')}, country={geo_info.get('country')}, formatted={geo_info.get('formatted_address')}")
+        logger.info(f"[Enrich] エリア地域情報: {area} → region={geo_info.get('region')}, country={geo_info.get('country')}, country_code={geo_info.get('country_code')}, formatted={geo_info.get('formatted_address')}")
+    else:
+        logger.warning(f"[Enrich] エリア地域情報が取得できませんでした: area='{area}'")
 
     for shop in shops:
         shop_name = shop.get('name', '')
@@ -704,18 +707,28 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
             gnavi_query = f"{shop_name}+{area}+ぐるなび".replace(' ', '+')
             shop['gnavi_url'] = f"https://www.google.com/search?q={gnavi_query}"
 
-        # TripAdvisor（日本語以外、または日本語で海外の場合）
-        should_show_tripadvisor = (
-            language != 'ja' or
-            (language == 'ja' and geo_info and geo_info.get('country_code') != 'JP')
-        )
+        # 店舗の実際の住所から国を判定
+        shop_address = place_data.get('formatted_address', '')
+        # 住所に「日本」が含まれていれば国内と判定
+        is_japan_shop = '日本' in shop_address
+
+        # GeoInfoが取れている場合はそちらの判定も考慮（補完）
+        if geo_info and geo_info.get('country_code') == 'JP':
+            is_japan_shop = True
+
+        # TripAdvisor表示条件: 日本語以外、または日本語だが店舗が日本国内ではない
+        should_show_tripadvisor = (language != 'ja') or (language == 'ja' and not is_japan_shop)
+
+        logger.info(f"[TripAdvisor判定] shop={shop_name}, language={language}, is_japan_shop={is_japan_shop}, should_show={should_show_tripadvisor}")
 
         if should_show_tripadvisor:
             lat = place_data.get('lat')
             lng = place_data.get('lng')
 
-            # 国コードに基づいてTripAdvisor言語を決定（GoogleMapの国判定を使用）
+            # 店舗住所とgeo_infoから国を判定してTripAdvisor言語を決定
             tripadvisor_language = 'en'  # デフォルト
+
+            # まずgeo_infoの国コードを確認
             if geo_info:
                 country_code = geo_info.get('country_code', '')
                 if country_code == 'JP':
@@ -725,14 +738,13 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
                 elif country_code in ['CN', 'TW', 'HK']:
                     tripadvisor_language = 'zh'
             else:
-                # geo_infoがない場合は言語パラメータから推測
-                tripadvisor_lang_map = {
-                    'ja': 'ja',
-                    'en': 'en',
-                    'zh': 'zh',
-                    'ko': 'ko'
-                }
-                tripadvisor_language = tripadvisor_lang_map.get(language, 'en')
+                # geo_infoがない場合、店舗住所から国を推測
+                if is_japan_shop:
+                    tripadvisor_language = 'ja'
+                elif '한국' in shop_address or 'Korea' in shop_address:
+                    tripadvisor_language = 'ko'
+                elif '中国' in shop_address or 'China' in shop_address or '台湾' in shop_address or 'Taiwan' in shop_address:
+                    tripadvisor_language = 'zh'
 
             tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, tripadvisor_language)
 
@@ -931,13 +943,12 @@ class SupportAssistant:
         if not current_shops:
             return False
 
+        # フォローアップ質問のパターン（料理名は除外 - 初回検索で誤判定されるため）
         followup_patterns = [
             'この中で', 'これらの中で', 'さっきの', '先ほどの',
             'どれが', 'どこが', 'どの店', '何番目',
-            '予算', '値段', '価格', '安い', '高い',
-            'ピザ', 'パスタ', 'ワイン', 'デザート',
-            'カジュアル', '高級', '個室', 'テラス',
-            '雰囲気', '特徴', 'おすすめ'
+            '予約', '電話番号', '営業時間', 'アクセス',
+            '詳しく', 'もっと', 'について'
         ]
 
         message_lower = user_message.lower()
