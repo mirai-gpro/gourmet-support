@@ -675,8 +675,8 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         # 日本語の場合も国内・海外問わずTripAdvisor表示（食べログ等と併用）
         should_show_tripadvisor = True
 
-        # 日本国内の場合のリンク生成 (ホットペッパー/食べログ/ぐるなび)
-        if is_japan_shop:
+        # 日本国内かつ日本語の場合のリンク生成 (ホットペッパー/食べログ/ぐるなび)
+        if is_japan_shop and language == 'ja':
             # ホットペッパーAPI
             hotpepper_url = search_hotpepper(shop_name, area, geo_info)
             if not hotpepper_url:
