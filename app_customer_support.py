@@ -519,6 +519,12 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
                     country_code = component.get('short_name')
                     break
 
+        # 座標を取得
+        geometry = place.get('geometry', {})
+        location = geometry.get('location', {})
+        lat = location.get('lat')
+        lng = location.get('lng')
+
         result = {
             'place_id': place_id,
             'name': place.get('name'),
@@ -526,6 +532,8 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
             'user_ratings_total': place.get('user_ratings_total'),
             'formatted_address': place.get('formatted_address'),
             'country_code': country_code,
+            'lat': lat,
+            'lng': lng,
             'photo_url': photo_url,
             'maps_url': maps_url,
             'phone': None  # Place Details APIで取得
