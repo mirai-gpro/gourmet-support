@@ -405,18 +405,18 @@ def get_region_from_area(area: str, language: str = 'ja') -> dict:
 # Google Places API 連携
 # ========================================
 
-def get_place_phone(place_id: str, language: str = 'ja') -> str:
+def get_place_details(place_id: str, language: str = 'ja') -> dict:
     """
-    Place Details APIで電話番号を取得
+    Place Details APIで電話番号と国コードを取得
     """
     if not GOOGLE_PLACES_API_KEY or not place_id:
-        return None
+        return {'phone': None, 'country_code': None}
 
     try:
         details_url = 'https://maps.googleapis.com/maps/api/place/details/json'
         params = {
             'place_id': place_id,
-            'fields': 'formatted_phone_number,international_phone_number',
+            'fields': 'formatted_phone_number,international_phone_number,address_components',
             'key': GOOGLE_PLACES_API_KEY,
             'language': language
         }
@@ -426,20 +426,29 @@ def get_place_phone(place_id: str, language: str = 'ja') -> str:
 
         if data.get('status') != 'OK':
             logger.warning(f"[Place Details API] 取得失敗: {data.get('status')} - {place_id}")
-            return None
+            return {'phone': None, 'country_code': None}
 
         result = data.get('result', {})
-        # 国内形式を優先、なければ国際形式
+
+        # 電話番号取得（国内形式を優先、なければ国際形式）
         phone = result.get('formatted_phone_number') or result.get('international_phone_number')
 
-        if phone:
-            logger.info(f"[Place Details API] 電話番号取得: {phone}")
+        # 国コード取得
+        country_code = None
+        if result.get('address_components'):
+            for component in result['address_components']:
+                if 'country' in component.get('types', []):
+                    country_code = component.get('short_name')
+                    break
 
-        return phone
+        if phone:
+            logger.info(f"[Place Details API] 電話番号取得: {phone}, 国コード: {country_code}")
+
+        return {'phone': phone, 'country_code': country_code}
 
     except requests.exceptions.Timeout:
         logger.error(f"[Place Details API] タイムアウト: {place_id}")
-        return None
+        return {'phone': None, 'country_code': None}
     except Exception as e:
         logger.error(f"[Place Details API] エラー: {e}")
         return None
@@ -511,19 +520,14 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
 
         maps_url = f"https://www.google.com/maps/place/?q=place_id:{place_id}"
 
-        # address_componentsから国コードを取得
-        country_code = None
-        if place.get('address_components'):
-            for component in place['address_components']:
-                if 'country' in component.get('types', []):
-                    country_code = component.get('short_name')
-                    break
-
         # 座標を取得
         geometry = place.get('geometry', {})
         location = geometry.get('location', {})
         lat = location.get('lat')
         lng = location.get('lng')
+
+        # Place Details APIで電話番号と国コードを取得
+        details = get_place_details(place_id, language)
 
         result = {
             'place_id': place_id,
@@ -531,18 +535,13 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
             'rating': place.get('rating'),
             'user_ratings_total': place.get('user_ratings_total'),
             'formatted_address': place.get('formatted_address'),
-            'country_code': country_code,
+            'country_code': details.get('country_code'),
             'lat': lat,
             'lng': lng,
             'photo_url': photo_url,
             'maps_url': maps_url,
-            'phone': None  # Place Details APIで取得
+            'phone': details.get('phone')
         }
-
-        # Place Details APIで電話番号を取得
-        phone = get_place_phone(place_id, language)
-        if phone:
-            result['phone'] = phone
 
         logger.info(f"[Places API] 取得成功: {result['name']} (電話: {result['phone']})")
         return result
