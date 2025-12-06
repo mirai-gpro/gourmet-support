@@ -542,9 +542,12 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
     """ショップリストにGoogle Places APIのデータを追加"""
     enriched_shops = []
 
+    logger.info(f"[Enrich] 開始: area='{area}', language={language}, shops={len(shops)}件")
     geo_info = get_region_from_area(area, language) if area else None
     if geo_info:
-        logger.info(f"[Enrich] エリア地域情報: {area} → region={geo_info.get('region')}, country={geo_info.get('country')}, formatted={geo_info.get('formatted_address')}")
+        logger.info(f"[Enrich] エリア地域情報: {area} → region={geo_info.get('region')}, country={geo_info.get('country')}, country_code={geo_info.get('country_code')}, formatted={geo_info.get('formatted_address')}")
+    else:
+        logger.warning(f"[Enrich] エリア地域情報が取得できませんでした: area='{area}'")
 
     for shop in shops:
         shop_name = shop.get('name', '')
@@ -709,6 +712,9 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
             language != 'ja' or
             (language == 'ja' and geo_info and geo_info.get('country_code') != 'JP')
         )
+
+        # デバッグログ
+        logger.info(f"[TripAdvisor判定] shop={shop_name}, language={language}, geo_info={geo_info is not None}, country_code={geo_info.get('country_code') if geo_info else None}, should_show={should_show_tripadvisor}")
 
         if should_show_tripadvisor:
             lat = place_data.get('lat')
