@@ -652,8 +652,28 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         if place_data.get('place_id'):
             shop['place_id'] = place_data['place_id']
 
-        # ホットペッパー・食べログ・ぐるなび（日本のみ）
+        # --- 【修正箇所】判定ロジックの改善 ---
+
+        # 店舗の実際の住所を取得
+        shop_address = place_data.get('formatted_address', '')
+
+        # 住所に「日本」が含まれていれば国内と判定
+        # ※ Places APIは language='ja' の場合、国内住所には必ず「日本」を含みます
+        is_japan_shop = '日本' in shop_address
+
+        # GeoInfoが取れている場合はそちらの判定も考慮（補完）
         if geo_info and geo_info.get('country_code') == 'JP':
+            is_japan_shop = True
+
+        # TripAdvisor表示条件:
+        # 1. 日本語以外
+        # 2. 日本語だが、店舗が日本国内ではない
+        should_show_tripadvisor = (language != 'ja') or (language == 'ja' and not is_japan_shop)
+
+        # ------------------------------------
+
+        # 日本国内の場合のリンク生成 (ホットペッパー/食べログ/ぐるなび)
+        if is_japan_shop:
             # ホットペッパーAPI
             hotpepper_url = search_hotpepper(shop_name, area, geo_info)
             if not hotpepper_url:
@@ -670,81 +690,34 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
 
             # 食べログURL
             places_name = place_data.get('name', '')
-            region = geo_info.get('region', '')
-            pref = region.rstrip('都道府県') if region else '東京'
+            region_name = geo_info.get('region', '') if geo_info else ''
+            pref = region_name.rstrip('都道府県') if region_name else '東京'
 
             pref_code_map = {
-                '東京': 'tokyo',
-                '神奈川': 'kanagawa',
-                '大阪': 'osaka',
-                '愛知': 'aichi',
-                '福岡': 'fukuoka',
-                '北海道': 'hokkaido',
-                '京都': 'kyoto',
-                '兵庫': 'hyogo',
-                '埼玉': 'saitama',
-                '千葉': 'chiba'
+                '東京': 'tokyo', '神奈川': 'kanagawa', '大阪': 'osaka',
+                '愛知': 'aichi', '福岡': 'fukuoka', '北海道': 'hokkaido',
+                '京都': 'kyoto', '兵庫': 'hyogo', '埼玉': 'saitama', '千葉': 'chiba'
             }
             pref_code = pref_code_map.get(pref, 'tokyo')
 
             search_query = requests.utils.quote(places_name if places_name else shop_name)
             tabelog_search_url = f"https://tabelog.com/{pref_code}/rstLst/?sw={search_query}"
-
-            try:
-                headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-                response = requests.get(tabelog_search_url, headers=headers, timeout=5)
-
-                if '該当するお店は見つかりませんでした' in response.text or 'お店は見つかりませんでした' in response.text:
-                    logger.info(f"[Tabelog] 該当なし、Google検索にフォールバック: {shop_name}")
-                    tabelog_query = f"{shop_name}+{area}+食べログ".replace(' ', '+')
-                    shop['tabelog_url'] = f"https://www.google.com/search?q={tabelog_query}"
-                else:
-                    shop['tabelog_url'] = tabelog_search_url
-            except:
-                shop['tabelog_url'] = tabelog_search_url
+            shop['tabelog_url'] = tabelog_search_url
 
             # ぐるなびURL
             gnavi_query = f"{shop_name}+{area}+ぐるなび".replace(' ', '+')
             shop['gnavi_url'] = f"https://www.google.com/search?q={gnavi_query}"
 
-        # 店舗の実際の住所から国を判定
-        shop_address = place_data.get('formatted_address', '')
-        # 住所に「日本」が含まれていれば国内と判定
-        is_japan_shop = '日本' in shop_address
-
-        # GeoInfoが取れている場合はそちらの判定も考慮（補完）
-        if geo_info and geo_info.get('country_code') == 'JP':
-            is_japan_shop = True
-
-        # TripAdvisor表示条件: 日本語以外、または日本語だが店舗が日本国内ではない
-        should_show_tripadvisor = (language != 'ja') or (language == 'ja' and not is_japan_shop)
-
-        logger.info(f"[TripAdvisor判定] shop={shop_name}, language={language}, is_japan_shop={is_japan_shop}, should_show={should_show_tripadvisor}")
-
+        # TripAdvisor (条件を満たす場合)
         if should_show_tripadvisor:
             lat = place_data.get('lat')
             lng = place_data.get('lng')
 
-            # 店舗住所とgeo_infoから国を判定してTripAdvisor言語を決定
-            tripadvisor_language = 'en'  # デフォルト
-
-            # まずgeo_infoの国コードを確認
-            if geo_info:
-                country_code = geo_info.get('country_code', '')
-                if country_code == 'JP':
-                    tripadvisor_language = 'ja'
-                elif country_code == 'KR':
-                    tripadvisor_language = 'ko'
-                elif country_code in ['CN', 'TW', 'HK']:
-                    tripadvisor_language = 'zh'
-            else:
-                # geo_infoがない場合、店舗住所から国を推測
-                if is_japan_shop:
-                    tripadvisor_language = 'ja'
-                elif '한국' in shop_address or 'Korea' in shop_address:
-                    tripadvisor_language = 'ko'
-                elif '中国' in shop_address or 'China' in shop_address or '台湾' in shop_address or 'Taiwan' in shop_address:
-                    tripadvisor_language = 'zh'
+            # TripAdvisor APIの言語コードマッピング
+            tripadvisor_lang_map = {
+                'ja': 'ja', 'en': 'en', 'zh': 'zh', 'ko': 'ko'
+            }
+            tripadvisor_language = tripadvisor_lang_map.get(language, 'en')
 
             tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, tripadvisor_language)
 
