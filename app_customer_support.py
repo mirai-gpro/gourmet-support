@@ -1,4 +1,3 @@
-
 # -*- coding: utf-8 -*-
 """
 汎用カスタマーサポートシステム (Gemini API版) - 改善版
@@ -194,9 +193,6 @@ def search_hotpepper(shop_name: str, area: str = '', geo_info: dict = None) -> s
 # ========================================
 # TripAdvisor Content API 連携
 # ========================================
-# ========================================
-# TripAdvisor Content API 連携 (修正版)
-# ========================================
 def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = None, language: str = 'en') -> dict:
     """
     TripAdvisor Location Search APIで店舗のlocation_idを検索
@@ -295,10 +291,6 @@ def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
         else:
             logger.warning(f"[TripAdvisor API] Details failed: {response.status_code} - {response.text}")
             return None
-
-    except Exception as e:
-        logger.error(f"[TripAdvisor API] Error: {e}")
-        return None
 
     except Exception as e:
         logger.error(f"[TripAdvisor API] Error: {e}")
@@ -553,193 +545,141 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         logger.error(f"[Places API] エラー: {e}")
         return None
 
+# ========================================
+# ショップ情報 拡張ロジック (刷新版)
+# ========================================
 
 def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') -> list:
-    """ショップリストにGoogle Places APIのデータを追加"""
+    """
+    ショップリストに外部APIデータを追加（ロジック刷新版）
+    - 基本: トリップアドバイザーを表示
+    - 例外(日本語かつ日本国内): 国内3サイトを表示し、トリップアドバイザーは非表示
+    """
     enriched_shops = []
-
+    
     logger.info(f"[Enrich] 開始: area='{area}', language={language}, shops={len(shops)}件")
-    geo_info = get_region_from_area(area, language) if area else None
-    if geo_info:
-        logger.info(f"[Enrich] エリア地域情報: {area} → region={geo_info.get('region')}, country={geo_info.get('country')}, country_code={geo_info.get('country_code')}, formatted={geo_info.get('formatted_address')}")
-    else:
-        logger.warning(f"[Enrich] エリア地域情報が取得できませんでした: area='{area}'")
+
+    # Geocodingはあくまで補助情報として取得（失敗しても止まらない）
+    geo_info = None
+    if area:
+        try:
+            geo_info = get_region_from_area(area, language)
+        except Exception as e:
+            logger.error(f"[Enrich] Geocoding Error: {e}")
 
     for shop in shops:
         shop_name = shop.get('name', '')
-
         if not shop_name:
             continue
 
+        # -------------------------------------------------------
+        # 1. Google Places APIで基本情報を取得
+        # -------------------------------------------------------
         place_data = search_place(shop_name, area, geo_info, language)
-
+        
         if not place_data:
-            logger.warning(f"[Places API] 店舗が見つからないため除外: {shop_name}")
+            logger.warning(f"[Enrich] Places APIで見つからないためスキップ: {shop_name}")
             continue
 
-        # エリア検証ロジック
-        if area and geo_info:
-            address = place_data.get('formatted_address', '')
-            address_lower = address.lower()
-            country_code = geo_info.get('country_code', '')
+        # 国コードの取得
+        shop_country = place_data.get('country_code', '')
+        
+        # -------------------------------------------------------
+        # 2. ロジック判定（フラグ設定）
+        # -------------------------------------------------------
+        # デフォルト設定 (基本はTripAdvisorを表示)
+        show_tripadvisor = True
+        show_domestic_sites = False
 
-            # 日本国内の場合
-            if country_code == 'JP':
-                region = geo_info.get('region', '')
-                region_variants = [region]
-                if region and region.endswith(('都', '道', '府', '県')):
-                    region_variants.append(region[:-1])
+        # 【例外ルール】 言語が日本語(ja) かつ 日本国内(JP) の場合
+        if language == 'ja' and shop_country == 'JP':
+            show_tripadvisor = False      # トリップアドバイザーは出さない
+            show_domestic_sites = True    # 国内3サイトを出す
+        
+        # 将来的な拡張（例：台湾・韓国でも食べログを出す場合）
+        # if language == 'ja' and shop_country in ['TW', 'KR']:
+        #     show_domestic_sites = True
+        
+        logger.info(f"[Enrich] 判定結果: {shop_name} (Country: {shop_country}, Lang: {language}) -> TA: {show_tripadvisor}, Domestic: {show_domestic_sites}")
 
-                region_matched = False
-                for variant in region_variants:
-                    if variant in address or variant.lower() in address_lower:
-                        region_matched = True
-                        break
+        # -------------------------------------------------------
+        # 3. データの注入
+        # -------------------------------------------------------
+        # Google Placesの共通データ
+        if place_data.get('photo_url'): shop['image'] = place_data['photo_url']
+        if place_data.get('rating'): shop['rating'] = place_data['rating']
+        if place_data.get('user_ratings_total'): shop['reviewCount'] = place_data['user_ratings_total']
+        if place_data.get('formatted_address'): shop['location'] = place_data['formatted_address']
+        if place_data.get('maps_url'): shop['maps_url'] = place_data['maps_url']
+        if place_data.get('phone'): shop['phone'] = place_data['phone']
+        if place_data.get('place_id'): shop['place_id'] = place_data['place_id']
 
-                if not region_matched:
-                    logger.warning(f"[Places API] (JP) 都道府県不一致のため除外: {shop_name} (住所: {address}, 期待: {region})")
-                    continue
+        # A. 国内3サイトのリンク生成 (例外ルール適用時)
+        if show_domestic_sites:
+            try:
+                # ホットペッパー
+                hotpepper_url = None
+                try:
+                    hotpepper_url = search_hotpepper(shop_name, area, geo_info)
+                    if not hotpepper_url:
+                        # 名前を変えて再トライ
+                        places_name = place_data.get('name', '')
+                        if places_name and places_name != shop_name:
+                            hotpepper_url = search_hotpepper(places_name, area, geo_info)
+                except Exception:
+                    pass
+                
+                shop['hotpepper_url'] = hotpepper_url if hotpepper_url else f"https://www.google.com/search?q={shop_name}+{area}+ホットペッパーグルメ"
 
-            # 海外の場合
-            else:
-                geo_formatted = geo_info.get('formatted_address', '').lower()
-                address_matched = False
+                # 食べログ
+                try:
+                    places_name = place_data.get('name', '')
+                    region_name = geo_info.get('region', '') if geo_info else '東京'
+                    # 都道府県コード変換（簡易版）
+                    pref_code_map = {'東京': 'tokyo', '神奈川': 'kanagawa', '大阪': 'osaka', '京都': 'kyoto', '兵庫': 'hyogo', '北海道': 'hokkaido', '愛知': 'aichi', '福岡': 'fukuoka'}
+                    pref = region_name.rstrip('都道府県') if region_name else '東京'
+                    pref_code = pref_code_map.get(pref, 'tokyo')
+                    
+                    tabelog_search_query = requests.utils.quote(places_name if places_name else shop_name)
+                    shop['tabelog_url'] = f"https://tabelog.com/{pref_code}/rstLst/?sw={tabelog_search_query}"
+                except Exception:
+                    shop['tabelog_url'] = f"https://tabelog.com/tokyo/rstLst/?sw={shop_name}"
 
-                # パターン1: 共通単語チェック
-                geo_words = [w for w in geo_formatted.replace('-', ' ').replace(',', ' ').split() if len(w) >= 3]
-                address_words = [w for w in address_lower.replace('-', ' ').replace(',', ' ').split() if len(w) >= 3]
-                common_words = set(geo_words) & set(address_words)
+                # ぐるなび
+                shop['gnavi_url'] = f"https://www.google.com/search?q={shop_name}+{area}+ぐるなび"
+            
+            except Exception as e:
+                logger.error(f"[Enrich] Domestic Sites Error: {e}")
 
-                if len(common_words) >= 2:
-                    address_matched = True
-                    logger.info(f"[Places API] (Overseas) エリア検証OK(共通単語: {common_words}): {shop_name}")
+        # B. トリップアドバイザーのリンク生成 (デフォルト適用時)
+        if show_tripadvisor:
+            try:
+                lat = place_data.get('lat')
+                lng = place_data.get('lng')
+                
+                if TRIPADVISOR_API_KEY:
+                    # 言語マッピング
+                    tripadvisor_lang_map = {'ja': 'ja', 'en': 'en', 'zh': 'zh', 'ko': 'ko'}
+                    search_lang = tripadvisor_lang_map.get(language, 'en')
+                    
+                    # 検索実行
+                    tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, search_lang)
 
-                # パターン2: 国名コードチェック
-                if not address_matched and country_code:
-                    country_name_map = {
-                        'AE': ['uae', 'emirates', 'united arab emirates'],
-                        'US': ['usa', 'united states', 'america'],
-                        'GB': ['uk', 'united kingdom', 'britain'],
-                        'FR': ['france'],
-                        'IT': ['italy'],
-                        'ES': ['spain'],
-                        'DE': ['germany'],
-                        'JP': ['japan'],
-                    }
+                    # 0件かつ日本語の場合、英語で再トライ（ヒット率向上策）
+                    if not tripadvisor_data and search_lang == 'ja':
+                        logger.info(f"[TripAdvisor] 日本語でヒットせず。英語で再検索: {shop_name}")
+                        tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, 'en')
 
-                    country_names = country_name_map.get(country_code, [])
-                    for country_name in country_names:
-                        if country_name in address_lower or country_name in geo_formatted:
-                            address_matched = True
-                            logger.info(f"[Places API] (Overseas) エリア検証OK(国名一致: {country_name}): {shop_name}")
-                            break
-
-                # パターン3: 座標ベース（Places APIは既に座標で検索済み）
-                if not address_matched and geo_info.get('lat') and geo_info.get('lng'):
-                    address_matched = True
-                    logger.info(f"[Places API] (Overseas) エリア検証OK(座標ベース検索): {shop_name}")
-
-                if not address_matched:
-                    logger.warning(f"[Places API] (Overseas) エリア名不一致のため除外: {shop_name}")
-                    logger.warning(f"  - ユーザー入力: {area}")
-                    logger.warning(f"  - Geocoding結果: {geo_formatted}")
-                    logger.warning(f"  - Places住所: {address}")
-                    continue
-
-        # データを追加
-        if place_data.get('photo_url'):
-            shop['image'] = place_data['photo_url']
-
-        if not shop.get('rating') and place_data.get('rating'):
-            shop['rating'] = place_data['rating']
-
-        if not shop.get('reviewCount') and place_data.get('user_ratings_total'):
-            shop['reviewCount'] = place_data['user_ratings_total']
-
-        if not shop.get('location') and place_data.get('formatted_address'):
-            shop['location'] = place_data['formatted_address']
-
-        if place_data.get('maps_url'):
-            shop['maps_url'] = place_data['maps_url']
-
-        if place_data.get('phone'):
-            shop['phone'] = place_data['phone']
-
-        if place_data.get('place_id'):
-            shop['place_id'] = place_data['place_id']
-
-        # 店舗の国コードから判定
-        shop_country_code = place_data.get('country_code')
-        is_japan_shop = (shop_country_code == 'JP')
-
-        # 日本語の場合も国内・海外問わずTripAdvisor表示（食べログ等と併用）
-        should_show_tripadvisor = True
-
-        # 日本国内の場合のリンク生成 (ホットペッパー/食べログ/ぐるなび)
-        if is_japan_shop:
-            # ホットペッパーAPI
-            hotpepper_url = search_hotpepper(shop_name, area, geo_info)
-            if not hotpepper_url:
-                places_name = place_data.get('name', '')
-                if places_name and places_name != shop_name:
-                    logger.info(f"[Hotpepper API] Places名で再検索: {places_name}")
-                    hotpepper_url = search_hotpepper(places_name, area, geo_info)
-
-            if hotpepper_url:
-                shop['hotpepper_url'] = hotpepper_url
-            else:
-                hp_query = f"{shop_name}+{area}+ホットペッパーグルメ".replace(' ', '+')
-                shop['hotpepper_url'] = f"https://www.google.com/search?q={hp_query}"
-
-            # 食べログURL
-            places_name = place_data.get('name', '')
-            region_name = geo_info.get('region', '') if geo_info else ''
-            pref = region_name.rstrip('都道府県') if region_name else '東京'
-
-            pref_code_map = {
-                '東京': 'tokyo', '神奈川': 'kanagawa', '大阪': 'osaka',
-                '愛知': 'aichi', '福岡': 'fukuoka', '北海道': 'hokkaido',
-                '京都': 'kyoto', '兵庫': 'hyogo', '埼玉': 'saitama', '千葉': 'chiba'
-            }
-            pref_code = pref_code_map.get(pref, 'tokyo')
-
-            search_query = requests.utils.quote(places_name if places_name else shop_name)
-            tabelog_search_url = f"https://tabelog.com/{pref_code}/rstLst/?sw={search_query}"
-            shop['tabelog_url'] = tabelog_search_url
-
-            # ぐるなびURL
-            gnavi_query = f"{shop_name}+{area}+ぐるなび".replace(' ', '+')
-            shop['gnavi_url'] = f"https://www.google.com/search?q={gnavi_query}"
-
-        # TripAdvisor (条件を満たす場合)
-        if should_show_tripadvisor:
-            lat = place_data.get('lat')
-            lng = place_data.get('lng')
-
-            # TripAdvisor APIの言語コードマッピング
-            tripadvisor_lang_map = {
-                'ja': 'ja', 'en': 'en', 'zh': 'zh', 'ko': 'ko'
-            }
-            tripadvisor_language = tripadvisor_lang_map.get(language, 'en')
-
-            tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, tripadvisor_language)
-
-            if not tripadvisor_data:
-                # Places名で再検索
-                places_name = place_data.get('name', '')
-                if places_name and places_name != shop_name:
-                    logger.info(f"[TripAdvisor] Places名で再検索: {places_name}")
-                    tripadvisor_data = get_tripadvisor_data(places_name, lat, lng, tripadvisor_language)
-
-            if tripadvisor_data:
-                shop['tripadvisor_url'] = tripadvisor_data.get('web_url')
-                shop['tripadvisor_rating'] = tripadvisor_data.get('rating')
-                shop['tripadvisor_reviews'] = tripadvisor_data.get('num_reviews')
-                logger.info(f"[TripAdvisor] データ追加: {shop_name}, rating={tripadvisor_data.get('rating')}, reviews={tripadvisor_data.get('num_reviews')}")
+                    if tripadvisor_data:
+                        shop['tripadvisor_url'] = tripadvisor_data.get('web_url')
+                        shop['tripadvisor_rating'] = tripadvisor_data.get('rating')
+                        shop['tripadvisor_reviews'] = tripadvisor_data.get('num_reviews')
+                        logger.info(f"[TripAdvisor] リンク生成成功: {shop_name}")
+            except Exception as e:
+                logger.error(f"[Enrich] TripAdvisor Error: {e}")
 
         enriched_shops.append(shop)
 
-    logger.info(f"[Enrich] {len(shops)}件中{len(enriched_shops)}件が有効")
     return enriched_shops
 
 
