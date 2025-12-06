@@ -654,21 +654,14 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
 
         # --- 【修正箇所】判定ロジックの改善 ---
 
-        # 店舗の実際の住所を取得
+        # 店舗の実際の住所から国を判定
         shop_address = place_data.get('formatted_address', '')
-
-        # 住所に「日本」が含まれていれば国内と判定
-        # ※ Places APIは language='ja' の場合、国内住所には必ず「日本」を含みます
         is_japan_shop = '日本' in shop_address
 
-        # GeoInfoが取れている場合はそちらの判定も考慮（補完）
-        if geo_info and geo_info.get('country_code') == 'JP':
-            is_japan_shop = True
+        # TripAdvisorを表示しないのは「日本語 AND 日本国内店舗」の場合のみ
+        should_show_tripadvisor = not (language == 'ja' and is_japan_shop)
 
-        # TripAdvisor表示条件:
-        # 1. 日本語以外
-        # 2. 日本語だが、店舗が日本国内ではない
-        should_show_tripadvisor = (language != 'ja') or (language == 'ja' and not is_japan_shop)
+        logger.info(f"[TripAdvisor判定] shop={shop_name}, language={language}, address={shop_address}, is_japan={is_japan_shop}, show={should_show_tripadvisor}")
 
         # ------------------------------------
 
