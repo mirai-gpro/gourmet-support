@@ -1,3 +1,4 @@
+
 # -*- coding: utf-8 -*-
 """
 汎用カスタマーサポートシステム (Gemini API版) - 改善版
@@ -27,10 +28,6 @@ from google.cloud import speech
 from prompt_manager import PromptManager
 import threading
 import queue
-from dotenv import load_dotenv
-
-# .envファイルを読み込む
-load_dotenv()
 
 # ロギング設定
 logging.basicConfig(
@@ -105,6 +102,9 @@ HOTPEPPER_API_KEY = os.getenv('HOTPEPPER_API_KEY', 'c22031a566715e40')
 
 # TripAdvisor Content API
 TRIPADVISOR_API_KEY = os.getenv('TRIPADVISOR_API_KEY', '')
+MY_DOMAIN_URL = "https://unfix.co.jp"
+# 【追加】ブラウザのふりをするためのUser-Agent設定 (Bot判定回避用)
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
 
 # Google Custom Search API(食べログ検索用)
 GOOGLE_CSE_API_KEY = os.getenv('GOOGLE_CSE_API_KEY', '')
@@ -194,7 +194,9 @@ def search_hotpepper(shop_name: str, area: str = '', geo_info: dict = None) -> s
 # ========================================
 # TripAdvisor Content API 連携
 # ========================================
-
+# ========================================
+# TripAdvisor Content API 連携 (修正版)
+# ========================================
 def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = None, language: str = 'en') -> dict:
     """
     TripAdvisor Location Search APIで店舗のlocation_idを検索
@@ -216,9 +218,11 @@ def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = 
         if lat is not None and lng is not None:
             params['latLong'] = f"{lat},{lng}"
 
+        # 【修正】Referer (https付き) と User-Agent (ブラウザ偽装) を指定
         headers = {
             'accept': 'application/json',
-            'Referer': 'https://gourmet-support-6s2ds5mdba-uc.a.run.app'
+            'Referer': MY_DOMAIN_URL,
+            'User-Agent': USER_AGENT
         }
 
         logger.info(f"[TripAdvisor API] Location Search: {shop_name} ({language})")
@@ -240,7 +244,7 @@ def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = 
                 logger.info(f"[TripAdvisor API] Location not found for: {shop_name}")
                 return None
         else:
-            logger.warning(f"[TripAdvisor API] Search failed: {response.status_code}")
+            logger.warning(f"[TripAdvisor API] Search failed: {response.status_code} - {response.text}")
             return None
 
     except Exception as e:
@@ -263,9 +267,11 @@ def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
             'language': language
         }
 
+        # 【修正】ここにも User-Agent を追加
         headers = {
             'accept': 'application/json',
-            'Referer': 'https://gourmet-support-6s2ds5mdba-uc.a.run.app'
+            'Referer': MY_DOMAIN_URL,
+            'User-Agent': USER_AGENT
         }
 
         logger.info(f"[TripAdvisor API] Getting details for location: {location_id}")
@@ -287,8 +293,12 @@ def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
                 'location_id': location_id
             }
         else:
-            logger.warning(f"[TripAdvisor API] Details failed: {response.status_code}")
+            logger.warning(f"[TripAdvisor API] Details failed: {response.status_code} - {response.text}")
             return None
+
+    except Exception as e:
+        logger.error(f"[TripAdvisor API] Error: {e}")
+        return None
 
     except Exception as e:
         logger.error(f"[TripAdvisor API] Error: {e}")
@@ -946,12 +956,12 @@ class SupportAssistant:
                     'footer': 'The user is asking about the restaurants listed above. Please refer to the restaurant information when answering.'
                 },
                 'zh': {
-                    'header': '【当前推荐的餐厅信息】',
-                    'footer': '用户正在询问上述餐厅的信息。请参考餐厅信息进行回答。'
+                    'header': '【当前推荐的餐?信息】',
+                    'footer': '用?正在??上述餐?的信息。?参考餐?信息?行回答。'
                 },
                 'ko': {
-                    'header': '【현재 제안 중인 음식점 정보】',
-                    'footer': '사용자가 위 음식점에 대해 질문하고 있습니다. 음식점 정보를 참고하여 답변해 주세요.'
+                    'header': '【?? ?? ?? ??? ??】',
+                    'footer': '???? ? ???? ?? ???? ????. ??? ??? ???? ??? ???.'
                 }
             }
             current_followup_msg = followup_messages.get(self.language, followup_messages['ja'])
@@ -975,8 +985,8 @@ class SupportAssistant:
                     summary_messages = {
                         'ja': lambda count: f"{count}軒のお店を提案しました。",
                         'en': lambda count: f"Suggested {count} restaurants.",
-                        'zh': lambda count: f"推荐了{count}家餐厅。",
-                        'ko': lambda count: f"{count}곳의 음식점을 제안했습니다."
+                        'zh': lambda count: f"推荐了{count}家餐?。",
+                        'ko': lambda count: f"{count}?? ???? ??????."
                     }
                     summary_func = summary_messages.get(self.language, summary_messages['ja'])
                     summary = summary_func(len(parsed_shops))
@@ -1047,18 +1057,18 @@ class SupportAssistant:
                 'features': 'Features'
             },
             'zh': {
-                'description': '说明',
+                'description': '?明',
                 'specialty': '招牌菜',
-                'price': '预算',
-                'atmosphere': '氛围',
+                'price': '?算',
+                'atmosphere': '氛?',
                 'features': '特色'
             },
             'ko': {
-                'description': '설명',
-                'specialty': '대표 메뉴',
-                'price': '예산',
-                'atmosphere': '분위기',
-                'features': '특색'
+                'description': '??',
+                'specialty': '?? ??',
+                'price': '??',
+                'atmosphere': '???',
+                'features': '??'
             }
         }
 
@@ -1121,18 +1131,18 @@ class SupportAssistant:
                 'current': '【Current User Message】'
             },
             'zh': {
-                'system': '系统指示',
-                'history': '对话历史',
-                'user': '用户',
+                'system': '系?指示',
+                'history': '???史',
+                'user': '用?',
                 'assistant': '助手',
-                'current': '【用户的发言】'
+                'current': '【用?的?言】'
             },
             'ko': {
-                'system': '시스템 지시',
-                'history': '대화 기록',
-                'user': '사용자',
-                'assistant': '어시스턴트',
-                'current': '【사용자의 발언】'
+                'system': '??? ??',
+                'history': '?? ??',
+                'user': '???',
+                'assistant': '?????',
+                'current': '【???? ??】'
             }
         }
 
@@ -1176,8 +1186,8 @@ class SupportAssistant:
         role_labels = {
             'ja': {'user': 'ユーザー', 'assistant': 'アシスタント'},
             'en': {'user': 'User', 'assistant': 'Assistant'},
-            'zh': {'user': '用户', 'assistant': '助手'},
-            'ko': {'user': '사용자', 'assistant': '어시스턴트'}
+            'zh': {'user': '用?', 'assistant': '助手'},
+            'ko': {'user': '???', 'assistant': '?????'}
         }
 
         current_role_labels = role_labels.get(self.language, role_labels['ja'])
@@ -1284,12 +1294,12 @@ def chat():
                 'not_found': "Sorry, we couldn't find any restaurants matching your criteria. Would you like to search with different conditions?"
             },
             'zh': {
-                'intro': lambda count: f"为您推荐{count}家餐厅。\n\n",
-                'not_found': "很抱歉，没有找到符合条件的餐厅。您要用其他条件搜索吗？"
+                'intro': lambda count: f"??推荐{count}家餐?。\n\n",
+                'not_found': "很抱歉，没有找到符合条件的餐?。?要用其他条件搜索?？"
             },
             'ko': {
-                'intro': lambda count: f"추천 음식점 {count}곳을 소개해 드립니다.\n\n",
-                'not_found': "죄송합니다. 조건에 맞는 음식점을 찾을 수 없었습니다. 다른 조건으로 찾아보시겠습니까?"
+                'intro': lambda count: f"?? ??? {count}?? ??? ????.\n\n",
+                'not_found': "?????. ??? ?? ???? ?? ? ?????. ?? ???? ?????????"
             }
         }
 
