@@ -672,8 +672,9 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         shop_country_code = place_data.get('country_code')
         is_japan_shop = (shop_country_code == 'JP')
 
-        # 海外店舗の場合はTripAdvisor表示（国内グルメリンクの代わり）
-        should_show_tripadvisor = not is_japan_shop
+        # TripAdvisorを表示しないのは「日本語 AND 日本国内店舗」の場合のみ
+        # (外国語話者には日本国内でもTripAdvisorを表示、国内グルメリンクは不要)
+        should_show_tripadvisor = not (language == 'ja' and is_japan_shop)
 
         # 日本国内の場合のリンク生成 (ホットペッパー/食べログ/ぐるなび)
         if is_japan_shop:
