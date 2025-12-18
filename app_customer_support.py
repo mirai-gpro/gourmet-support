@@ -80,7 +80,16 @@ def after_request(response):
 
 # Gemini API初期化
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-2.0-flash-exp')
+
+# JSON出力を強制する設定
+generation_config = {
+    "response_mime_type": "application/json"
+}
+
+model = genai.GenerativeModel(
+    'gemini-2.0-flash-exp',
+    generation_config=generation_config
+)
 
 # Firestore初期化
 db = firestore.Client()
