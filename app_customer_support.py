@@ -959,9 +959,15 @@ class SupportAssistant:
 
         prompt = self._build_prompt(history, user_message, stage_instruction)
 
+        # デバッグ: 実際のプロンプトをログ出力
+        logger.info(f"[Debug] Geminiに送信するプロンプト:\n{prompt}\n{'='*80}")
+
         try:
             response = model.generate_content(prompt)
             assistant_text = response.text
+
+            # デバッグ: Geminiからのレスポンスをログ出力
+            logger.info(f"[Debug] Geminiからのレスポンス:\n{assistant_text}\n{'='*80}")
 
             parsed_message, parsed_shops = self._parse_json_response(assistant_text)
 
