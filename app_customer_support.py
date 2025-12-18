@@ -761,7 +761,8 @@ class SupportSession:
             'language': language,  # ユーザー言語を保存
             'summary': None,
             'inquiry_summary': None,
-            'current_shops': []
+            'current_shops': [],
+            'has_datetime_info': False  # 日時情報フラグ
         }
         self.doc_ref.set(data)
         logger.info(f"[Session] 新規作成: {self.session_id}, 言語: {language}")
@@ -841,6 +842,19 @@ class SupportSession:
         })
         logger.info(f"[Session] 言語更新: {language}")
 
+    def get_datetime_info(self):
+        """日時情報フラグを取得"""
+        data = self.get_data()
+        return data.get('has_datetime_info', False) if data else False
+
+    def set_datetime_info(self, has_datetime: bool):
+        """日時情報フラグを設定"""
+        self.doc_ref.update({
+            'has_datetime_info': has_datetime,
+            'updated_at': firestore.SERVER_TIMESTAMP
+        })
+        logger.info(f"[Session] 日時情報フラグ設定: {has_datetime}")
+
 
 class SupportAssistant:
     """サポートアシスタント"""
@@ -855,25 +869,53 @@ class SupportAssistant:
         return prompt_manager.get('initial_greeting', language=self.language)
 
     def is_followup_question(self, user_message, current_shops):
-        """深掘り質問かどうかを判定"""
+        """
+        深掘り質問かどうかを判定（新ロジック）
+        - 店舗案内後は、デフォルトで深掘り質問と判定
+        - 「他で」キーワードがある場合のみ、新規検索と判定
+        """
         if not current_shops:
+            # 店舗情報がない場合は新規検索
             return False
 
-        # フォローアップ質問のパターン（料理名は除外 - 初回検索で誤判定されるため）
-        followup_patterns = [
-            'この中で', 'これらの中で', 'さっきの', '先ほどの',
-            'どれが', 'どこが', 'どの店', '何番目',
-            '予約', '電話番号', '営業時間', 'アクセス',
-            '詳しく', 'もっと', 'について'
-        ]
-
+        # 「他で」キーワードがある場合は新規検索
+        new_search_patterns = ['他で', 'ほかで', '別で', '別の店', '他の店', '違う店']
         message_lower = user_message.lower()
-        return any(pattern in message_lower for pattern in followup_patterns)
+
+        if any(pattern in message_lower for pattern in new_search_patterns):
+            logger.info(f"[Followup] 新規検索と判定: '{user_message}'")
+            return False
+
+        # それ以外は全て深掘り質問
+        logger.info(f"[Followup] 深掘り質問と判定: '{user_message}'")
+        return True
+
+    def detect_datetime_in_message(self, message: str) -> bool:
+        """メッセージ内の日時情報を検出"""
+        datetime_keywords = [
+            '明日', '今日', '今週', '来週', '週末', '土曜', '日曜',
+            '月', '火', '水', '木', '金',
+            '時', 'ランチ', 'ディナー', '朝', '昼', '夜', '夕方',
+            '予約', 'reservation', 'booking'
+        ]
+        message_lower = message.lower()
+        has_datetime = any(keyword in message_lower for keyword in datetime_keywords)
+        logger.info(f"[DateTime Detection] '{message}' → {has_datetime}")
+        return has_datetime
 
     def process_user_message(self, user_message, conversation_stage='conversation'):
         """ユーザーメッセージを処理"""
         history = self.session.get_messages(include_types=['chat', 'summary'])
         current_shops = self.session.get_current_shops()
+
+        # 最初のメッセージの場合、日時情報を検出して保存
+        if len(history) == 0:  # 初回メッセージ
+            has_datetime = self.detect_datetime_in_message(user_message)
+            if has_datetime:
+                self.session.set_datetime_info(True)
+
+        # 日時情報フラグを取得
+        has_datetime_info = self.session.get_datetime_info()
 
         is_followup = self.is_followup_question(user_message, current_shops)
 
@@ -881,6 +923,16 @@ class SupportAssistant:
             stage_instruction = prompt_manager.get('inquiry_stage_instruction', language=self.language)
         else:
             stage_instruction = prompt_manager.get('conversation_stage_instruction', language=self.language)
+
+        # 日時情報フラグをプロンプトに追加
+        if has_datetime_info:
+            datetime_notice = {
+                'ja': '\n\n【重要】セッションに日時情報が保存されています。必ず予約案内（パートC）を締め文の後に追加してください。',
+                'en': '\n\n【IMPORTANT】Date/time information is saved in the session. You MUST add the reservation notice (Part C) after the closing statement.',
+                'zh': '\n\n【重要】会话中保存了日期/时间信息。必须在结束语之后添加预订通知（C部分）。',
+                'ko': '\n\n【중요】세션에 날짜/시간 정보가 저장되어 있습니다. 반드시 마무리 문구 다음에 예약 안내(C 파트)를 추가하세요.'
+            }
+            stage_instruction += datetime_notice.get(self.language, datetime_notice['ja'])
 
         if is_followup:
             # 深掘り質問用の多言語メッセージ
