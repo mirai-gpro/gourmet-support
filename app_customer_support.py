@@ -1383,6 +1383,38 @@ def finalize_session():
         return jsonify({'error': str(e)}), 500
 
 
+@app.route('/api/cancel', methods=['POST', 'OPTIONS'])
+def cancel_session():
+    """セッションをキャンセル"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        data = request.json
+        session_id = data.get('session_id')
+
+        if not session_id:
+            return jsonify({'error': 'session_idが必要です'}), 400
+
+        session = SupportSession(session_id)
+        session_data = session.get_data()
+
+        if not session_data:
+            return jsonify({'error': 'セッションが見つかりません'}), 404
+
+        # セッションをキャンセル状態に更新
+        session.update_status('cancelled')
+
+        return jsonify({
+            'message': 'セッションをキャンセルしました',
+            'session_id': session_id
+        })
+
+    except Exception as e:
+        logger.error(f"[API] キャンセルエラー: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/tts/synthesize', methods=['POST', 'OPTIONS'])
 def synthesize_speech():
     """音声合成"""
