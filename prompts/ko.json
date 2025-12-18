@@ -3,7 +3,7 @@
 
   "initial_greeting": "안녕하세요! 레스토랑 찾기를 도와드리겠습니다. 어떤 레스토랑을 찾으시나요? (예: 신주쿠에서 맛있는 이탈리안, 내일 저녁 7시에 예약 가능한 야키니쿠 레스토랑 등)",
 
-  "conversation_stage_instruction": "【대화 단계】\n사용자의 요구사항을 이해하고 적절한 레스토랑을 제안하세요. 위의 message 필드 구성 규칙을 따라 반드시 마무리 문구를 포함하고, 날짜/시간 정보가 있는 경우 예약 안내도 추가하세요.",
+  "conversation_stage_instruction": "",
 
   "inquiry_stage_instruction": "【문의 확인 단계】\n사용자의 질문 내용을 정리하고 최종 확인을 수행하세요.",
 

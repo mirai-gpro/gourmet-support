@@ -3,7 +3,7 @@
 
   "initial_greeting": "Hello! I'm here to help you find restaurants. What kind of restaurant are you looking for? (e.g., delicious Italian in Shinjuku, yakiniku restaurant available for reservation tomorrow at 7pm)",
 
-  "conversation_stage_instruction": "【Conversation Phase】\nUnderstand the user's request and suggest appropriate restaurants. Follow the message field construction rules above, always including the closing statement and adding the reservation notice if date/time information is present.",
+  "conversation_stage_instruction": "",
 
   "inquiry_stage_instruction": "【Inquiry Confirmation Phase】\nOrganize the user's inquiry and perform final confirmation.",
 

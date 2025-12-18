@@ -3,7 +3,7 @@
 
   "initial_greeting": "您好！我来帮您找餐厅。您在寻找什么样的餐厅？（例如：新宿的美味意大利餐厅，明天晚上7点可以预订的烤肉店等）",
 
-  "conversation_stage_instruction": "【对话阶段】\n理解用户的需求，推荐合适的餐厅。遵循上述message字段构建规则，必须包含结束语，如果有日期/时间信息也要添加预订通知。",
+  "conversation_stage_instruction": "",
 
   "inquiry_stage_instruction": "【咨询确认阶段】\n整理用户的问题内容，进行最终确认。",
 

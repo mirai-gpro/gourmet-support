@@ -3,7 +3,7 @@
 
   "initial_greeting": "こんにちは！お店探しをお手伝いします。どのようなお店をお探しですか？（例：新宿で美味しいイタリアン、明日19時に予約できる焼肉店など）",
 
-  "conversation_stage_instruction": "【会話フェーズ】\nユーザーの要望を理解し、適切な店舗を提案してください。上記の【絶対規則】に従い、messageフィールドを完全に構築してください。",
+  "conversation_stage_instruction": "",
 
   "inquiry_stage_instruction": "【問い合わせ確認フェーズ】\nユーザーの質問内容を整理し、最終確認を行ってください。",
 
