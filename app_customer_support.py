@@ -1039,12 +1039,12 @@ class SupportAssistant:
             assistant_text = response.text
 
             parsed_message, parsed_shops = self._parse_json_response(assistant_text)
-            logger.info(f"[実行確認] JSON Parse後、締め文追加前: message={len(parsed_message)}文字")
+            logger.info(f"[DEBUG] After JSON parse, message length: {len(parsed_message)}")
 
             # 締め文を強制的に追加（最重要）
-            logger.info("[実行確認] _ensure_closing_statement()を呼び出します")
+            logger.info("[DEBUG] About to call ensure_closing_statement")
             parsed_message = self._ensure_closing_statement(parsed_message, user_message)
-            logger.info(f"[実行確認] _ensure_closing_statement()完了: message={len(parsed_message)}文字")
+            logger.info(f"[DEBUG] After ensure_closing_statement, message length: {len(parsed_message)}")
 
             if parsed_shops:
                 self.session.save_current_shops(parsed_shops)
@@ -1160,7 +1160,7 @@ class SupportAssistant:
 
     def _ensure_closing_statement(self, message: str, user_message: str) -> str:
         """締め文と電話対応案内を強制的に追加（最重要）"""
-        logger.info(f"[締め文] 関数開始 - message長={len(message)}, user_message長={len(user_message)}")
+        logger.info(f"[DEBUG-CLOSING] Function start - message len={len(message)}, user_message len={len(user_message)}")
 
         # 日本語の締め文
         closing_base = "ご案内したお店についてのご質問はお気軽にどうぞ。別の条件でお探しの場合は「他で○○」のようにお伝えください。"
@@ -1174,21 +1174,21 @@ class SupportAssistant:
             '月', '日'
         ]
         has_datetime = any(keyword in user_message for keyword in datetime_keywords)
-        logger.info(f"[締め文] 日時ワード検出={has_datetime}")
+        logger.info(f"[DEBUG-CLOSING] Datetime detected={has_datetime}")
 
         # 締め文が含まれているかチェック
         if "ご案内したお店についてのご質問" not in message:
-            logger.info("[締め文] 締め文が含まれていないため追加")
+            logger.info("[DEBUG-CLOSING] Adding closing statement")
             message = message.rstrip() + "\n\n" + closing_base
         else:
-            logger.info("[締め文] 締め文は既に含まれています")
+            logger.info("[DEBUG-CLOSING] Closing statement already exists")
 
         # 日時ワードがある場合、電話対応案内を追加
         if has_datetime and "電話で確認" not in message:
-            logger.info("[締め文] 日時ワードを検出、電話対応案内を追加")
+            logger.info("[DEBUG-CLOSING] Adding phone offer")
             message = message.rstrip() + phone_offer
 
-        logger.info(f"[締め文] 関数終了 - 最終message長={len(message)}")
+        logger.info(f"[DEBUG-CLOSING] Function end - final message len={len(message)}")
         return message
 
     def _parse_json_response(self, text: str) -> tuple:
