@@ -1001,6 +1001,7 @@ class SupportAssistant:
 
     def process_user_message(self, user_message, conversation_stage='conversation'):
         """ユーザーメッセージを処理"""
+        logger.info(f"[TRACE-START] process_user_message called with message: {user_message[:50]}")
         history = self.session.get_messages(include_types=['chat', 'summary'])
         current_shops = self.session.get_current_shops()
 
@@ -1033,6 +1034,7 @@ class SupportAssistant:
             stage_instruction += f"\n\n{current_followup_msg['header']}\n{self._format_current_shops(current_shops)}\n\n{current_followup_msg['footer']}"
 
         prompt = self._build_prompt(history, user_message, stage_instruction)
+        logger.info("[TRACE-API] About to call Gemini API")
 
         try:
             response = model.generate_content(prompt)
