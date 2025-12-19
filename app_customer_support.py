@@ -1041,11 +1041,12 @@ class SupportAssistant:
             assistant_text = response.text
 
             parsed_message, parsed_shops = self._parse_json_response(assistant_text)
+            logger.info(f"[DEBUG] After JSON parse, message length: {len(parsed_message)}")
 
-            # 締め文を直接追加（関数を使わずテスト）
-            closing_base = "\n\nご案内したお店についてのご質問はお気軽にどうぞ。別の条件でお探しの場合は「他で○○」のようにお伝えください。"
-            parsed_message = parsed_message + closing_base
-            logger.info(f"[CLOSING-FORCED] Added closing statement, new length: {len(parsed_message)}")
+            # 締め文を強制的に追加（最重要）
+            logger.info("[DEBUG] About to call ensure_closing_statement")
+            parsed_message = self._ensure_closing_statement(parsed_message, user_message)
+            logger.info(f"[DEBUG] After ensure_closing_statement, message length: {len(parsed_message)}")
 
             if parsed_shops:
                 self.session.save_current_shops(parsed_shops)
