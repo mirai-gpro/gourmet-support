@@ -740,6 +740,11 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         # A. 国内3サイトのリンク生成 (例外ルール適用時)
         if show_domestic_sites:
             try:
+                # TripAdvisorフィールドを明示的に削除
+                shop.pop('tripadvisor_url', None)
+                shop.pop('tripadvisor_rating', None)
+                shop.pop('tripadvisor_reviews', None)
+
                 # ホットペッパー
                 hotpepper_url = None
                 try:
@@ -751,7 +756,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
                             hotpepper_url = search_hotpepper(places_name, area, geo_info)
                 except Exception:
                     pass
-                
+
                 shop['hotpepper_url'] = hotpepper_url if hotpepper_url else f"https://www.google.com/search?q={shop_name}+{area}+ホットペッパーグルメ"
 
                 # 食べログ
@@ -762,7 +767,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
                     pref_code_map = {'東京': 'tokyo', '神奈川': 'kanagawa', '大阪': 'osaka', '京都': 'kyoto', '兵庫': 'hyogo', '北海道': 'hokkaido', '愛知': 'aichi', '福岡': 'fukuoka'}
                     pref = region_name.rstrip('都道府県') if region_name else '東京'
                     pref_code = pref_code_map.get(pref, 'tokyo')
-                    
+
                     tabelog_search_query = requests.utils.quote(places_name if places_name else shop_name)
                     shop['tabelog_url'] = f"https://tabelog.com/{pref_code}/rstLst/?sw={tabelog_search_query}"
                 except Exception:
@@ -770,7 +775,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
 
                 # ぐるなび
                 shop['gnavi_url'] = f"https://www.google.com/search?q={shop_name}+{area}+ぐるなび"
-            
+
             except Exception as e:
                 logger.error(f"[Enrich] Domestic Sites Error: {e}")
 
