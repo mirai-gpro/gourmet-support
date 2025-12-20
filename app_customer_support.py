@@ -1001,7 +1001,6 @@ class SupportAssistant:
 
     def process_user_message(self, user_message, conversation_stage='conversation'):
         """ユーザーメッセージを処理"""
-        logger.info(f"[TRACE-START] process_user_message called with message: {user_message[:50]}")
         history = self.session.get_messages(include_types=['chat', 'summary'])
         current_shops = self.session.get_current_shops()
 
@@ -1034,19 +1033,12 @@ class SupportAssistant:
             stage_instruction += f"\n\n{current_followup_msg['header']}\n{self._format_current_shops(current_shops)}\n\n{current_followup_msg['footer']}"
 
         prompt = self._build_prompt(history, user_message, stage_instruction)
-        logger.info("[TRACE-API] About to call Gemini API")
 
         try:
             response = model.generate_content(prompt)
             assistant_text = response.text
 
             parsed_message, parsed_shops = self._parse_json_response(assistant_text)
-            logger.info(f"[DEBUG] After JSON parse, message length: {len(parsed_message)}")
-
-            # 締め文を強制的に追加（最重要）
-            logger.info("[DEBUG] About to call ensure_closing_statement")
-            parsed_message = self._ensure_closing_statement(parsed_message, user_message)
-            logger.info(f"[DEBUG] After ensure_closing_statement, message length: {len(parsed_message)}")
 
             if parsed_shops:
                 self.session.save_current_shops(parsed_shops)
@@ -1159,39 +1151,6 @@ class SupportAssistant:
                 lines.append(f"   - {current_shop_labels['features']}: {shop.get('features')}")
             lines.append("")
         return "\n".join(lines)
-
-    def _ensure_closing_statement(self, message: str, user_message: str) -> str:
-        """締め文と電話対応案内を強制的に追加（最重要）"""
-        logger.info(f"[DEBUG-CLOSING] Function start - message len={len(message)}, user_message len={len(user_message)}")
-
-        # 日本語の締め文
-        closing_base = "ご案内したお店についてのご質問はお気軽にどうぞ。別の条件でお探しの場合は「他で○○」のようにお伝えください。"
-        phone_offer = "\n\nなお、ご希望の日時での予約状況については、私が直接お店に電話で確認することもできます。ご希望でしたらお申し付けください。"
-
-        # 日時ワードの判定
-        datetime_keywords = [
-            '明日', '今日', '今夜', 'あさって', '今週末', '来週', '週末',
-            '時', 'ランチ', 'ディナー', '昼', '夜', '朝',
-            '今から', 'これから', '午前', '午後', '夕方', '深夜',
-            '月', '日'
-        ]
-        has_datetime = any(keyword in user_message for keyword in datetime_keywords)
-        logger.info(f"[DEBUG-CLOSING] Datetime detected={has_datetime}")
-
-        # 締め文が含まれているかチェック
-        if "ご案内したお店についてのご質問" not in message:
-            logger.info("[DEBUG-CLOSING] Adding closing statement")
-            message = message.rstrip() + "\n\n" + closing_base
-        else:
-            logger.info("[DEBUG-CLOSING] Closing statement already exists")
-
-        # 日時ワードがある場合、電話対応案内を追加
-        if has_datetime and "電話で確認" not in message:
-            logger.info("[DEBUG-CLOSING] Adding phone offer")
-            message = message.rstrip() + phone_offer
-
-        logger.info(f"[DEBUG-CLOSING] Function end - final message len={len(message)}")
-        return message
 
     def _parse_json_response(self, text: str) -> tuple:
         """JSONレスポンスをパース"""
