@@ -5,7 +5,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files (NO prompt_manager.py!)
+# Copy application files
 COPY app_customer_support.py .
 COPY templates/ templates/
 COPY prompts/ prompts/
