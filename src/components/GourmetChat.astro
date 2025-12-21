@@ -428,6 +428,7 @@ const { apiBaseUrl = '' } = Astro.props;
     let isUserInteracted = false;
     let currentShops: any[] = []; // 現在表示中のショップリスト
     let isFromVoiceInput = false; // 音声入力からの送信かどうかを追跡
+    let currentLanguage: string = 'ja'; // 現在の言語（デフォルト：日本語）
 
     // 事前生成音声（案1: 高速応答用）
     let preGeneratedAcks: Map<string, string> = new Map(); // key: テキスト, value: base64 MP3
@@ -1023,13 +1024,34 @@ const { apiBaseUrl = '' } = Astro.props;
       return `"${text}"とのこと。お調べしますので、少々お待ちください。`;
     }
 
+    // ブラウザの言語設定から言語を検出
+    function detectLanguage(): string {
+      const browserLang = navigator.language || (navigator as any).userLanguage;
+
+      // 言語コードを2文字に正規化
+      if (browserLang.startsWith('ja')) return 'ja';
+      if (browserLang.startsWith('en')) return 'en';
+      if (browserLang.startsWith('zh')) return 'zh';
+      if (browserLang.startsWith('ko')) return 'ko';
+
+      // デフォルトは日本語
+      return 'ja';
+    }
+
     // 初期化
     async function initialize() {
+      // 言語を検出
+      currentLanguage = detectLanguage();
+      console.log('[Init] Detected language:', currentLanguage);
+
       try {
         const response = await fetch(`${apiBase}/api/session/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ user_info: {} })
+          body: JSON.stringify({
+            user_info: {},
+            language: currentLanguage
+          })
         });
 
         const data = await response.json();
@@ -1394,7 +1416,8 @@ const { apiBaseUrl = '' } = Astro.props;
           body: JSON.stringify({
             session_id: sessionId,
             message: message,
-            stage: currentStage
+            stage: currentStage,
+            language: currentLanguage
           })
         });
 
@@ -1421,7 +1444,7 @@ if (data.shops && data.shops.length > 0) {
 
   // $2705 まずショップカード表示を最優先(TTS前に即座に実行)
   const event = new CustomEvent('displayShops', {
-    detail: { shops: data.shops }
+    detail: { shops: data.shops, language: currentLanguage }
   });
   document.dispatchEvent(event);
 
@@ -1582,7 +1605,7 @@ if (firstShopAudioPromise) {
 
       // $2705 まずショップカード表示を最優先(TTS前に即座に実行)
       const event = new CustomEvent('displayShops', {
-        detail: { shops: extractedShops }
+        detail: { shops: extractedShops, language: currentLanguage }
       });
       document.dispatchEvent(event);
 
