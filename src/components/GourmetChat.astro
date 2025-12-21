@@ -1784,7 +1784,7 @@ if (firstShopAudioPromise) {
 
       // カスタムイベントを発火してモーダルを開く
       const event = new CustomEvent('openReservationModal', {
-        detail: { shops: currentShops }
+        detail: { shops: currentShops, language: currentLanguage }
       });
       document.dispatchEvent(event);
     }
