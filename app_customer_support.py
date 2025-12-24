@@ -8,6 +8,7 @@
 - Google Places API連携(店舗写真取得)
 - 深掘り質問対応 + 金額表記の自然化
 - CORS完全対応 + 海外エリア検索ロジック改善
+- RAMベースのセッション管理 (Firestore完全廃止) ★Step 1完了★
 """
 import os
 import re
@@ -20,8 +21,8 @@ from datetime import datetime
 from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-import google.generativeai as genai
-from google.cloud import firestore
+from google import genai
+from google.genai import types
 from google.cloud import texttospeech
 from google.cloud import speech
 from google.cloud import storage
@@ -41,7 +42,7 @@ app = Flask(__name__)
 # CORS & SocketIO 設定 (Claudeアドバイス適用版)
 # ========================================
 
-# 許可するオリジン（末尾のスラッシュなし）
+# 許可するオリジン(末尾のスラッシュなし)
 allowed_origins = [
     "https://gourmet-sp-two.vercel.app",
     "https://gourmet-sp.vercel.app",
@@ -78,19 +79,28 @@ def after_request(response):
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
     return response
 
-# Gemini API初期化
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-2.0-flash-exp')
+# Gemini クライアント初期化（1回だけ）
+gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+# 旧SDK（互換性のため一時的に残す）※後で削除予定
+import google.generativeai as genai_legacy
+genai_legacy.configure(api_key=os.getenv("GEMINI_API_KEY"))
+model = genai_legacy.GenerativeModel('gemini-2.0-flash-exp')
 
-# Firestore初期化
-db = firestore.Client()
+# ========================================
+# RAMベースのセッション管理 (Firestore完全廃止)
+# ========================================
+_SESSION_CACHE = {}
 
 # ========================================
 # プロンプト読み込み (GCS優先、ローカルフォールバック)
 # ========================================
 
 def load_prompts_from_gcs():
-    """GCSからプロンプトを読み込み (起動時のみ1回)"""
+    """
+    GCSから2種類のプロンプトを読み込み
+    - support_system_{lang}.txt: チャットモード用
+    - concierge_{lang}.txt: コンシェルジュモード用
+    """
     try:
         bucket_name = os.getenv('PROMPTS_BUCKET_NAME')
         if not bucket_name:
@@ -99,71 +109,124 @@ def load_prompts_from_gcs():
 
         client = storage.Client()
         bucket = client.bucket(bucket_name)
-        prompts = {}
+        prompts = {
+            'chat': {},      # チャットモード用
+            'concierge': {}  # コンシェルジュモード用
+        }
 
         for lang in ['ja', 'en', 'zh', 'ko']:
-            blob = bucket.blob(f'prompts/support_system_{lang}.txt')
-            if blob.exists():
-                prompts[lang] = blob.download_as_text(encoding='utf-8')
+            # チャットモード用プロンプト
+            chat_blob = bucket.blob(f'prompts/support_system_{lang}.txt')
+            if chat_blob.exists():
+                prompts['chat'][lang] = chat_blob.download_as_text(encoding='utf-8')
                 logger.info(f"[Prompt] GCSから読み込み成功: support_system_{lang}.txt")
             else:
                 logger.warning(f"[Prompt] GCSに見つかりません: support_system_{lang}.txt")
 
-        return prompts if prompts else None
+            # コンシェルジュモード用プロンプト
+            concierge_blob = bucket.blob(f'prompts/concierge_{lang}.txt')
+            if concierge_blob.exists():
+                content = concierge_blob.download_as_text(encoding='utf-8')
+                try:
+                    json_data = json.loads(content)
+                    prompts['concierge'][lang] = json_data.get('concierge_system', content)
+                except json.JSONDecodeError:
+                    prompts['concierge'][lang] = content
+                logger.info(f"[Prompt] GCSから読み込み成功: concierge_{lang}.txt")
+            else:
+                logger.warning(f"[Prompt] GCSに見つかりません: concierge_{lang}.txt")
+
+        return prompts if (prompts['chat'] or prompts['concierge']) else None
 
     except Exception as e:
         logger.error(f"[Prompt] GCS読み込み失敗: {e}")
         return None
 
 def load_prompts_from_local():
-    """ローカルファイルからプロンプトを読み込み (フォールバック)"""
-    prompts = {}
+    """
+    ローカルファイルから2種類のプロンプトを読み込み (フォールバック)
+    """
+    prompts = {
+        'chat': {},
+        'concierge': {}
+    }
+    
     for lang in ['ja', 'en', 'zh', 'ko']:
-        file_path = f'prompts/support_system_{lang}.txt'
+        # チャットモード用
+        chat_file = f'prompts/support_system_{lang}.txt'
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                prompts[lang] = f.read()
+            with open(chat_file, 'r', encoding='utf-8') as f:
+                prompts['chat'][lang] = f.read()
                 logger.info(f"[Prompt] ローカルから読み込み成功: support_system_{lang}.txt")
         except FileNotFoundError:
-            logger.warning(f"[Prompt] ローカルファイルが見つかりません: {file_path}")
+            logger.warning(f"[Prompt] ローカルファイルが見つかりません: {chat_file}")
         except Exception as e:
-            logger.error(f"[Prompt] ローカル読み込みエラー ({lang}): {e}")
+            logger.error(f"[Prompt] ローカル読み込みエラー (chat/{lang}): {e}")
 
-    return prompts if prompts else None
+        # コンシェルジュモード用
+        concierge_file = f'prompts/concierge_{lang}.txt'
+        try:
+            with open(concierge_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+                try:
+                    json_data = json.loads(content)
+                    prompts['concierge'][lang] = json_data.get('concierge_system', content)
+                except json.JSONDecodeError:
+                    prompts['concierge'][lang] = content
+                logger.info(f"[Prompt] ローカルから読み込み成功: concierge_{lang}.txt")
+        except FileNotFoundError:
+            logger.warning(f"[Prompt] ローカルファイルが見つかりません: {concierge_file}")
+        except Exception as e:
+            logger.error(f"[Prompt] ローカル読み込みエラー (concierge/{lang}): {e}")
 
-# プロンプト読み込み (GCS優先、ローカルフォールバック)
+    return prompts if (prompts['chat'] or prompts['concierge']) else None
+
+# プロンプト読み込み実行
 logger.info("[Prompt] プロンプト読み込み開始...")
 SYSTEM_PROMPTS = load_prompts_from_gcs()
 if not SYSTEM_PROMPTS:
     logger.info("[Prompt] GCSから読み込めませんでした。ローカルファイルを使用します。")
     SYSTEM_PROMPTS = load_prompts_from_local()
 
-if not SYSTEM_PROMPTS:
-    logger.error("[Prompt] プロンプトの読み込みに失敗しました！")
-    SYSTEM_PROMPTS = {'ja': 'エラー: プロンプトが読み込めませんでした。'}
+if not SYSTEM_PROMPTS or (not SYSTEM_PROMPTS.get('chat') and not SYSTEM_PROMPTS.get('concierge')):
+    logger.error("[Prompt] プロンプトの読み込みに失敗しました!")
+    SYSTEM_PROMPTS = {
+        'chat': {'ja': 'エラー: チャットモードプロンプトが読み込めませんでした。'},
+        'concierge': {'ja': 'エラー: コンシェルジュモードプロンプトが読み込めませんでした。'}
+    }
 else:
-    logger.info(f"[Prompt] プロンプト読み込み完了: {list(SYSTEM_PROMPTS.keys())}")
+    logger.info(f"[Prompt] プロンプト読み込み完了:")
+    logger.info(f"  - チャットモード: {list(SYSTEM_PROMPTS.get('chat', {}).keys())}")
+    logger.info(f"  - コンシェルジュモード: {list(SYSTEM_PROMPTS.get('concierge', {}).keys())}")
 
 # 多言語テンプレート (シンプルなものはここにハードコード)
 INITIAL_GREETINGS = {
-    'ja': 'こんにちは！お店探しをお手伝いします。どのようなお店をお探しですか？（例：新宿で美味しいイタリアン、明日19時に予約できる焼肉店など）',
-    'en': 'Hello! I\'m here to help you find restaurants. What kind of restaurant are you looking for?',
-    'zh': '您好！我来帮您找餐厅。您在寻找什么样的餐厅？',
-    'ko': '안녕하세요! 레스토랑 찾기를 도와드리겠습니다. 어떤 레스토랑을 찾으시나요?'
+    'chat': {
+        'ja': 'こんにちは!お店探しをお手伝いします。どのようなお店をお探しですか?(例:新宿で美味しいイタリアン、明日19時に予約できる焼肉店など)',
+        'en': 'Hello! I\'m here to help you find restaurants. What kind of restaurant are you looking for?',
+        'zh': '您好!我来帮您找餐厅。您在寻找什么样的餐厅?',
+        'ko': '안녕하세요! 레스토랑 찾기를 도와드리겠습니다. 어떤 레스토랑을 찾으시나요?'
+    },
+    'concierge': {
+        'ja': 'いらっしゃいませ。グルメコンシェルジュです。今日はどのようなシーンでお店をお探しでしょうか?接待、デート、女子会など、お気軽にお聞かせください。',
+        'en': 'Welcome! I\'m your gourmet concierge. What kind of dining experience are you looking for today? Business dinner, date, gathering with friends?',
+        'zh': '欢迎光临!我是您的美食礼宾员。今天您想寻找什么样的用餐场景?商务宴请、约会、朋友聚会?',
+        'ko': '어서오세요! 저는 귀하의 미식 컨시어지입니다. 오늘은 어떤 식사 장면을 찾으시나요? 접대, 데이트, 모임 등?'
+    }
 }
 
 CONVERSATION_SUMMARY_TEMPLATES = {
     'ja': '以下の会話を1文で要約してください。\n\nユーザー: {user_message}\nアシスタント: {assistant_response}\n\n要約:',
     'en': 'Summarize the following conversation in one sentence.\n\nUser: {user_message}\nAssistant: {assistant_response}\n\nSummary:',
-    'zh': '请用一句话总结以下对话。\n\n用户：{user_message}\n助手：{assistant_response}\n\n总结：',
+    'zh': '请用一句话总结以下对话。\n\n用户:{user_message}\n助手:{assistant_response}\n\n总结:',
     'ko': '다음 대화를 한 문장으로 요약하세요.\n\n사용자: {user_message}\n어시스턴트: {assistant_response}\n\n요약:'
 }
 
 FINAL_SUMMARY_TEMPLATES = {
     'ja': '以下の会話全体を要約し、問い合わせ内容をまとめてください。\n\n{conversation_text}\n\n作成日時: {timestamp}\n\n要約:',
     'en': 'Summarize the entire conversation below and organize the inquiry content.\n\n{conversation_text}\n\nCreated: {timestamp}\n\nSummary:',
-    'zh': '请总结以下整个对话并整理咨询内容。\n\n{conversation_text}\n\n创建时间：{timestamp}\n\n总结：',
-    'ko': '다음 전체 대화를 요약하고 문의 내용을 정리하세요。\n\n{conversation_text}\n\n작성 시간: {timestamp}\n\n요약:'
+    'zh': '请总结以下整个对话并整理咨询内容。\n\n{conversation_text}\n\n创建时间:{timestamp}\n\n总结:',
+    'ko': '다음 전체 대화를 요약하고 문의 내용을 정리하세요.\n\n{conversation_text}\n\n작성 시간: {timestamp}\n\n요약:'
 }
 
 # Google Cloud TTS/STT初期化
@@ -379,7 +442,7 @@ def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
 
 def get_tripadvisor_data(shop_name: str, lat: float = None, lng: float = None, language: str = 'en') -> dict:
     """
-    TripAdvisor APIで店舗情報を取得（検索 + 詳細）
+    TripAdvisor APIで店舗情報を取得(検索 + 詳細)
     """
     # Location IDを検索
     location_data = search_tripadvisor_location(shop_name, lat, lng, language)
@@ -502,7 +565,7 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
 
         result = data.get('result', {})
 
-        # 電話番号取得（国内形式を優先、なければ国際形式）
+        # 電話番号取得(国内形式を優先、なければ国際形式)
         phone = result.get('formatted_phone_number') or result.get('international_phone_number')
 
         # 国コード取得
@@ -528,7 +591,7 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
 
 def search_place(shop_name: str, area: str = '', geo_info: dict = None, language: str = 'ja') -> dict:
     """
-    Google Places APIで店舗を検索（国コード検証付き）
+    Google Places APIで店舗を検索(国コード検証付き)
     """
     if not GOOGLE_PLACES_API_KEY:
         logger.warning("[Places API] APIキーが設定されていません")
@@ -639,7 +702,7 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
 
 def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') -> list:
     """
-    ショップリストに外部APIデータを追加（place_id重複排除付き、国コード検証強化版）
+    ショップリストに外部APIデータを追加(place_id重複排除付き、国コード検証強化版)
     - 基本: トリップアドバイザーを表示
     - 例外(日本語かつ日本国内): 国内3サイトを表示し、トリップアドバイザーは非表示
     """
@@ -650,7 +713,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
     
     logger.info(f"[Enrich] 開始: area='{area}', language={language}, shops={len(shops)}件")
 
-    # Geocodingはあくまで補助情報として取得（失敗しても止まらない）
+    # Geocodingはあくまで補助情報として取得(失敗しても止まらない)
     geo_info = None
     if area:
         try:
@@ -676,7 +739,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         logger.info(f"[Enrich] {i}/{len(shops)} 検索: '{shop_name}'")
 
         # -------------------------------------------------------
-        # 1. Google Places APIで基本情報を取得（国コード検証付き）
+        # 1. Google Places APIで基本情報を取得(国コード検証付き)
         # -------------------------------------------------------
         place_data = search_place(shop_name, area, geo_info, language)
         
@@ -694,7 +757,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         # ✅ place_id重複チェック
         if place_id in seen_place_ids:
             duplicate_count += 1
-            logger.warning(f"[Enrich] → ❌ 重複検出！既に追加済み（スキップ）")
+            logger.warning(f"[Enrich] → ❌ 重複検出!既に追加済み(スキップ)")
             logger.warning(f"[Enrich]    LLM店舗名: '{shop_name}' → Google店舗名: '{place_name}'")
             continue
         
@@ -706,18 +769,18 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         shop_country = place_data.get('country_code', '')
         
         # -------------------------------------------------------
-        # 2. ロジック判定（フラグ設定）
+        # 2. ロジック判定(フラグ設定)
         # -------------------------------------------------------
         # デフォルト設定 (基本はTripAdvisorを表示)
         show_tripadvisor = True
         show_domestic_sites = False
 
-        # 【例外ルール】 言語が日本語(ja) かつ 日本国内(JP) の場合
+        # 【例外ルール】言語が日本語(ja) かつ 日本国内(JP) の場合
         if language == 'ja' and shop_country == 'JP':
             show_tripadvisor = False      # トリップアドバイザーは出さない
             show_domestic_sites = True    # 国内3サイトを出す
         
-        # 将来的な拡張（例：台湾・韓国でも食べログを出す場合）
+        # 将来的な拡張(例:台湾・韓国でも食べログを出す場合)
         # if language == 'ja' and shop_country in ['TW', 'KR']:
         #     show_domestic_sites = True
         
@@ -728,14 +791,22 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         # 3. データの注入
         # -------------------------------------------------------
         # Google Placesの共通データ
-        if place_data.get('name'): shop['name'] = place_data['name']
-        if place_data.get('photo_url'): shop['image'] = place_data['photo_url']
-        if place_data.get('rating'): shop['rating'] = place_data['rating']
-        if place_data.get('user_ratings_total'): shop['reviewCount'] = place_data['user_ratings_total']
-        if place_data.get('formatted_address'): shop['location'] = place_data['formatted_address']
-        if place_data.get('maps_url'): shop['maps_url'] = place_data['maps_url']
-        if place_data.get('phone'): shop['phone'] = place_data['phone']
-        if place_data.get('place_id'): shop['place_id'] = place_data['place_id']
+        if place_data.get('name'): 
+            shop['name'] = place_data['name']
+        if place_data.get('photo_url'): 
+            shop['image'] = place_data['photo_url']
+        if place_data.get('rating'): 
+            shop['rating'] = place_data['rating']
+        if place_data.get('user_ratings_total'): 
+            shop['reviewCount'] = place_data['user_ratings_total']
+        if place_data.get('formatted_address'): 
+            shop['location'] = place_data['formatted_address']
+        if place_data.get('maps_url'): 
+            shop['maps_url'] = place_data['maps_url']
+        if place_data.get('phone'): 
+            shop['phone'] = place_data['phone']
+        if place_data.get('place_id'): 
+            shop['place_id'] = place_data['place_id']
 
         # A. 国内3サイトのリンク生成 (例外ルール適用時)
         if show_domestic_sites:
@@ -763,7 +834,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
                 try:
                     places_name = place_data.get('name', '')
                     region_name = geo_info.get('region', '') if geo_info else '東京'
-                    # 都道府県コード変換（簡易版）
+                    # 都道府県コード変換(簡易版)
                     pref_code_map = {'東京': 'tokyo', '神奈川': 'kanagawa', '大阪': 'osaka', '京都': 'kyoto', '兵庫': 'hyogo', '北海道': 'hokkaido', '愛知': 'aichi', '福岡': 'fukuoka'}
                     pref = region_name.rstrip('都道府県') if region_name else '東京'
                     pref_code = pref_code_map.get(pref, 'tokyo')
@@ -793,7 +864,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
                     # 検索実行
                     tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, search_lang)
 
-                    # 0件かつ日本語の場合、英語で再トライ（ヒット率向上策）
+                    # 0件かつ日本語の場合、英語で再トライ(ヒット率向上策)
                     if not tripadvisor_data and search_lang == 'ja':
                         logger.info(f"[TripAdvisor] 日本語でヒットせず。英語で再検索: {shop_name}")
                         tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, 'en')
@@ -821,8 +892,6 @@ def extract_area_from_text(text: str, language: str = 'ja') -> str:
     """
     テキストからエリア名を抽出(Geocoding APIで動的に検証)
     """
-    import re
-
     jp_chars = r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF66-\uFF9Fa-zA-Z]'
     patterns = [
         rf'({jp_chars}{{2,10}})の{jp_chars}',
@@ -849,7 +918,7 @@ def extract_shops_from_response(text: str) -> list:
     LLMの応答テキストからショップ情報を抽出
     """
     shops = []
-    pattern = r'(\d+)\.\s*\*\*([^*]+)\*\*\s*(?:\([^)]+\))?\s*[-:：]\s*([^\n]+)'
+    pattern = r'(\d+)\.\s*\*\*([^*]+)\*\*\s*(?:\([^)]+\))?\s*[-:]:]\s*([^\n]+)'
     matches = re.findall(pattern, text)
 
     for match in matches:
@@ -857,7 +926,7 @@ def extract_shops_from_response(text: str) -> list:
         description = match[2].strip()
 
         name = full_name
-        name_match = re.match(r'^([^（(]+)[（(]([^）)]+)[）)]', full_name)
+        name_match = re.match(r'^([^(]+)[(]([^)]+)[)]', full_name)
         if name_match:
             name = name_match.group(1).strip()
 
@@ -876,55 +945,62 @@ def extract_shops_from_response(text: str) -> list:
 # ========================================
 
 class SupportSession:
-    """サポートセッション管理"""
+    """サポートセッション管理 (RAM版)"""
 
     def __init__(self, session_id=None):
         self.session_id = session_id or str(uuid.uuid4())
-        self.collection = db.collection('support_sessions')
-        self.doc_ref = self.collection.document(self.session_id)
 
-    def initialize(self, user_info=None, language='ja'):
-        """新規セッション初期化"""
+    def initialize(self, user_info=None, language='ja', mode='chat'):
+        """新規セッション初期化 - モード対応"""
         data = {
             'session_id': self.session_id,
-            'created_at': firestore.SERVER_TIMESTAMP,
-            'updated_at': firestore.SERVER_TIMESTAMP,
-            'messages': [],
+            'messages': [],  # SDKネイティブのリスト形式用
             'status': 'active',
             'user_info': user_info or {},
-            'language': language,  # ユーザー言語を保存
+            'language': language,
+            'mode': mode,
             'summary': None,
             'inquiry_summary': None,
             'current_shops': []
         }
-        self.doc_ref.set(data)
-        logger.info(f"[Session] 新規作成: {self.session_id}, 言語: {language}")
+        _SESSION_CACHE[self.session_id] = data
+        logger.info(f"[Session] RAM作成: {self.session_id}, 言語: {language}, モード: {mode}")
         return data
 
     def add_message(self, role, content, message_type='chat'):
-        """メッセージを追加"""
+        """メッセージを追加（役割(Role)別の構造で保存）"""
+        data = self.get_data()
+        if not data:
+            return None
+        
+        # genai SDKが理解できる構造で保存
         message = {
-            'role': role,
-            'content': content,
-            'type': message_type,
+            'role': 'user' if role == 'user' else 'model',
+            'parts': [content],
+            'type': message_type,  # 内部管理用
             'timestamp': datetime.now().isoformat()
         }
-
-        self.doc_ref.update({
-            'messages': firestore.ArrayUnion([message]),
-            'updated_at': firestore.SERVER_TIMESTAMP
-        })
-
-        logger.info(f"[Session] メッセージ追加: {role} ({message_type})")
+        data['messages'].append(message)
+        logger.info(f"[Session] メッセージ追加: role={message['role']}, type={message_type}")
         return message
 
+    def get_history_for_api(self):
+        """SDKにそのまま渡せる形式のリストを返す"""
+        data = self.get_data()
+        if not data:
+            return []
+        # 通常の会話メッセージのみを抽出
+        history = [{'role': m['role'], 'parts': m['parts']} for m in data['messages'] if m['type'] == 'chat']
+        logger.info(f"[Session] API用履歴生成: {len(history)}件のメッセージ")
+        return history
+
     def get_messages(self, include_types=None):
-        """メッセージ履歴を取得"""
-        doc = self.doc_ref.get()
-        if not doc.exists:
+        """メッセージ履歴を取得（互換性のため残す）"""
+        data = self.get_data()
+        if not data:
             return []
 
-        messages = doc.to_dict().get('messages', [])
+        messages = data.get('messages', [])
 
         if include_types:
             messages = [m for m in messages if m.get('type') in include_types]
@@ -933,67 +1009,78 @@ class SupportSession:
 
     def save_current_shops(self, shops):
         """現在の店舗リストを保存"""
-        self.doc_ref.update({
-            'current_shops': shops,
-            'updated_at': firestore.SERVER_TIMESTAMP
-        })
-        logger.info(f"[Session] 店舗リスト保存: {len(shops)}件")
+        data = self.get_data()
+        if data:
+            data['current_shops'] = shops
+            logger.info(f"[Session] 店舗リスト保存: {len(shops)}件")
 
     def get_current_shops(self):
         """現在の店舗リストを取得"""
-        doc = self.doc_ref.get()
-        if not doc.exists:
-            return []
-        return doc.to_dict().get('current_shops', [])
+        data = self.get_data()
+        return data.get('current_shops', []) if data else []
 
     def update_status(self, status, **kwargs):
         """ステータス更新"""
-        update_data = {
-            'status': status,
-            'updated_at': firestore.SERVER_TIMESTAMP
-        }
-        update_data.update(kwargs)
-
-        self.doc_ref.update(update_data)
-        logger.info(f"[Session] ステータス更新: {status}")
+        data = self.get_data()
+        if data:
+            data['status'] = status
+            data.update(kwargs)
+            logger.info(f"[Session] ステータス更新: {status}")
 
     def get_data(self):
         """セッションデータ取得"""
-        doc = self.doc_ref.get()
-        return doc.to_dict() if doc.exists else None
+        return _SESSION_CACHE.get(self.session_id)
 
     def get_language(self):
         """セッション言語を取得"""
         data = self.get_data()
         return data.get('language', 'ja') if data else 'ja'
 
+    def get_mode(self):
+        """セッションモードを取得"""
+        data = self.get_data()
+        return data.get('mode', 'chat') if data else 'chat'
+
     def update_language(self, language: str):
         """セッション言語を更新"""
-        self.doc_ref.update({
-            'language': language,
-            'updated_at': firestore.SERVER_TIMESTAMP
-        })
-        logger.info(f"[Session] 言語更新: {language}")
+        data = self.get_data()
+        if data:
+            data['language'] = language
+            logger.info(f"[Session] 言語更新: {language}")
+
+    def update_mode(self, mode: str):
+        """セッションモードを更新"""
+        data = self.get_data()
+        if data:
+            data['mode'] = mode
+            logger.info(f"[Session] モード更新: {mode}")
 
 
 class SupportAssistant:
-    """サポートアシスタント"""
+    """サポートアシスタント - モード対応版"""
 
     def __init__(self, session: SupportSession):
         self.session = session
         self.language = session.get_language()
-        self.system_prompt = SYSTEM_PROMPTS.get(self.language, SYSTEM_PROMPTS.get('ja', ''))
+        self.mode = session.get_mode()  # ★ モードを取得
+        
+        # ★★★ モードに応じたプロンプトを選択 ★★★
+        mode_prompts = SYSTEM_PROMPTS.get(self.mode, SYSTEM_PROMPTS.get('chat', {}))
+        self.system_prompt = mode_prompts.get(self.language, mode_prompts.get('ja', ''))
+        
+        logger.info(f"[Assistant] 初期化: mode={self.mode}, language={self.language}")
 
     def get_initial_message(self):
-        """初回メッセージ"""
-        return INITIAL_GREETINGS.get(self.language, INITIAL_GREETINGS['ja'])
+        """初回メッセージ - モード別"""
+        greetings = INITIAL_GREETINGS.get(self.mode, INITIAL_GREETINGS.get('chat', {}))
+        return greetings.get(self.language, greetings.get('ja', ''))
 
     def is_followup_question(self, user_message, current_shops):
         """深掘り質問かどうかを判定"""
         if not current_shops:
             return False
 
-        # フォローアップ質問のパターン（料理名は除外 - 初回検索で誤判定されるため）
+        # フォローアップ質問のパターン(料理名は除外 - 初回検索で誤判定されるため)
         followup_patterns = [
             'この中で', 'これらの中で', 'さっきの', '先ほどの',
             'どれが', 'どこが', 'どの店', '何番目',
@@ -1005,17 +1092,23 @@ class SupportAssistant:
         return any(pattern in message_lower for pattern in followup_patterns)
 
     def process_user_message(self, user_message, conversation_stage='conversation'):
-        """ユーザーメッセージを処理"""
-        history = self.session.get_messages(include_types=['chat', 'summary'])
+        """
+        ユーザーメッセージを処理
+        
+        【重要】改善されたフロー:
+        1. 履歴を構造化リストで取得
+        2. 履歴には既に最新のユーザーメッセージが含まれている（add_messageで追加済み）
+        3. そのため、履歴をそのままGeminiに渡す
+        """
+        # 履歴を構造化リストで取得（既に最新のユーザーメッセージを含む）
+        history = self.session.get_history_for_api()
         current_shops = self.session.get_current_shops()
 
         is_followup = self.is_followup_question(user_message, current_shops)
 
-        # stage_instructionは不要になったので空文字列に
-        stage_instruction = ''
-
-        if is_followup:
-            # 深掘り質問用の多言語メッセージ
+        # フォローアップの場合は現在の店舗情報をシステムプロンプトに追加
+        system_prompt = self.system_prompt
+        if is_followup and current_shops:
             followup_messages = {
                 'ja': {
                     'header': '【現在提案中の店舗情報】',
@@ -1026,22 +1119,61 @@ class SupportAssistant:
                     'footer': 'The user is asking about the restaurants listed above. Please refer to the restaurant information when answering.'
                 },
                 'zh': {
-                    'header': '【当前推荐的餐?信息】',
-                    'footer': '用?正在??上述餐?的信息。?参考餐?信息?行回答。'
+                    'header': '【当前推荐的餐厅信息】',
+                    'footer': '用户正在询问上述餐厅的信息。请参考餐厅信息进行回答。'
                 },
                 'ko': {
-                    'header': '【?? ?? ?? ??? ??】',
-                    'footer': '???? ? ???? ?? ???? ????. ??? ??? ???? ??? ???.'
+                    'header': '【현재 제안 중인 레스토랑 정보】',
+                    'footer': '사용자는 위 레스토랑에 대해 질문하고 있습니다. 레스토랑 정보를 참조하여 답변하세요.'
                 }
             }
             current_followup_msg = followup_messages.get(self.language, followup_messages['ja'])
-            stage_instruction += f"\n\n{current_followup_msg['header']}\n{self._format_current_shops(current_shops)}\n\n{current_followup_msg['footer']}"
+            shop_context = f"\n\n{current_followup_msg['header']}\n{self._format_current_shops(current_shops)}\n\n{current_followup_msg['footer']}"
+            system_prompt = self.system_prompt + shop_context
+            logger.info("[Assistant] フォローアップ質問モード: 店舗情報をシステムプロンプトに追加")
 
-        prompt = self._build_prompt(history, user_message, stage_instruction)
+        # ツール設定
+        tools = None
+        if not is_followup:
+            tools = [types.Tool(google_search=types.GoogleSearch())]
+            logger.info("[Assistant] Google検索グラウンディングを有効化")
 
         try:
-            response = model.generate_content(prompt)
+            logger.info(f"[Assistant] Gemini API呼び出し開始: 履歴={len(history)}件")
+
+            # 【重要】改善版: configを条件付きで生成
+            # system_promptとtoolsの両方またはいずれかがある場合のみconfigを作成
+            if system_prompt or tools:
+                config_dict = {}
+                if system_prompt:
+                    config_dict["system_instruction"] = system_prompt
+                if tools:
+                    config_dict["tools"] = tools
+                
+                config = types.GenerateContentConfig(**config_dict)
+                
+                response = gemini_client.models.generate_content(
+                    model="gemini-2.0-flash-exp",
+                    contents=history,
+                    config=config
+                )
+            else:
+                # configが不要な場合はconfigパラメータを渡さない
+                response = gemini_client.models.generate_content(
+                    model="gemini-2.0-flash-exp",
+                    contents=history
+                )
+
+            logger.info("[Assistant] Gemini API呼び出し完了")
+
+            # レスポンスからテキストを取得
             assistant_text = response.text
+
+            if not assistant_text:
+                logger.error("[Assistant] Empty response from Gemini")
+                raise RuntimeError("Gemini returned empty response")
+
+            logger.info(f"[Assistant] Gemini response received: {len(assistant_text)} chars")
 
             parsed_message, parsed_shops = self._parse_json_response(assistant_text)
 
@@ -1051,12 +1183,11 @@ class SupportAssistant:
             summary = None
             if conversation_stage == 'conversation':
                 if parsed_shops:
-                    # 多言語サマリー
                     summary_messages = {
                         'ja': lambda count: f"{count}軒のお店を提案しました。",
                         'en': lambda count: f"Suggested {count} restaurants.",
-                        'zh': lambda count: f"推荐了{count}家餐?。",
-                        'ko': lambda count: f"{count}?? ???? ??????."
+                        'zh': lambda count: f"推荐了{count}家餐厅。",
+                        'ko': lambda count: f"{count}개의 레스토랑을 제안했습니다."
                     }
                     summary_func = summary_messages.get(self.language, summary_messages['ja'])
                     summary = summary_func(len(parsed_shops))
@@ -1072,9 +1203,15 @@ class SupportAssistant:
             }
 
         except Exception as e:
-            logger.error(f"[Assistant] Gemini APIエラー: {e}")
+            logger.error(f"[Assistant] Gemini API error: {e}", exc_info=True)
+            error_messages = {
+                'ja': 'エラーが発生しました。もう一度お試しください。',
+                'en': 'An error occurred. Please try again.',
+                'zh': '発生錯誤。請重試。',
+                'ko': '오류가 발생했습니다. 다시 시도해주세요.'
+            }
             return {
-                'response': 'エラーが発生しました。もう一度お試しください。',
+                'response': error_messages.get(self.language, error_messages['ja']),
                 'summary': None,
                 'shops': [],
                 'should_confirm': False,
@@ -1083,8 +1220,14 @@ class SupportAssistant:
 
     def generate_final_summary(self):
         """最終要約を生成"""
-        all_messages = self.session.get_messages()
-        conversation_text = self._format_conversation(all_messages)
+        all_messages = self.session.get_history_for_api()
+        
+        # 会話テキストを整形
+        conversation_lines = []
+        for msg in all_messages:
+            role_name = 'ユーザー' if msg['role'] == 'user' else 'アシスタント'
+            conversation_lines.append(f"{role_name}: {msg['parts'][0]}")
+        conversation_text = '\n'.join(conversation_lines)
 
         template = FINAL_SUMMARY_TEMPLATES.get(self.language, FINAL_SUMMARY_TEMPLATES['ja'])
         summary_prompt = template.format(
@@ -1093,7 +1236,11 @@ class SupportAssistant:
         )
 
         try:
-            response = model.generate_content(summary_prompt)
+            logger.info("[Assistant] Generating final summary")
+            response = gemini_client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=summary_prompt
+            )
             summary = response.text
 
             self.session.update_status(
@@ -1104,7 +1251,7 @@ class SupportAssistant:
             return summary
 
         except Exception as e:
-            logger.error(f"[Assistant] 要約生成エラー: {e}")
+            logger.error(f"[Assistant] Final summary error: {e}", exc_info=True)
             return "要約の生成中にエラーが発生しました。"
 
     def _format_current_shops(self, shops):
@@ -1126,18 +1273,18 @@ class SupportAssistant:
                 'features': 'Features'
             },
             'zh': {
-                'description': '?明',
+                'description': '说明',
                 'specialty': '招牌菜',
-                'price': '?算',
-                'atmosphere': '氛?',
+                'price': '预算',
+                'atmosphere': '氛围',
                 'features': '特色'
             },
             'ko': {
-                'description': '??',
-                'specialty': '?? ??',
-                'price': '??',
-                'atmosphere': '???',
-                'features': '??'
+                'description': '설명',
+                'specialty': '대표 메뉴',
+                'price': '예산',
+                'atmosphere': '분위기',
+                'features': '특징'
             }
         }
 
@@ -1181,57 +1328,6 @@ class SupportAssistant:
             shops = extract_shops_from_response(text)
             return text, shops
 
-    def _build_prompt(self, history, current_message, stage_instruction):
-        """プロンプトを構築"""
-        # 多言語ラベル
-        labels = {
-            'ja': {
-                'system': 'システム指示',
-                'history': '会話履歴',
-                'user': 'ユーザー',
-                'assistant': 'アシスタント',
-                'current': '【ユーザーの発言】'
-            },
-            'en': {
-                'system': 'System Instructions',
-                'history': 'Conversation History',
-                'user': 'User',
-                'assistant': 'Assistant',
-                'current': '【Current User Message】'
-            },
-            'zh': {
-                'system': '系?指示',
-                'history': '???史',
-                'user': '用?',
-                'assistant': '助手',
-                'current': '【用?的?言】'
-            },
-            'ko': {
-                'system': '??? ??',
-                'history': '?? ??',
-                'user': '???',
-                'assistant': '?????',
-                'current': '【???? ??】'
-            }
-        }
-
-        current_labels = labels.get(self.language, labels['ja'])
-        prompt_parts = []
-
-        prompt_parts.append(f"{current_labels['system']}:\n{self.system_prompt}\n")
-
-        if history:
-            prompt_parts.append(f"{current_labels['history']}:")
-            for msg in history:
-                role_name = current_labels['user'] if msg['role'] == 'user' else current_labels['assistant']
-                prompt_parts.append(f"{role_name}: {msg['content']}")
-            prompt_parts.append("")
-
-        prompt_parts.append(stage_instruction)
-        prompt_parts.append(f"\n{current_labels['current']}\n{current_message}")
-
-        return "\n".join(prompt_parts)
-
     def _generate_summary(self, user_message, assistant_response):
         """会話の要約を生成"""
         template = CONVERSATION_SUMMARY_TEMPLATES.get(self.language, CONVERSATION_SUMMARY_TEMPLATES['ja'])
@@ -1241,30 +1337,16 @@ class SupportAssistant:
         )
 
         try:
-            response = model.generate_content(summary_prompt)
+            logger.info("[Assistant] Generating summary")
+            response = gemini_client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=summary_prompt
+            )
             return response.text
 
         except Exception as e:
-            logger.error(f"[Assistant] 要約生成エラー: {e}")
+            logger.error(f"[Assistant] Summary generation error: {e}", exc_info=True)
             return None
-
-    def _format_conversation(self, messages):
-        """会話ログを整形"""
-        # 多言語ラベル
-        role_labels = {
-            'ja': {'user': 'ユーザー', 'assistant': 'アシスタント'},
-            'en': {'user': 'User', 'assistant': 'Assistant'},
-            'zh': {'user': '用?', 'assistant': '助手'},
-            'ko': {'user': '???', 'assistant': '?????'}
-        }
-
-        current_role_labels = role_labels.get(self.language, role_labels['ja'])
-        lines = []
-        for msg in messages:
-            if msg.get('type') == 'chat':
-                role = current_role_labels['user'] if msg['role'] == 'user' else current_role_labels['assistant']
-                lines.append(f"{role}: {msg['content']}")
-        return "\n".join(lines)
 
 
 # ========================================
@@ -1279,24 +1361,39 @@ def index():
 
 @app.route('/api/session/start', methods=['POST', 'OPTIONS'])
 def start_session():
-    """セッション開始"""
+    """
+    セッション開始 - モード対応
+    
+    【重要】改善されたフロー:
+    1. セッション初期化（モード・言語設定）
+    2. アシスタント作成（最新の状態で）
+    3. 初回メッセージ生成
+    4. 履歴に追加
+    """
     if request.method == 'OPTIONS':
         return '', 204
 
     try:
         data = request.json or {}
         user_info = data.get('user_info', {})
-        language = data.get('language', 'ja')  # デフォルトは日本語
+        language = data.get('language', 'ja')
+        mode = data.get('mode', 'chat')
 
+        # 1. セッション初期化
         session = SupportSession()
-        session.initialize(user_info, language=language)
+        session.initialize(user_info, language=language, mode=mode)
+        logger.info(f"[Start Session] 新規セッション作成: {session.session_id}")
 
+        # 2. アシスタント作成（最新の状態で）
         assistant = SupportAssistant(session)
+        
+        # 3. 初回メッセージ生成
         initial_message = assistant.get_initial_message()
 
-        session.add_message('assistant', initial_message, 'chat')
+        # 4. 履歴に追加（roleは'model'）
+        session.add_message('model', initial_message, 'chat')
 
-        logger.info(f"[API] セッション開始: {session.session_id}, 言語: {language}")
+        logger.info(f"[API] セッション開始: {session.session_id}, 言語: {language}, モード: {mode}")
 
         return jsonify({
             'session_id': session.session_id,
@@ -1310,7 +1407,16 @@ def start_session():
 
 @app.route('/api/chat', methods=['POST', 'OPTIONS'])
 def chat():
-    """チャット処理"""
+    """
+    チャット処理 - 改善版
+    
+    【重要】改善されたフロー（順序を厳守）:
+    1. 状態確定 (State First): モード・言語を更新
+    2. ユーザー入力を記録: メッセージを履歴に追加
+    3. 知能生成 (Assistant作成): 最新の状態でアシスタントを作成
+    4. 推論開始: Gemini APIを呼び出し
+    5. アシスタント応答を記録: 履歴に追加
+    """
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -1319,7 +1425,8 @@ def chat():
         session_id = data.get('session_id')
         user_message = data.get('message')
         stage = data.get('stage', 'conversation')
-        language = data.get('language', 'ja')  # 言語パラメータを取得
+        language = data.get('language', 'ja')
+        mode = data.get('mode', 'chat')
 
         if not session_id or not user_message:
             return jsonify({'error': 'session_idとmessageが必要です'}), 400
@@ -1330,21 +1437,26 @@ def chat():
         if not session_data:
             return jsonify({'error': 'セッションが見つかりません'}), 404
 
-        # 言語が変更されている場合、セッションを更新
-        current_language = session.get_language()
-        if language != current_language:
-            session.update_language(language)
-            logger.info(f"[Chat] 言語切り替え: {current_language} -> {language}")
+        logger.info(f"[Chat] セッション: {session_id}, モード: {mode}, 言語: {language}")
 
+        # 1. 状態確定 (State First)
+        session.update_language(language)
+        session.update_mode(mode)
+
+        # 2. ユーザー入力を記録
         session.add_message('user', user_message, 'chat')
 
+        # 3. 知能生成 (Assistant作成)
         assistant = SupportAssistant(session)
+        
+        # 4. 推論開始
         result = assistant.process_user_message(user_message, stage)
-
-        session.add_message('assistant', result['response'], 'chat')
+        
+        # 5. アシスタント応答を記録
+        session.add_message('model', result['response'], 'chat')
 
         if result['summary']:
-            session.add_message('assistant', result['summary'], 'summary')
+            session.add_message('model', result['summary'], 'summary')
 
         # ショップデータ処理
         shops = result.get('shops', [])
@@ -1362,12 +1474,12 @@ def chat():
                 'not_found': "Sorry, we couldn't find any restaurants matching your criteria. Would you like to search with different conditions?"
             },
             'zh': {
-                'intro': lambda count: f"??推荐{count}家餐?。\n\n",
-                'not_found': "很抱歉，没有找到符合条件的餐?。?要用其他条件搜索?？"
+                'intro': lambda count: f"为您推荐{count}家餐厅。\n\n",
+                'not_found': "很抱歉,没有找到符合条件的餐厅。要用其他条件搜索吗?"
             },
             'ko': {
-                'intro': lambda count: f"?? ??? {count}?? ??? ????.\n\n",
-                'not_found': "?????. ??? ?? ???? ?? ? ?????. ?? ???? ?????????"
+                'intro': lambda count: f"고객님께 {count}개의 식당을 추천합니다.\n\n",
+                'not_found': "죄송합니다. 조건에 맞는 식당을 찾을 수 없었습니다. 다른 조건으로 찾으시겠습니까?"
             }
         }
 
@@ -1444,6 +1556,8 @@ def finalize_session():
     except Exception as e:
         logger.error(f"[API] 完了処理エラー: {e}")
         return jsonify({'error': str(e)}), 500
+
+
 @app.route('/api/cancel', methods=['POST', 'OPTIONS'])
 def cancel_processing():
     """処理中止"""
@@ -1474,6 +1588,7 @@ def cancel_processing():
     except Exception as e:
         logger.error(f"[API] 中止処理エラー: {e}")
         return jsonify({'error': str(e)}), 500
+
 
 @app.route('/api/tts/synthesize', methods=['POST', 'OPTIONS'])
 def synthesize_speech():
@@ -1698,7 +1813,7 @@ def health_check():
         'timestamp': datetime.now().isoformat(),
         'services': {
             'gemini': 'ok',
-            'firestore': 'ok',
+            'ram_session': 'ok',
             'tts': 'ok',
             'stt': 'ok',
             'places_api': 'ok' if GOOGLE_PLACES_API_KEY else 'not configured'
@@ -1815,10 +1930,10 @@ def handle_audio_chunk(data):
         if not chunk_base64:
             return
 
-        # ★★★ sample_rateを取得（16kHzで受信） ★★★
+        # ★★★ sample_rateを取得(16kHzで受信) ★★★
         sample_rate = data.get('sample_rate', 16000)
         
-        # ★★★ 統計情報を取得してログ出力（必ず出力） ★★★
+        # ★★★ 統計情報を取得してログ出力(必ず出力) ★★★
         stats = data.get('stats')
         logger.info(f"[audio_chunk受信] sample_rate: {sample_rate}Hz, stats: {stats}")
         
