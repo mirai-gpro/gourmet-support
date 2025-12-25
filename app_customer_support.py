@@ -564,8 +564,7 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
         data = response.json()
 
         if data.get('status') != 'OK':
-            error_msg = data.get('error_message', '')
-            logger.warning(f"[Place Details API] å–å¾—å¤±æ•—: {data.get('status')} - {place_id} - {error_msg}")
+            logger.warning(f"[Place Details API] å–å¾—å¤±æ•—: {data.get('status')} - {place_id}")
             return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
 
         result = data.get('result', {})
@@ -587,15 +586,11 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
         # 住所取得
         formatted_address = result.get('formatted_address')
 
-        # 詳細ログ出力（すべてのケースで）
-        logger.info(f"[Place Details API] 取得結果: place_id={place_id}, 電話={phone}, 国={country_code}, 写真={'あり' if photos else 'なし'}, 住所={'あり' if formatted_address else 'なし'}")
-
-        # データが全く取得できなかった場合は警告
-        if not phone and not photos and not formatted_address:
-            logger.warning(f"[Place Details API] ⚠️ 全データ空: place_id={place_id} - APIレスポンスは成功だがデータなし")
+        if phone or photos or formatted_address:
+            logger.info(f"[Place Details API] 取得成功: 電話={phone}, 国={country_code}, 写真={'あり' if photos else 'なし'}, 住所={'あり' if formatted_address else 'なし'}")
 
         return {
-            'phone': phone,
+            'phone': phone, 
             'country_code': country_code,
             'photos': photos,
             'formatted_address': formatted_address
@@ -775,7 +770,10 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         # -------------------------------------------------------
         # 1. Google Places APIã§åŸºæœ¬æƒ…å ±ã‚’å–å¾—(å›½ã‚³ãƒ¼ãƒ‰æ¤œè¨¼ä»˜ã)
         # -------------------------------------------------------
-        place_data = search_place(shop_name, area, geo_info, language)
+        # 店舗ごとのエリアを使用（LLMのJSONから取得）
+        shop_area = shop.get('area', '') or area  # LLMのareaを優先、なければグローバルのareaを使用
+        logger.info(f"[Enrich] → 使用エリア: '{shop_area}'")
+        place_data = search_place(shop_name, shop_area, geo_info, language)
         
         if not place_data:
             logger.warning(f"[Enrich] Places APIで見つからない。LLMデータをそのまま使用: {shop_name}")
