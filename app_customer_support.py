@@ -1175,6 +1175,17 @@ class SupportAssistant:
 
             logger.info(f"[Assistant] Gemini response received: {len(assistant_text)} chars")
 
+
+            # 【デバッグ】エンコーディング確認用ログ
+            logger.info(f"[DEBUG] Response encoding type: {type(assistant_text)}")
+            logger.info(f"[DEBUG] Response first 200 chars: {repr(assistant_text[:200])}")
+
+            # UTF-8として正しくエンコードされているか確認
+            try:
+                test_encode = assistant_text.encode('utf-8')
+                logger.info(f"[DEBUG] UTF-8 encoding test: OK ({len(test_encode)} bytes)")
+            except Exception as e:
+                logger.error(f"[DEBUG] UTF-8 encoding test: FAILED - {e}")
             parsed_message, parsed_shops = self._parse_json_response(assistant_text)
 
             if parsed_shops:
