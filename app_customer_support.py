@@ -37,6 +37,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.config["JSON_AS_ASCII"] = False  # UTF-8エンコーディングを有効化
 
 # ========================================
 # CORS & SocketIO è¨­å®š (Claudeã‚¢ãƒ‰ãƒã‚¤ã‚¹é©ç”¨ç‰ˆ)
@@ -754,6 +755,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         
         logger.info(f"[Enrich] â†’ æ¤œç´¢çµæžœ: '{place_name}'")
         logger.info(f"[Enrich] â†’ place_id: {place_id}")
+        logger.info(f"[Enrich] → photo_url: {place_data.get('photo_url', 'なし')}")
 
         # âœ… place_idé‡è¤‡ãƒã‚§ãƒƒã‚¯
         if place_id in seen_place_ids:
