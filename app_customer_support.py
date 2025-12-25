@@ -546,13 +546,13 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
     Place Details APIã§é›»è©±ç•ªå·ã¨å›½ã‚³ãƒ¼ãƒ‰ã‚’å–å¾—
     """
     if not GOOGLE_PLACES_API_KEY or not place_id:
-        return {'phone': None, 'country_code': None}
+        return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
 
     try:
         details_url = 'https://maps.googleapis.com/maps/api/place/details/json'
         params = {
             'place_id': place_id,
-            'fields': 'formatted_phone_number,international_phone_number,address_components',
+            'fields': 'formatted_phone_number,international_phone_number,address_components,photos,formatted_address',
             'key': GOOGLE_PLACES_API_KEY,
             'language': language
         }
@@ -562,7 +562,7 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
 
         if data.get('status') != 'OK':
             logger.warning(f"[Place Details API] å–å¾—å¤±æ•—: {data.get('status')} - {place_id}")
-            return {'phone': None, 'country_code': None}
+            return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
 
         result = data.get('result', {})
 
@@ -577,14 +577,26 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
                     country_code = component.get('short_name')
                     break
 
-        if phone:
-            logger.info(f"[Place Details API] é›»è©±ç•ªå·å–å¾—: {phone}, å›½ã‚³ãƒ¼ãƒ‰: {country_code}")
+        # 写真取得
+        photos = result.get('photos')
+        
+        # 住所取得
+        formatted_address = result.get('formatted_address')
 
-        return {'phone': phone, 'country_code': country_code}
+        if phone or photos or formatted_address:
+            logger.info(f"[Place Details API] 取得成功: 電話={phone}, 国={country_code}, 写真={'あり' if photos else 'なし'}, 住所={'あり' if formatted_address else 'なし'}")
+
+        return {
+            'phone': phone, 
+            'country_code': country_code,
+            'photos': photos,
+            'formatted_address': formatted_address
+        }
+
 
     except requests.exceptions.Timeout:
         logger.error(f"[Place Details API] ã‚¿ã‚¤ãƒ ã‚¢ã‚¦ãƒˆ: {place_id}")
-        return {'phone': None, 'country_code': None}
+        return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
     except Exception as e:
         logger.error(f"[Place Details API] ã‚¨ãƒ©ãƒ¼: {e}")
         return None
@@ -649,28 +661,34 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         place_id = place['place_id']
 
         logger.info(f"[Places API] 🏆 1番目の結果: name='{place.get('name')}', address='{place.get('formatted_address', '')[:50]}...'")
-        # ç”»åƒURLã‚’ç”Ÿæˆ
+        maps_url = f"https://www.google.com/maps/place/?q=place_id:{place_id}"
+
+        # 座標を取得
+        geometry = place.get('geometry', {})
+        location = geometry.get('location', {})
+        lat = location.get('lat')
+        lng = location.get('lng')
+
+        # ✅ Place Details APIで電話番号、国コード、写真、住所を取得
+        details = get_place_details(place_id, language)
+        actual_country = details.get('country_code')
+
+        # 📷 画像URLを生成（Text Search API → Place Details API の順で試行）
         photo_url = None
-        if place.get('photos'):
-            photo_reference = place['photos'][0]['photo_reference']
+        photos_source = place.get('photos') or details.get('photos')
+        if photos_source:
+            photo_reference = photos_source[0]['photo_reference']
             photo_url = (
                 f"https://maps.googleapis.com/maps/api/place/photo"
                 f"?maxwidth=800"
                 f"&photo_reference={photo_reference}"
                 f"&key={GOOGLE_PLACES_API_KEY}"
             )
+            logger.info(f"[Places API] 📷 写真取得元: {'Text Search' if place.get('photos') else 'Place Details'}")
+        else:
+            logger.warning(f"[Places API] ⚠️ 写真データなし: {place.get('name')}")
 
-        maps_url = f"https://www.google.com/maps/place/?q=place_id:{place_id}"
 
-        # åº§æ¨™ã‚’å–å¾—
-        geometry = place.get('geometry', {})
-        location = geometry.get('location', {})
-        lat = location.get('lat')
-        lng = location.get('lng')
-
-        # âœ… Place Details APIã§é›»è©±ç•ªå·ã¨å›½ã‚³ãƒ¼ãƒ‰ã‚’å–å¾—
-        details = get_place_details(place_id, language)
-        actual_country = details.get('country_code')
 
         logger.info(f"[Places API] 🌍 国コード検証: expected={expected_country}, actual={actual_country}")
 
@@ -685,7 +703,7 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
             'name': place.get('name'),
             'rating': place.get('rating'),
             'user_ratings_total': place.get('user_ratings_total'),
-            'formatted_address': place.get('formatted_address'),
+            'formatted_address': place.get('formatted_address') or details.get('formatted_address'),
             'country_code': actual_country,
             'lat': lat,
             'lng': lng,
