@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """
-æ±Žç”¨ã‚«ã‚¹ã‚¿ãƒžãƒ¼ã‚µãƒãƒ¼ãƒˆã‚·ã‚¹ãƒ†ãƒ  (Gemini APIç‰ˆ) - æ”¹å–„ç‰ˆ
-- ãƒ—ãƒ­ãƒ³ãƒ—ãƒˆé§†å‹•åž‹ã®è³ªå•ãƒ•ãƒ­ãƒ¼
-- ä¼šè©±è¦ç´„ã«ã‚ˆã‚‹ç¢ºèª
-- è³ªå•è¦ç´„æ›¸ã®ç”Ÿæˆ(å³ç­”ã—ãªã„è¨­è¨ˆ)
-- Google Cloud STT/TTSçµ±åˆ
-- Google Places APIé€£æº(åº—èˆ—å†™çœŸå–å¾—)
-- æ·±æŽ˜ã‚Šè³ªå•å¯¾å¿œ + é‡‘é¡è¡¨è¨˜ã®è‡ªç„¶åŒ–
-- CORSå®Œå…¨å¯¾å¿œ + æµ·å¤–ã‚¨ãƒªã‚¢æ¤œç´¢ãƒ­ã‚¸ãƒƒã‚¯æ”¹å–„
-- RAMãƒ™ãƒ¼ã‚¹ã®ã‚»ãƒƒã‚·ãƒ§ãƒ³ç®¡ç† (Firestoreå®Œå…¨å»ƒæ­¢) â˜…Step 1å®Œäº†â˜…
+汎用カスタマーサポートシステム (Gemini API版) - 改善版
+- プロンプト駆動型の質問フロー
+- 会話要約による確認
+- 質問要約書の生成(即答しない設計)
+- Google Cloud STT/TTS統合
+- Google Places API連携(店舗写真取得)
+- 深掘り質問対応 + 金額表記の自然化
+- CORS完全対応 + 海外エリア検索ロジック改善
+- RAMベースのセッション管理 (Firestore完全廃止) ★Step 1完了★
 """
 import os
 import re
@@ -706,7 +706,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
     - åŸºæœ¬: ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã‚’è¡¨ç¤º
     - ä¾‹å¤–(æ—¥æœ¬èªžã‹ã¤æ—¥æœ¬å›½å†…): å›½å†…3ã‚µã‚¤ãƒˆã‚’è¡¨ç¤ºã—ã€ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã¯éžè¡¨ç¤º
     """
-    enriched_shops = []
+
     seen_place_ids = set()  # âœ… é‡è¤‡ãƒã‚§ãƒƒã‚¯ç”¨
     duplicate_count = 0
     validation_failed_count = 0
@@ -744,8 +744,9 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         place_data = search_place(shop_name, area, geo_info, language)
         
         if not place_data:
-            logger.warning(f"[Enrich] Places APIã§è¦‹ã¤ã‹ã‚‰ãªã„ã€ã¾ãŸã¯æ¤œè¨¼å¤±æ•—ã§ã‚¹ã‚­ãƒƒãƒ—: {shop_name}")
+            logger.warning(f"[Enrich] Places APIで見つからない。LLMデータをそのまま使用: {shop_name}")
             validation_failed_count += 1
+            enriched_shops.append(shop)  # LLMデータを保持
             continue
 
         place_id = place_data.get('place_id')
@@ -1154,7 +1155,8 @@ class SupportAssistant:
             # ã€é‡è¦ã€‘configãƒ‘ãƒ©ãƒ¡ãƒ¼ã‚¿ã‚’ä½¿ç”¨ï¼ˆSDKã®æ­£ã—ã„ä½¿ã„æ–¹ï¼‰
             config = types.GenerateContentConfig(
                 system_instruction=system_prompt if system_prompt else None,
-                tools=tools if tools else None
+                tools=tools if tools else None,
+                response_mime_type="application/json"  # JSON形式を強制
             )
 
             response = gemini_client.models.generate_content(
@@ -1174,6 +1176,17 @@ class SupportAssistant:
 
             logger.info(f"[Assistant] Gemini response received: {len(assistant_text)} chars")
 
+
+            # 【デバッグ】エンコーディング確認用ログ
+            logger.info(f"[DEBUG] Response encoding type: {type(assistant_text)}")
+            logger.info(f"[DEBUG] Response first 200 chars: {repr(assistant_text[:200])}")
+
+            # UTF-8として正しくエンコードされているか確認
+            try:
+                test_encode = assistant_text.encode('utf-8')
+                logger.info(f"[DEBUG] UTF-8 encoding test: OK ({len(test_encode)} bytes)")
+            except Exception as e:
+                logger.error(f"[DEBUG] UTF-8 encoding test: FAILED - {e}")
             parsed_message, parsed_shops = self._parse_json_response(assistant_text)
 
             if parsed_shops:
@@ -1306,26 +1319,46 @@ class SupportAssistant:
         return "\n".join(lines)
 
     def _parse_json_response(self, text: str) -> tuple:
-        """JSONãƒ¬ã‚¹ãƒãƒ³ã‚¹ã‚’ãƒ‘ãƒ¼ã‚¹"""
+        """JSONレスポンスをパース - 最初のJSONオブジェクトのみ抽出"""
         try:
-            cleaned_text = text.strip()
-            if cleaned_text.startswith('```'):
-                lines = cleaned_text.split('\n')
-                cleaned_text = '\n'.join(lines[1:])
-            if cleaned_text.endswith('```'):
-                cleaned_text = cleaned_text[:-3]
-            cleaned_text = cleaned_text.strip()
-
-            data = json.loads(cleaned_text)
-
+            # 【重要】最初の { から 対応する } までを抽出
+            # 入れ子のJSONに対応するため、ブレースのカウントを行う
+            start_idx = text.find('{')
+            if start_idx == -1:
+                logger.warning("[JSON Parse] JSON形式が見つかりません")
+                shops = extract_shops_from_response(text)
+                return text, shops
+            
+            # ブレースのカウントで対応する閉じブレースを見つける
+            brace_count = 0
+            end_idx = -1
+            for i in range(start_idx, len(text)):
+                if text[i] == '{':
+                    brace_count += 1
+                elif text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_idx = i + 1
+                        break
+            
+            if end_idx == -1:
+                logger.warning("[JSON Parse] JSONの閉じブレースが見つかりません")
+                shops = extract_shops_from_response(text)
+                return text, shops
+            
+            json_str = text[start_idx:end_idx].strip()
+            logger.info(f"[JSON Parse] JSONオブジェクトを検出: {len(json_str)}文字")
+            
+            data = json.loads(json_str)
+            
             message = data.get('message', text)
             shops = data.get('shops', [])
-
-            logger.info(f"[JSON Parse] æˆåŠŸ: message={len(message)}æ–‡å­—, shops={len(shops)}ä»¶")
+            
+            logger.info(f"[JSON Parse] 成功: message={len(message)}文字, shops={len(shops)}件")
             return message, shops
-
+            
         except json.JSONDecodeError as e:
-            logger.warning(f"[JSON Parse] ãƒ‘ãƒ¼ã‚¹å¤±æ•—ã€å¹³æ–‡ã¨ã—ã¦å‡¦ç†: {e}")
+            logger.warning(f"[JSON Parse] パース失敗: {e}")
             shops = extract_shops_from_response(text)
             return text, shops
 
@@ -1514,6 +1547,10 @@ def chat():
         elif is_followup:
             logger.info(f"[Chat] æ·±æŽ˜ã‚Šè³ªå•ã¸ã®å›žç­”: {response_text[:100]}...")
 
+        # 【デバッグ】最終的なshopsの内容を確認
+        logger.info(f"[Chat] 最終shops配列: {len(shops)}件")
+        if shops:
+            logger.info(f"[Chat] shops[0] keys: {list(shops[0].keys())}")
         return jsonify({
             'response': response_text,
             'summary': result['summary'],
