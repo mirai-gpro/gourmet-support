@@ -6,10 +6,13 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# アプリケーションファイルをコピー
+# アプリケーションファイルをコピー（3ファイル構成）
 COPY app_customer_support.py .
+COPY support_core.py .
+COPY api_integrations.py .
 COPY prompt_manager.py .
 COPY templates/ templates/
+COPY prompts/ prompts/
 
 # ポートを公開
 EXPOSE 8080
