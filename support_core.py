@@ -81,6 +81,45 @@ def load_prompts_from_gcs():
         logger.error(f"[Prompt] GCS読み込み失敗: {e}")
         return None
 
+def load_prompts_from_local():
+    """
+    ローカルファイルから2種類のプロンプトを読み込み (フォールバック)
+    """
+    prompts = {
+        'chat': {},
+        'concierge': {}
+    }
+
+    for lang in ['ja', 'en', 'zh', 'ko']:
+        # チャットモード用
+        chat_file = f'prompts/support_system_{lang}.txt'
+        try:
+            with open(chat_file, 'r', encoding='utf-8') as f:
+                prompts['chat'][lang] = f.read()
+                logger.info(f"[Prompt] ローカルから読み込み成功: support_system_{lang}.txt")
+        except FileNotFoundError:
+            logger.warning(f"[Prompt] ローカルファイルが見つかりません: {chat_file}")
+        except Exception as e:
+            logger.error(f"[Prompt] ローカル読み込みエラー (chat/{lang}): {e}")
+
+        # コンシェルジュモード用
+        concierge_file = f'prompts/concierge_{lang}.txt'
+        try:
+            with open(concierge_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+                try:
+                    json_data = json.loads(content)
+                    prompts['concierge'][lang] = json_data.get('concierge_system', content)
+                except json.JSONDecodeError:
+                    prompts['concierge'][lang] = content
+                logger.info(f"[Prompt] ローカルから読み込み成功: concierge_{lang}.txt")
+        except FileNotFoundError:
+            logger.warning(f"[Prompt] ローカルファイルが見つかりません: {concierge_file}")
+        except Exception as e:
+            logger.error(f"[Prompt] ローカル読み込みエラー (concierge/{lang}): {e}")
+
+    return prompts if (prompts['chat'] or prompts['concierge']) else None
+
 def load_system_prompts():
     logger.info("[Prompt] プロンプト読み込み開始...")
     prompts = load_prompts_from_gcs()
