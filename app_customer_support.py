@@ -607,6 +607,7 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         query = f"{shop_name} {area} {region}".strip()
     else:
         query = f"{shop_name} {area}".strip()
+    logger.info(f"[Places API] 📍 検索開始: shop_name='{shop_name}', area='{area}', region='{region}', expected_country={expected_country}")
 
     try:
         search_url = 'https://maps.googleapis.com/maps/api/place/textsearch/json'
@@ -642,8 +643,12 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
             return None
 
         place = data['results'][0]
+        results_count = len(data.get('results', []))
+        logger.info(f"[Places API] 📊 検索結果: {results_count}件ヒット")
+
         place_id = place['place_id']
 
+        logger.info(f"[Places API] 🏆 1番目の結果: name='{place.get('name')}', address='{place.get('formatted_address', '')[:50]}...'")
         # ç”»åƒURLã‚’ç”Ÿæˆ
         photo_url = None
         if place.get('photos'):
@@ -666,6 +671,8 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         # âœ… Place Details APIã§é›»è©±ç•ªå·ã¨å›½ã‚³ãƒ¼ãƒ‰ã‚’å–å¾—
         details = get_place_details(place_id, language)
         actual_country = details.get('country_code')
+
+        logger.info(f"[Places API] 🌍 国コード検証: expected={expected_country}, actual={actual_country}")
 
         # âœ… å›½ã‚³ãƒ¼ãƒ‰æ¤œè¨¼
         if actual_country and expected_country and actual_country != expected_country:
