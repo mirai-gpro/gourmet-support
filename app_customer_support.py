@@ -1527,20 +1527,20 @@ def chat():
         # å¤šè¨€èªžãƒ¡ãƒƒã‚»ãƒ¼ã‚¸è¾žæ›¸
         shop_messages = {
             'ja': {
-                'intro': lambda count: f"ã”å¸Œæœ›ã«åˆã†ãŠåº—ã‚’{count}ä»¶ã”ç´¹ä»‹ã—ã¾ã™ã€‚\n\n",
-                'not_found': "ç”³ã—è¨³ã”ã–ã„ã¾ã›ã‚“ã€‚æ¡ä»¶ã«åˆã†ãŠåº—ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“ã§ã—ãŸã€‚åˆ¥ã®æ¡ä»¶ã§ãŠæŽ¢ã—ã„ãŸã ã‘ã¾ã™ã‹?"
+                'intro': lambda count: f"ご希望に合うお店を{count}件ご紹介します。\n\n",
+                'not_found': "申し訳ございません。条件に合うお店が見つかりませんでした。別の条件でお探しいただけますか?"
             },
             'en': {
                 'intro': lambda count: f"Here are {count} restaurant recommendations for you.\n\n",
                 'not_found': "Sorry, we couldn't find any restaurants matching your criteria. Would you like to search with different conditions?"
             },
             'zh': {
-                'intro': lambda count: f"ä¸ºæ‚¨æŽ¨è{count}å®¶é¤åŽ…ã€‚\n\n",
-                'not_found': "å¾ˆæŠ±æ­‰,æ²¡æœ‰æ‰¾åˆ°ç¬¦åˆæ¡ä»¶çš„é¤åŽ…ã€‚è¦ç”¨å…¶ä»–æ¡ä»¶æœç´¢å—?"
+                'intro': lambda count: f"为您推荐{count}家餐厅。\n\n",
+                'not_found': "很抱歉,没有找到符合条件的餐厅。要用其他条件搜索吗?"
             },
             'ko': {
-                'intro': lambda count: f"ê³ ê°ë‹˜ê»˜ {count}ê°œì˜ ì‹ë‹¹ì„ ì¶”ì²œí•©ë‹ˆë‹¤.\n\n",
-                'not_found': "ì£„ì†¡í•©ë‹ˆë‹¤. ì¡°ê±´ì— ë§žëŠ” ì‹ë‹¹ì„ ì°¾ì„ ìˆ˜ ì—†ì—ˆìŠµë‹ˆë‹¤. ë‹¤ë¥¸ ì¡°ê±´ìœ¼ë¡œ ì°¾ìœ¼ì‹œê² ìŠµë‹ˆê¹Œ?"
+                'intro': lambda count: f"고객님께 {count}개의 식당을 추천합니다.\n\n",
+                'not_found': "죄송합니다. 조건에 맞는 식당을 찾을 수 없었습니다. 다른 조건으로 찾으시겠습니까?"
             }
         }
 
