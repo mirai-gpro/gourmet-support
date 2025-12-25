@@ -1311,18 +1311,25 @@ class SupportAssistant:
         try:
             cleaned_text = text.strip()
 
-            # 【重要】Gemini 2.0が```json```で囲む問題に対応
-            if cleaned_text.startswith('```json'):
-                cleaned_text = cleaned_text[7:]  # ```json を削除
-            elif cleaned_text.startswith('```'):
-                cleaned_text = cleaned_text[3:]  # ``` を削除
-
-            if cleaned_text.endswith('```'):
-                cleaned_text = cleaned_text[:-3]
-
+            # 【重要】Gemini 2.0がコードブロックで囲む問題に対応
+            # 正規表現で ```json または ``` で始まり ``` で終わるパターンを削除
+            # パターン1: ```json
+{...}
+```
+            # パターン2: ```
+{...}
+```
+            # パターン3: ```{...}```
+            
+            # まず、```json または ``` で始まる場合は削除
+            cleaned_text = re.sub(r'^```(?:json)?\s*', '', cleaned_text)
+            # 末尾の ``` を削除
+            cleaned_text = re.sub(r'\s*```\s*$', '', cleaned_text)
+            
             cleaned_text = cleaned_text.strip()
 
-            logger.info(f"[JSON Parse] Parsing text (first 200 chars): {cleaned_text[:200]}")
+            # デバッグログ：パース前のテキストを確認
+            logger.info(f"[JSON Parse] Cleaned text (first 200 chars): {cleaned_text[:200]}")
 
             data = json.loads(cleaned_text)
 
@@ -1334,7 +1341,8 @@ class SupportAssistant:
 
         except json.JSONDecodeError as e:
             logger.warning(f"[JSON Parse] パース失敗、平文として処理: {e}")
-            logger.warning(f"[JSON Parse] Failed text (first 500 chars): {text[:500]}")
+            logger.warning(f"[JSON Parse] Original text (first 500 chars): {text[:500]}")
+            logger.warning(f"[JSON Parse] Cleaned text (first 500 chars): {cleaned_text[:500] if 'cleaned_text' in locals() else 'N/A'}")
             shops = extract_shops_from_response(text)
             return text, shops
 
