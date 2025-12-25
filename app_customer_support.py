@@ -1154,7 +1154,8 @@ class SupportAssistant:
             # ã€é‡è¦ã€‘configãƒ‘ãƒ©ãƒ¡ãƒ¼ã‚¿ã‚’ä½¿ç”¨ï¼ˆSDKã®æ­£ã—ã„ä½¿ã„æ–¹ï¼‰
             config = types.GenerateContentConfig(
                 system_instruction=system_prompt if system_prompt else None,
-                tools=tools if tools else None
+                tools=tools if tools else None,
+                response_mime_type="application/json"  # JSON形式を強制
             )
 
             response = gemini_client.models.generate_content(
