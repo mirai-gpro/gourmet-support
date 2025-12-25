@@ -564,7 +564,8 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
         data = response.json()
 
         if data.get('status') != 'OK':
-            logger.warning(f"[Place Details API] å–å¾—å¤±æ•—: {data.get('status')} - {place_id}")
+            error_msg = data.get('error_message', '')
+            logger.warning(f"[Place Details API] å–å¾—å¤±æ•—: {data.get('status')} - {place_id} - {error_msg}")
             return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
 
         result = data.get('result', {})
@@ -586,11 +587,15 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
         # 住所取得
         formatted_address = result.get('formatted_address')
 
-        if phone or photos or formatted_address:
-            logger.info(f"[Place Details API] 取得成功: 電話={phone}, 国={country_code}, 写真={'あり' if photos else 'なし'}, 住所={'あり' if formatted_address else 'なし'}")
+        # 詳細ログ出力（すべてのケースで）
+        logger.info(f"[Place Details API] 取得結果: place_id={place_id}, 電話={phone}, 国={country_code}, 写真={'あり' if photos else 'なし'}, 住所={'あり' if formatted_address else 'なし'}")
+
+        # データが全く取得できなかった場合は警告
+        if not phone and not photos and not formatted_address:
+            logger.warning(f"[Place Details API] ⚠️ 全データ空: place_id={place_id} - APIレスポンスは成功だがデータなし")
 
         return {
-            'phone': phone, 
+            'phone': phone,
             'country_code': country_code,
             'photos': photos,
             'formatted_address': formatted_address
@@ -602,7 +607,7 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
         return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
     except Exception as e:
         logger.error(f"[Place Details API] ã‚¨ãƒ©ãƒ¼: {e}")
-        return None
+        return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
 
 
 def search_place(shop_name: str, area: str = '', geo_info: dict = None, language: str = 'ja') -> dict:
