@@ -1307,28 +1307,40 @@ class SupportAssistant:
         return "\n".join(lines)
 
     def _parse_json_response(self, text: str) -> tuple:
-        """JSONãƒ¬ã‚¹ãƒãƒ³ã‚¹ã‚’ãƒ‘ãƒ¼ã‚¹"""
+        """JSONレスポンスをパース（コードブロックを完全に削除）"""
         try:
             cleaned_text = text.strip()
-            if cleaned_text.startswith('```'):
-                lines = cleaned_text.split('\n')
-                cleaned_text = '\n'.join(lines[1:])
+
+            # 【重要】Gemini 2.0が```json```で囲む問題に対応
+            # ```json または ``` で始まる場合、コードブロックを削除
+            if cleaned_text.startswith('```json'):
+                cleaned_text = cleaned_text[7:]  # ```json を削除
+            elif cleaned_text.startswith('```'):
+                cleaned_text = cleaned_text[3:]  # ``` を削除
+
+            # 末尾の``` を削除
             if cleaned_text.endswith('```'):
                 cleaned_text = cleaned_text[:-3]
+
             cleaned_text = cleaned_text.strip()
+
+            # デバッグログ：パース前のテキストを確認
+            logger.info(f"[JSON Parse] Parsing text (first 200 chars): {cleaned_text[:200]}")
 
             data = json.loads(cleaned_text)
 
             message = data.get('message', text)
             shops = data.get('shops', [])
 
-            logger.info(f"[JSON Parse] æˆåŠŸ: message={len(message)}æ–‡å­—, shops={len(shops)}ä»¶")
+            logger.info(f"[JSON Parse] 成功: message={len(message)}文字, shops={len(shops)}件")
             return message, shops
 
         except json.JSONDecodeError as e:
-            logger.warning(f"[JSON Parse] ãƒ‘ãƒ¼ã‚¹å¤±æ•—ã€å¹³æ–‡ã¨ã—ã¦å‡¦ç†: {e}")
+            logger.warning(f"[JSON Parse] パース失敗、平文として処理: {e}")
+            logger.warning(f"[JSON Parse] Failed text (first 500 chars): {text[:500]}")
             shops = extract_shops_from_response(text)
             return text, shops
+
 
     def _generate_summary(self, user_message, assistant_response):
         """ä¼šè©±ã®è¦ç´„ã‚’ç”Ÿæˆ"""
