@@ -156,9 +156,9 @@ def chat():
     """
     チャット処理 - 改善版
     
-    【重要ã€'æ"¹å–"さã'ŒãŸãƒ•ãƒ­ãƒ¼ï¼ˆé †åºã''厳守):
+    【重要】改善されたフロー(順序を厳守):
     1. 状態確定 (State First): モード・言語を更新
-    2. ユーザー入力を記録: メッã'»ãƒ¼ã'¸ã''å±¥æ­´ã«è¿½åŠ 
+    2. ユーザー入力を記録: メッセージを履歴に追加
     3. 知能生成 (Assistant作成): 最新の状態でアシスタントを作成
     4. 推論開始: Gemini APIを呼び出し
     5. アシスタント応答を記録: å±¥æ­´ã«è¿½åŠ 
@@ -534,7 +534,7 @@ def transcribe_audio_streaming():
 
 @app.route('/api/session/<session_id>', methods=['GET', 'OPTIONS'])
 def get_session(session_id):
-    """ã'»ãƒƒã'·ãƒ§ãƒ³æƒ…å ±å–å¾—"""
+    """セッション情報取得"""
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -683,7 +683,7 @@ def handle_audio_chunk(data):
         # ★★★ sample_rateを取得(16kHzで受信) ★★★
         sample_rate = data.get('sample_rate', 16000)
         
-        # ★★★ çµ±è¨ˆæƒ…å ±ã''取得してロã'°å‡ºåŠ›(必ず出力) ★★★
+        # ★★★ 統計情報を取得してログ出力(必ず出力) ★★★
         stats = data.get('stats')
         logger.info(f"[audio_chunk受信] sample_rate: {sample_rate}Hz, stats: {stats}")
         
@@ -693,7 +693,7 @@ def handle_audio_chunk(data):
                        f"送信チャンク数: {stats.get('chunksSent')}, "
                        f"空入力回数: {stats.get('emptyInputCount')}, "
                        f"process呼び出し回数: {stats.get('processCalls')}, "
-                       f"オーバーフロー回数: {stats.get('overflowCount', 0)}")  # ★ ã'ªãƒ¼ãƒãƒ¼ãƒ•ãƒ­ãƒ¼è¿½åŠ 
+                       f"オーバーフロー回数: {stats.get('overflowCount', 0)}")  # ★ オーバーフロー追加
 
         audio_chunk = base64.b64decode(chunk_base64)
         

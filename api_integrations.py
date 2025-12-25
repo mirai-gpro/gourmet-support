@@ -117,7 +117,7 @@ def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = 
             'language': language
         }
 
-        # 座標がã'ã'‹å ´åˆã¯è¿½åŠ 
+        # 座標がある場合は追加
         if lat is not None and lng is not None:
             params['latLong'] = f"{lat},{lng}"
 
@@ -157,7 +157,7 @@ def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = 
 
 def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
     """
-    TripAdvisor Location Details APIã§è©•ä¾¡æƒ…å ±ã''取得
+    TripAdvisor Location Details APIで評価情報を取得
     """
     if not TRIPADVISOR_API_KEY or not location_id:
         return None
@@ -170,7 +170,7 @@ def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
             'language': language
         }
 
-        # 【修正】ここにも User-Agent ã''è¿½åŠ 
+        # 【修正】ここにも User-Agent を追加
         headers = {
             'accept': 'application/json',
             'Referer': MY_DOMAIN_URL,
@@ -206,14 +206,14 @@ def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
 
 def get_tripadvisor_data(shop_name: str, lat: float = None, lng: float = None, language: str = 'en') -> dict:
     """
-    TripAdvisor APIã§åº—èˆ—æƒ…å ±ã''取得(検索 + 詳細)
+    TripAdvisor APIで店舗情報を取得(検索 + 詳細)
     """
     # Location IDを検索
     location_data = search_tripadvisor_location(shop_name, lat, lng, language)
     if not location_data:
         return None
 
-    # è©³ç´°æƒ…å ±ã''取得
+    # 詳細情報を取得
     details = get_tripadvisor_details(location_data['location_id'], language)
     if not details:
         return None
@@ -231,7 +231,7 @@ def get_tripadvisor_data(shop_name: str, lat: float = None, lng: float = None, l
 
 def get_region_from_area(area: str, language: str = 'ja') -> dict:
     """
-    Geocoding APIでã'¨ãƒªã'¢ã®åœ°åŸŸæƒ…å ±(国、都道府県/州、座標)を取得
+    Geocoding APIでエリアの地域情報(国、都道府県/州、座標)を取得
     """
     if not area:
         return None
@@ -393,7 +393,7 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
             'type': 'restaurant'
         }
 
-        # Geocoding APIの座標がã'ã'Œã°ä½ç½®ãƒã'¤ã'¢ã'¹ã''è¿½åŠ 
+        # Geocoding APIの座標があれば位置バイアスを追加
         if geo_info and geo_info.get('lat') and geo_info.get('lng'):
             params['location'] = f"{geo_info['lat']},{geo_info['lng']}"
 
@@ -486,12 +486,12 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         return None
 
 # ========================================
-# ã'·ãƒ§ãƒƒãƒ—æƒ…å ± 拡張ロジック (刷新版)
+# ショップ情報 拡張ロジック (刷新版)
 # ========================================
 
 def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') -> list:
     """
-    ショップリストに外部APIデーã'¿ã''è¿½åŠ (place_id重複排除付き、国コード検証強化版)
+    ショップリストに外部APIデータを追加 (place_id重複排除付き、国コード検証強化版)
     - 基本: トリップアドバイザーを表示
     - 例外(日本語かつ日本国内): 国内3サイトを表示し、トリップアドバイザーは非表示
     """
@@ -528,7 +528,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         logger.info(f"[Enrich] {i}/{len(shops)} 検索: '{shop_name}'")
 
         # -------------------------------------------------------
-        # 1. Google Places APIã§åŸºæœ¬æƒ…å ±ã''取得(国コード検証付き)
+        # 1. Google Places APIで基本情報を取得(国コード検証付き)
         # -------------------------------------------------------
         # 店舗ごとのエリアを使用(LLMのJSONから取得)
         shop_area = shop.get('area', '') or area  # LLMのareaを優先、なければグローバルのareaを使用
@@ -574,7 +574,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
             show_tripadvisor = False      # トリップアドバイザーは出さない
             show_domestic_sites = True    # 国内3サイトを出す
         
-        # 将来的な拡張(例:台湾・éŸ"国でã''食べロã'°ã''å‡ºã™å ´åˆ)
+        # 将来的な拡張(例:台湾・韓国でも食べログを出す場合)
         # if language == 'ja' and shop_country in ['TW', 'KR']:
         #     show_domestic_sites = True
         
@@ -658,7 +658,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
                     # 検索実行
                     tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, search_lang)
 
-                    # 0ä»¶ã‹ã¤æ—¥æœ¬èªžã®å ´åˆã€è‹±èªžã§å†ãƒˆãƒ©ã'¤(ヒット率向上策)
+                    # 0件かつ日本語の場合、英語で再トライ(ヒット率向上策)
                     if not tripadvisor_data and search_lang == 'ja':
                         logger.info(f"[TripAdvisor] 日本語でヒットせず。英語で再検索: {shop_name}")
                         tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, 'en')
@@ -709,7 +709,7 @@ def extract_area_from_text(text: str, language: str = 'ja') -> str:
 
 def extract_shops_from_response(text: str) -> list:
     """
-    LLMの応ç­"テã'­ã'¹ãƒˆã‹ã'‰ã'·ãƒ§ãƒƒãƒ—æƒ…å ±ã''抽出
+    LLMの応答テキストからショップ情報を抽出
     """
     shops = []
     pattern = r'(\d+)\.\s*\*\*([^*]+)\*\*\s*(?:\([^)]+\))?\s*[-:]:]\s*([^\n]+)'

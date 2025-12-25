@@ -194,12 +194,12 @@ class SupportSession:
         return data
 
     def add_message(self, role, content, message_type='chat'):
-        """メッã'»ãƒ¼ã'¸ã''è¿½åŠ ï¼ˆå½¹å‰²(Role)åˆ¥ã®æ§‹é€ ã§ä¿å­˜ï¼‰"""
+        """メッセージを追加(役割(Role)åˆ¥ã®æ§‹é€ ã§ä¿å­˜ï¼‰"""
         data = self.get_data()
         if not data:
             return None
         
-        # genai SDKが理解できã'‹æ§‹é€ で保存
+        # genai SDKが理解できる構造で保存
         message = {
             'role': 'user' if role == 'user' else 'model',
             'parts': [content],
@@ -207,7 +207,7 @@ class SupportSession:
             'timestamp': datetime.now().isoformat()
         }
         data['messages'].append(message)
-        logger.info(f"[Session] メッã'»ãƒ¼ã'¸è¿½åŠ : role={message['role']}, type={message_type}")
+        logger.info(f"[Session] メッセージ追加: role={message['role']}, type={message_type}")
         return message
 
     def get_history_for_api(self):
@@ -223,7 +223,7 @@ class SupportSession:
                 # types.Contentオブジェクトを作成
                 content = types.Content(
                     role=m['role'],
-                    parts=[types.Part(text=m['parts'][0])]  # partsは文字列のリã'¹ãƒˆãªã®ã§æœ€åˆã®è¦ç´ ã''取得
+                    parts=[types.Part(text=m['parts'][0])]  # partsは文字列のリストなので最初の要素を取得
                 )
                 history.append(content)
         
@@ -332,17 +332,17 @@ class SupportAssistant:
         ユーザーメッセージを処理
         
         【重要】改善されたフロー:
-        1. 履歴ã''æ§‹é€ åŒ–ãƒªã'¹ãƒˆã§å–å¾—
+        1. 履歴を構造化リストで取得
         2. 履歴には既に最新のユーザーメッセージが含まれている(add_messageã§è¿½åŠ æ¸ˆã¿ï¼‰
         3. そのため、履歴をそのままGeminiに渡す
         """
-        # 履歴ã''æ§‹é€ åŒ–ãƒªã'¹ãƒˆã§å–得(既に最新のユーã'¶ãƒ¼ãƒ¡ãƒƒã'»ãƒ¼ã'¸ã''含ã'€ï¼‰
+        # 履歴を構造化リストで取得(既に最新のユーザーメッセージを含む)
         history = self.session.get_history_for_api()
         current_shops = self.session.get_current_shops()
 
         is_followup = self.is_followup_question(user_message, current_shops)
 
-        # フã'©ãƒ­ãƒ¼ã'¢ãƒƒãƒ—ã®å ´åˆã¯ç¾åœ¨ã®åº—èˆ—æƒ…å ±ã''ã'·ã'¹ãƒ†ãƒ ãƒ—ãƒ­ãƒ³ãƒ—ãƒˆã«è¿½åŠ 
+        # フォローアップの場合は現在の店舗情報をシステムプロンプトに追加
         system_prompt = self.system_prompt
         if is_followup and current_shops:
             followup_messages = {
@@ -365,7 +365,7 @@ class SupportAssistant:
             }
             shop_context = f"\n\n{current_followup_msg['header']}\n{self._format_current_shops(current_shops)}\n\n{current_followup_msg['footer']}"
             system_prompt = self.system_prompt + shop_context
-            logger.info("[Assistant] フォローアップ質問モード: åº—èˆ—æƒ…å ±ã''ã'·ã'¹ãƒ†ãƒ ãƒ—ãƒ­ãƒ³ãƒ—ãƒˆã«è¿½åŠ ")
+            logger.info("[Assistant] フォローアップ質問モード: 店舗情報をシステムプロンプトに追加")
 
         # ツール設定
         tools = None
@@ -463,7 +463,7 @@ class SupportAssistant:
         conversation_lines = []
         for msg in all_messages:
             role_name = 'ユーザー' if msg.role == 'user' else 'アシスタント'
-            # msg.partsはtypes.Partã'ªãƒ–ã'¸ã'§ã'¯ãƒˆã®ãƒªã'¹ãƒˆãªã®ã§ã€æœ€åˆã®è¦ç´ のtextを取得
+            # msg.partsはtypes.Partオブジェクトのリストなので、最初の要素のtextを取得
             conversation_lines.append(f"{role_name}: {msg.parts[0].text}")
         conversation_text = '\n'.join(conversation_lines)
 
@@ -493,7 +493,7 @@ class SupportAssistant:
             return "要約の生成中にエラーが発生しました。"
 
     def _format_current_shops(self, shops):
-        """åº—èˆ—æƒ…å ±ã''æ•´å½¢ã—ã¦ãƒ—ãƒ­ãƒ³ãƒ—ãƒˆã«è¿½åŠ """
+        """店舗情報を整形してプロンプトに追加"""
         # 多言語ラベル
         shop_labels = {
             'ja': {
