@@ -1103,15 +1103,15 @@ class SupportAssistant:
 
     def process_user_message(self, user_message, conversation_stage='conversation'):
         """
-        ユーザーメッセージを処理
+        ãƒ¦ãƒ¼ã‚¶ãƒ¼ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã‚’å‡¦ç†
         
-        【重要】旧版方式に戻す（文字列プロンプト）:
-        1. 履歴をテキスト形式で取得
-        2. システムプロンプト + 履歴 + 現在のメッセージを文字列として構築
-        3. 旧SDKの model.generate_content(prompt) を使用
+        ã€é‡è¦ã€‘æ”¹å–„ã•ã‚ŒãŸãƒ•ãƒ­ãƒ¼:
+        1. å±¥æ­´ã‚’æ§‹é€ åŒ–ãƒªã‚¹ãƒˆã§å–å¾—
+        2. å±¥æ­´ã«ã¯æ—¢ã«æœ€æ–°ã®ãƒ¦ãƒ¼ã‚¶ãƒ¼ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ãŒå«ã¾ã‚Œã¦ã„ã‚‹ï¼ˆadd_messageã§è¿½åŠ æ¸ˆã¿ï¼‰
+        3. ãã®ãŸã‚ã€å±¥æ­´ã‚’ãã®ã¾ã¾Geminiã«æ¸¡ã™
         """
-        # 履歴を取得（RAMから）
-        all_messages = self.session.get_messages()
+        # å±¥æ­´ã‚’æ§‹é€ åŒ–ãƒªã‚¹ãƒˆã§å–å¾—ï¼ˆæ—¢ã«æœ€æ–°ã®ãƒ¦ãƒ¼ã‚¶ãƒ¼ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã‚’å«ã‚€ï¼‰
+        history = self.session.get_history_for_api()
         current_shops = self.session.get_current_shops()
 
         is_followup = self.is_followup_question(user_message, current_shops)
@@ -1142,33 +1142,29 @@ class SupportAssistant:
             system_prompt = self.system_prompt + shop_context
             logger.info("[Assistant] ãƒ•ã‚©ãƒ­ãƒ¼ã‚¢ãƒƒãƒ—è³ªå•ãƒ¢ãƒ¼ãƒ‰: åº—èˆ—æƒ…å ±ã‚’ã‚·ã‚¹ãƒ†ãƒ ãƒ—ãƒ­ãƒ³ãƒ—ãƒˆã«è¿½åŠ ")
 
+        # ãƒ„ãƒ¼ãƒ«è¨­å®š
+        tools = None
+        if not is_followup:
+            tools = [types.Tool(google_search=types.GoogleSearch())]
+            logger.info("[Assistant] Googleæ¤œç´¢ã‚°ãƒ©ã‚¦ãƒ³ãƒ‡ã‚£ãƒ³ã‚°ã‚’æœ‰åŠ¹åŒ–")
+
         try:
-            logger.info(f"[Assistant] Gemini API呼び出し開始: 履歴={len(all_messages)}件")
+            logger.info(f"[Assistant] Gemini APIå‘¼ã³å‡ºã—é–‹å§‹: å±¥æ­´={len(history)}ä»¶")
 
-            # 【旧版方式】文字列プロンプトを構築
-            prompt_parts = []
+            # ã€é‡è¦ã€‘configãƒ‘ãƒ©ãƒ¡ãƒ¼ã‚¿ã‚’ä½¿ç”¨ï¼ˆSDKã®æ­£ã—ã„ä½¿ã„æ–¹ï¼‰
+            config = types.GenerateContentConfig(
+                system_instruction=system_prompt if system_prompt else None,
+                tools=tools if tools else None
+            )
 
-            # システムプロンプトを追加
-            if system_prompt:
-                prompt_parts.append(f"System Instructions:\n{system_prompt}\n")
+            response = gemini_client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=history,
+                config=config
+            )
 
-            # 会話履歴を追加
-            if all_messages:
-                prompt_parts.append("Conversation History:")
-                for msg in all_messages[:-1]:  # 最後のメッセージ（現在のユーザーメッセージ）以外
-                    role = "User" if msg['role'] == 'user' else "Assistant"
-                    prompt_parts.append(f"{role}: {msg['content']}")
+            logger.info("[Assistant] Gemini APIå‘¼ã³å‡ºã—å®Œäº†")
 
-            # 現在のユーザーメッセージを追加
-            prompt_parts.append(f"\nCurrent User Message:\n{user_message}")
-
-            # プロンプトを結合
-            prompt = "\n".join(prompt_parts)
-
-            # 【旧版方式】旧SDKで文字列プロンプトを渡す
-            response = model.generate_content(prompt)
-
-            logger.info("[Assistant] Gemini API呼び出し完了")
             # ãƒ¬ã‚¹ãƒãƒ³ã‚¹ã‹ã‚‰ãƒ†ã‚­ã‚¹ãƒˆã‚’å–å¾—
             assistant_text = response.text
 
@@ -1223,13 +1219,15 @@ class SupportAssistant:
 
     def generate_final_summary(self):
         """æœ€çµ‚è¦ç´„ã‚’ç”Ÿæˆ"""
-        all_messages = self.session.get_messages()
+        all_messages = self.session.get_history_for_api()
         
-        # 会話テキストを整形
+        # ä¼šè©±ãƒ†ã‚­ã‚¹ãƒˆã‚’æ•´å½¢
+        # ã€é‡è¦ã€‘all_messagesã¯types.Contentã‚ªãƒ–ã‚¸ã‚§ã‚¯ãƒˆã®ãƒªã‚¹ãƒˆ
         conversation_lines = []
         for msg in all_messages:
-            role_name = 'ユーザー' if msg['role'] == 'user' else 'アシスタント'
-            conversation_lines.append(f"{role_name}: {msg['content']}")
+            role_name = 'ãƒ¦ãƒ¼ã‚¶ãƒ¼' if msg.role == 'user' else 'ã‚¢ã‚·ã‚¹ã‚¿ãƒ³ãƒˆ'
+            # msg.partsã¯types.Partã‚ªãƒ–ã‚¸ã‚§ã‚¯ãƒˆã®ãƒªã‚¹ãƒˆãªã®ã§ã€æœ€åˆã®è¦ç´ ã®textã‚’å–å¾—
+            conversation_lines.append(f"{role_name}: {msg.parts[0].text}")
         conversation_text = '\n'.join(conversation_lines)
 
         template = FINAL_SUMMARY_TEMPLATES.get(self.language, FINAL_SUMMARY_TEMPLATES['ja'])
@@ -1240,7 +1238,10 @@ class SupportAssistant:
 
         try:
             logger.info("[Assistant] Generating final summary")
-            response = model.generate_content(summary_prompt)
+            response = gemini_client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=summary_prompt
+            )
             summary = response.text
 
             self.session.update_status(
@@ -1338,7 +1339,10 @@ class SupportAssistant:
 
         try:
             logger.info("[Assistant] Generating summary")
-            response = model.generate_content(summary_prompt)
+            response = gemini_client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=summary_prompt
+            )
             return response.text
 
         except Exception as e:
