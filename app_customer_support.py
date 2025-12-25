@@ -1,42 +1,68 @@
 # -*- coding: utf-8 -*-
 """
-汎用カスタマーサポートシステム (Gemini API版) - リファクタリング版
-モジュール分割により保守性を向上
+汎用カスタマーサポートシステム (Gemini API版) - 改善版
+モジュール分割版(3ファイル構成)
+
+分割構成:
+- api_integrations.py: 外部API連携
+- support_core.py: ビジネスロジック・コアクラス
+- app_customer_support.py: Webアプリケーション層(本ファイル)
 """
 import os
+import re
+import json
 import base64
 import logging
 import threading
 import queue
 from datetime import datetime
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-from google.cloud import texttospeech, speech
+from google import genai
+from google.genai import types
+from google.cloud import texttospeech
+from google.cloud import speech
 
 # 新しいモジュールからインポート
-from config import (
-    ALLOWED_ORIGINS,
-    tts_client,
-    stt_client,
-    logger
+from api_integrations import (
+    enrich_shops_with_photos,
+    extract_area_from_text,
+    GOOGLE_PLACES_API_KEY
 )
-from prompts import load_system_prompts
-from session import SupportSession
-from assistant import SupportAssistant
-from utils import extract_area_from_text
-from integrations.enrichment import enrich_shops_with_photos
+from support_core import (
+    load_system_prompts,
+    INITIAL_GREETINGS,
+    SYSTEM_PROMPTS,
+    SupportSession,
+    SupportAssistant
+)
 
-# ========================================
-# Flask & SocketIO 初期化
-# ========================================
+# ロギング設定
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
+app.config["JSON_AS_ASCII"] = False  # UTF-8エンコーディングを有効化
+
+# ========================================
+# CORS & SocketIO 設定 (Claudeアドバイス適用版)
+# ========================================
+
+# 許可するオリジン(末尾のスラッシュなし)
+allowed_origins = [
+    "https://gourmet-sp-two.vercel.app",
+    "https://gourmet-sp.vercel.app",
+    "http://localhost:4321"
+]
 
 # SocketIO初期化 (cors_allowed_originsを明示的に指定)
 socketio = SocketIO(
     app,
-    cors_allowed_origins=ALLOWED_ORIGINS,
+    cors_allowed_origins=allowed_origins,
     async_mode='threading',
     logger=False,
     engineio_logger=False
@@ -45,7 +71,7 @@ socketio = SocketIO(
 # Flask-CORS初期化 (supports_credentials=True)
 CORS(app, resources={
     r"/*": {
-        "origins": ALLOWED_ORIGINS,
+        "origins": allowed_origins,
         "methods": ["GET", "POST", "OPTIONS"],
         "allow_headers": ["Content-Type", "Authorization"],
         "supports_credentials": True
@@ -56,57 +82,72 @@ CORS(app, resources={
 @app.after_request
 def after_request(response):
     origin = request.headers.get('Origin')
-    if origin in ALLOWED_ORIGINS:
+    if origin in allowed_origins:
         response.headers['Access-Control-Allow-Origin'] = origin
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    # UTF-8エンコーディングを明示
+    if response.content_type and 'application/json' in response.content_type:
+        response.headers['Content-Type'] = 'application/json; charset=utf-8'
     return response
 
-# ========================================
-# プロンプト読み込み
-# ========================================
+# Google Cloud TTS/STT初期化
+tts_client = texttospeech.TextToSpeechClient()
+stt_client = speech.SpeechClient()
 
+# プロンプト読み込み
 SYSTEM_PROMPTS = load_system_prompts()
 
-# ========================================
-# API Endpoints
-# ========================================
+@app.route('/')
+def index():
+    """フロントエンド表示"""
+    return render_template('support.html')
+
 
 @app.route('/api/session/start', methods=['POST', 'OPTIONS'])
 def start_session():
-    """セッション開始 - モード対応版"""
+    """
+    セッション開始 - モード対応
+    
+    【重要】改善されたフロー:
+    1. セッション初期化(モード・言語設定)
+    2. アシスタント作成(最新の状態で)
+    3. 初回メッセージ生成
+    4. å±¥æ­´ã«è¿½åŠ 
+    """
     if request.method == 'OPTIONS':
         return '', 204
 
     try:
-        data = request.json
-        language = data.get('language', 'ja')
-        mode = data.get('mode', 'chat')  # ★ モードを取得 (デフォルト: chat)
+        data = request.json or {}
         user_info = data.get('user_info', {})
+        language = data.get('language', 'ja')
+        mode = data.get('mode', 'chat')
 
+        # 1. セッション初期化
         session = SupportSession()
-        session.initialize(
-            user_info=user_info,
-            language=language,
-            mode=mode  # ★ モードを渡す
-        )
+        session.initialize(user_info, language=language, mode=mode)
+        logger.info(f"[Start Session] 新規セッション作成: {session.session_id}")
 
-        # ★★★ モード対応のアシスタントを作成 ★★★
+        # 2. アシスタント作成(最新の状態で)
         assistant = SupportAssistant(session, SYSTEM_PROMPTS)
+        
+        # 3. 初回メッセージ生成
         initial_message = assistant.get_initial_message()
 
-        logger.info(f"[Session Start] ID: {session.session_id}, Mode: {mode}, Language: {language}")
+        # 4. å±¥æ­´ã«è¿½åŠ ï¼ˆroleは'model')
+        session.add_message('model', initial_message, 'chat')
+
+        logger.info(f"[API] セッション開始: {session.session_id}, 言語: {language}, モード: {mode}")
 
         return jsonify({
             'session_id': session.session_id,
-            'initial_message': initial_message,
-            'mode': mode,
-            'language': language
+            'initial_message': initial_message
         })
 
     except Exception as e:
-        logger.error(f"[API] Session start error: {e}", exc_info=True)
+        logger.error(f"[API] セッション開始エラー: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -120,7 +161,7 @@ def chat():
     2. ユーザー入力を記録: メッセージを履歴に追加
     3. 知能生成 (Assistant作成): 最新の状態でアシスタントを作成
     4. 推論開始: Gemini APIを呼び出し
-    5. アシスタント応答を記録: 履歴に追加
+    5. アシスタント応答を記録: å±¥æ­´ã«è¿½åŠ 
     """
     if request.method == 'OPTIONS':
         return '', 204
@@ -218,6 +259,10 @@ def chat():
         elif is_followup:
             logger.info(f"[Chat] 深掘り質問への回答: {response_text[:100]}...")
 
+        # 【デバッグ】最終的なshopsの内容を確認
+        logger.info(f"[Chat] 最終shops配列: {len(shops)}件")
+        if shops:
+            logger.info(f"[Chat] shops[0] keys: {list(shops[0].keys())}")
         return jsonify({
             'response': response_text,
             'summary': result['summary'],
@@ -233,7 +278,7 @@ def chat():
 
 @app.route('/api/finalize', methods=['POST', 'OPTIONS'])
 def finalize_session():
-    """セッション終了と最終要約生成"""
+    """セッション完了"""
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -245,53 +290,53 @@ def finalize_session():
             return jsonify({'error': 'session_idが必要です'}), 400
 
         session = SupportSession(session_id)
+        session_data = session.get_data()
 
-        if not session.get_data():
+        if not session_data:
             return jsonify({'error': 'セッションが見つかりません'}), 404
 
         assistant = SupportAssistant(session, SYSTEM_PROMPTS)
-        summary = assistant.generate_final_summary()
-
-        logger.info(f"[Finalize] Session: {session_id}")
+        final_summary = assistant.generate_final_summary()
 
         return jsonify({
-            'summary': summary,
+            'summary': final_summary,
             'session_id': session_id
         })
 
     except Exception as e:
-        logger.error(f"[API] Finalize error: {e}", exc_info=True)
+        logger.error(f"[API] 完了処理エラー: {e}")
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/cancel', methods=['POST', 'OPTIONS'])
-def cancel_session():
-    """セッションキャンセル"""
+def cancel_processing():
+    """処理中止"""
     if request.method == 'OPTIONS':
         return '', 204
-
+    
     try:
         data = request.json
         session_id = data.get('session_id')
-
+        
         if not session_id:
             return jsonify({'error': 'session_idが必要です'}), 400
-
+        
+        logger.info(f"[API] 処理中止リクエスト: {session_id}")
+        
+        # セッションのステータスを更新
         session = SupportSession(session_id)
-        if not session.get_data():
-            return jsonify({'error': 'セッションが見つかりません'}), 404
-
-        session.update_status('cancelled')
-
-        logger.info(f"[Cancel] Session: {session_id}")
-
+        session_data = session.get_data()
+        
+        if session_data:
+            session.update_status('cancelled')
+        
         return jsonify({
             'success': True,
-            'session_id': session_id
+            'message': '処理を中止しました'
         })
-
+        
     except Exception as e:
-        logger.error(f"[API] Cancel error: {e}", exc_info=True)
+        logger.error(f"[API] 中止処理エラー: {e}")
         return jsonify({'error': str(e)}), 500
 
 
@@ -395,7 +440,7 @@ def transcribe_audio():
         if response.results:
             transcript = response.results[0].alternatives[0].transcript
             confidence = response.results[0].alternatives[0].confidence
-            logger.info(f"[STT] 認識成功: '{transcript}' (信頼度: {confidence:.2f})")
+            logger.info(f"[STT] 認識成功: '{transcript}' (ä¿¡é ¼åº¦: {confidence:.2f})")
         else:
             logger.warning("[STT] 音声が認識されませんでした")
 
@@ -412,9 +457,87 @@ def transcribe_audio():
         }), 500
 
 
-@app.route('/api/session/<session_id>', methods=['GET'])
+@app.route('/api/stt/stream', methods=['POST', 'OPTIONS'])
+def transcribe_audio_streaming():
+    """音声認識 (Streaming)"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
+    try:
+        data = request.json
+        audio_base64 = data.get('audio', '')
+        language_code = data.get('language_code', 'ja-JP')
+
+        if not audio_base64:
+            return jsonify({'success': False, 'error': '音声データが必要です'}), 400
+
+        logger.info(f"[STT Streaming] 認識開始: {len(audio_base64)} bytes (base64)")
+
+        audio_content = base64.b64decode(audio_base64)
+
+        recognition_config = speech.RecognitionConfig(
+            encoding=speech.RecognitionConfig.AudioEncoding.WEBM_OPUS,
+            sample_rate_hertz=48000,
+            language_code=language_code,
+            enable_automatic_punctuation=True,
+            model='default'
+        )
+
+        streaming_config = speech.StreamingRecognitionConfig(
+            config=recognition_config,
+            interim_results=False,
+            single_utterance=True
+        )
+
+        CHUNK_SIZE = 1024 * 16
+
+        def audio_generator():
+            for i in range(0, len(audio_content), CHUNK_SIZE):
+                chunk = audio_content[i:i + CHUNK_SIZE]
+                yield speech.StreamingRecognizeRequest(audio_content=chunk)
+
+        responses = stt_client.streaming_recognize(streaming_config, audio_generator())
+
+        transcript = ''
+        confidence = 0.0
+
+        for response in responses:
+            if not response.results:
+                continue
+
+            for result in response.results:
+                if result.is_final and result.alternatives:
+                    transcript = result.alternatives[0].transcript
+                    confidence = result.alternatives[0].confidence
+                    logger.info(f"[STT Streaming] 認識成功: '{transcript}' (ä¿¡é ¼åº¦: {confidence:.2f})")
+                    break
+
+            if transcript:
+                break
+
+        if not transcript:
+            logger.warning("[STT Streaming] 音声が認識されませんでした")
+
+        return jsonify({
+            'success': True,
+            'transcript': transcript,
+            'confidence': confidence
+        })
+
+    except Exception as e:
+        logger.error(f"[STT Streaming] エラー: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/session/<session_id>', methods=['GET', 'OPTIONS'])
 def get_session(session_id):
     """セッション情報取得"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
     try:
         session = SupportSession(session_id)
         data = session.get_data()
@@ -425,43 +548,174 @@ def get_session(session_id):
         return jsonify(data)
 
     except Exception as e:
-        logger.error(f"[API] Session get error: {e}", exc_info=True)
+        logger.error(f"[API] セッション取得エラー: {e}")
         return jsonify({'error': str(e)}), 500
 
 
-@app.route('/health', methods=['GET'])
+@app.route('/health', methods=['GET', 'OPTIONS'])
 def health_check():
     """ヘルスチェック"""
+    if request.method == 'OPTIONS':
+        return '', 204
+
     return jsonify({
         'status': 'healthy',
-        'service': 'gourmet-support',
-        'timestamp': datetime.now().isoformat()
+        'timestamp': datetime.now().isoformat(),
+        'services': {
+            'gemini': 'ok',
+            'ram_session': 'ok',
+            'tts': 'ok',
+            'stt': 'ok',
+            'places_api': 'ok' if GOOGLE_PLACES_API_KEY else 'not configured'
+        }
     })
 
 
 # ========================================
-# WebSocket Streaming (簡略版 - 必要に応じて拡張)
+# WebSocket Streaming STT
 # ========================================
 
 active_streams = {}
 
 @socketio.on('connect')
 def handle_connect():
-    logger.info(f"[WebSocket] Client connected: {request.sid}")
-
+    logger.info(f"[WebSocket STT] クライアント接続: {request.sid}")
+    emit('connected', {'status': 'ready'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    logger.info(f"[WebSocket] Client disconnected: {request.sid}")
+    logger.info(f"[WebSocket STT] クライアント切断: {request.sid}")
     if request.sid in active_streams:
         stream_data = active_streams[request.sid]
+        if 'stop_event' in stream_data:
+            stream_data['stop_event'].set()
+        del active_streams[request.sid]
+
+@socketio.on('start_stream')
+def handle_start_stream(data):
+    language_code = data.get('language_code', 'ja-JP')
+    sample_rate = data.get('sample_rate', 16000)  # フロントエンドから受け取る
+    client_sid = request.sid
+    logger.info(f"[WebSocket STT] ストリーム開始: {client_sid}, 言語: {language_code}, サンプルレート: {sample_rate}Hz")
+
+    recognition_config = speech.RecognitionConfig(
+        encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
+        sample_rate_hertz=sample_rate,  # 動的に設定
+        language_code=language_code,
+        enable_automatic_punctuation=True,
+        model='latest_long'  # より高精度なモデルに変更
+    )
+
+    streaming_config = speech.StreamingRecognitionConfig(
+        config=recognition_config,
+        interim_results=True,
+        single_utterance=False
+    )
+
+    audio_queue = queue.Queue()
+    stop_event = threading.Event()
+
+    active_streams[client_sid] = {
+        'audio_queue': audio_queue,
+        'stop_event': stop_event,
+        'streaming_config': streaming_config
+    }
+
+    def audio_generator():
+        while not stop_event.is_set():
+            try:
+                chunk = audio_queue.get(timeout=0.5)
+                if chunk is None:
+                    break
+                yield speech.StreamingRecognizeRequest(audio_content=chunk)
+            except queue.Empty:
+                continue
+
+    def recognition_thread():
+        try:
+            logger.info(f"[WebSocket STT] 認識スレッド開始: {client_sid}")
+            responses = stt_client.streaming_recognize(streaming_config, audio_generator())
+
+            for response in responses:
+                if stop_event.is_set():
+                    break
+
+                if not response.results:
+                    continue
+
+                result = response.results[0]
+
+                if result.alternatives:
+                    transcript = result.alternatives[0].transcript
+                    confidence = result.alternatives[0].confidence if result.is_final else 0.0
+
+                    socketio.emit('transcript', {
+                        'text': transcript,
+                        'is_final': result.is_final,
+                        'confidence': confidence
+                    }, room=client_sid)
+
+                    if result.is_final:
+                        logger.info(f"[WebSocket STT] 最終認識: '{transcript}' (ä¿¡é ¼åº¦: {confidence:.2f})")
+                    else:
+                        logger.debug(f"[WebSocket STT] 途中認識: '{transcript}'")
+
+        except Exception as e:
+            logger.error(f"[WebSocket STT] 認識エラー: {e}", exc_info=True)
+            socketio.emit('error', {'message': str(e)}, room=client_sid)
+
+    thread = threading.Thread(target=recognition_thread, daemon=True)
+    thread.start()
+
+    emit('stream_started', {'status': 'streaming'})
+
+@socketio.on('audio_chunk')
+def handle_audio_chunk(data):
+    if request.sid not in active_streams:
+        logger.warning(f"[WebSocket STT] 未初期化のストリーム: {request.sid}")
+        return
+
+    try:
+        chunk_base64 = data.get('chunk', '')
+        if not chunk_base64:
+            return
+
+        # ★★★ sample_rateを取得(16kHzで受信) ★★★
+        sample_rate = data.get('sample_rate', 16000)
+        
+        # ★★★ 統計情報を取得してログ出力(必ず出力) ★★★
+        stats = data.get('stats')
+        logger.info(f"[audio_chunk受信] sample_rate: {sample_rate}Hz, stats: {stats}")
+        
+        if stats:
+            logger.info(f"[AudioWorklet統計] サンプルレート: {sample_rate}Hz, "
+                       f"サンプル総数: {stats.get('totalSamples')}, "
+                       f"送信チャンク数: {stats.get('chunksSent')}, "
+                       f"空入力回数: {stats.get('emptyInputCount')}, "
+                       f"process呼び出し回数: {stats.get('processCalls')}, "
+                       f"オーバーフロー回数: {stats.get('overflowCount', 0)}")  # ★ オーバーフロー追加
+
+        audio_chunk = base64.b64decode(chunk_base64)
+        
+        # ★★★ 16kHzそのままGoogle STTに送る ★★★
+        stream_data = active_streams[request.sid]
+        stream_data['audio_queue'].put(audio_chunk)
+
+    except Exception as e:
+        logger.error(f"[WebSocket STT] チャンク処理エラー: {e}", exc_info=True)
+
+@socketio.on('stop_stream')
+def handle_stop_stream():
+    logger.info(f"[WebSocket STT] ストリーム停止: {request.sid}")
+
+    if request.sid in active_streams:
+        stream_data = active_streams[request.sid]
+        stream_data['audio_queue'].put(None)
         stream_data['stop_event'].set()
         del active_streams[request.sid]
 
+    emit('stream_stopped', {'status': 'stopped'})
 
-# ========================================
-# Main Entry Point
-# ========================================
 
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 8080))
