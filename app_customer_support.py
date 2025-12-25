@@ -706,7 +706,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
     - åŸºæœ¬: ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã‚’è¡¨ç¤º
     - ä¾‹å¤–(æ—¥æœ¬èªžã‹ã¤æ—¥æœ¬å›½å†…): å›½å†…3ã‚µã‚¤ãƒˆã‚’è¡¨ç¤ºã—ã€ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã¯éžè¡¨ç¤º
     """
-    enriched_shops = []
+
     seen_place_ids = set()  # âœ… é‡è¤‡ãƒã‚§ãƒƒã‚¯ç”¨
     duplicate_count = 0
     validation_failed_count = 0
@@ -744,8 +744,9 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         place_data = search_place(shop_name, area, geo_info, language)
         
         if not place_data:
-            logger.warning(f"[Enrich] Places APIã§è¦‹ã¤ã‹ã‚‰ãªã„ã€ã¾ãŸã¯æ¤œè¨¼å¤±æ•—ã§ã‚¹ã‚­ãƒƒãƒ—: {shop_name}")
+            logger.warning(f"[Enrich] Places APIで見つからない。LLMデータをそのまま使用: {shop_name}")
             validation_failed_count += 1
+            enriched_shops.append(shop)  # LLMデータを保持
             continue
 
         place_id = place_data.get('place_id')
@@ -1318,36 +1319,46 @@ class SupportAssistant:
         return "\n".join(lines)
 
     def _parse_json_response(self, text: str) -> tuple:
-        """JSONレスポンスをパース（コードブロックを完全に削除）"""
+        """JSONレスポンスをパース - 最初のJSONオブジェクトのみ抽出"""
         try:
-            cleaned_text = text.strip()
-
-            # 【重要】Gemini 2.0がコードブロックで囲む問題に対応
-            # 正規表現で ```json または ``` で始まり ``` で終わるパターンを削除
-            # 例: ```json\n{...}\n``` または ```\n{...}\n``` または ```{...}```
-
-            # まず、```json または ``` で始まる場合は削除
-            cleaned_text = re.sub(r'^```(?:json)?\s*', '', cleaned_text)
-            # 末尾の ``` を削除
-            cleaned_text = re.sub(r'\s*```\s*$', '', cleaned_text)
+            # 【重要】最初の { から 対応する } までを抽出
+            # 入れ子のJSONに対応するため、ブレースのカウントを行う
+            start_idx = text.find('{')
+            if start_idx == -1:
+                logger.warning("[JSON Parse] JSON形式が見つかりません")
+                shops = extract_shops_from_response(text)
+                return text, shops
             
-            cleaned_text = cleaned_text.strip()
-
-            # デバッグログ：パース前のテキストを確認
-            logger.info(f"[JSON Parse] Cleaned text (first 200 chars): {cleaned_text[:200]}")
-
-            data = json.loads(cleaned_text)
-
+            # ブレースのカウントで対応する閉じブレースを見つける
+            brace_count = 0
+            end_idx = -1
+            for i in range(start_idx, len(text)):
+                if text[i] == '{':
+                    brace_count += 1
+                elif text[i] == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        end_idx = i + 1
+                        break
+            
+            if end_idx == -1:
+                logger.warning("[JSON Parse] JSONの閉じブレースが見つかりません")
+                shops = extract_shops_from_response(text)
+                return text, shops
+            
+            json_str = text[start_idx:end_idx].strip()
+            logger.info(f"[JSON Parse] JSONオブジェクトを検出: {len(json_str)}文字")
+            
+            data = json.loads(json_str)
+            
             message = data.get('message', text)
             shops = data.get('shops', [])
-
+            
             logger.info(f"[JSON Parse] 成功: message={len(message)}文字, shops={len(shops)}件")
             return message, shops
-
+            
         except json.JSONDecodeError as e:
-            logger.warning(f"[JSON Parse] パース失敗、平文として処理: {e}")
-            logger.warning(f"[JSON Parse] Original text (first 500 chars): {text[:500]}")
-            logger.warning(f"[JSON Parse] Cleaned text (first 500 chars): {cleaned_text[:500] if 'cleaned_text' in locals() else 'N/A'}")
+            logger.warning(f"[JSON Parse] パース失敗: {e}")
             shops = extract_shops_from_response(text)
             return text, shops
 
@@ -1536,6 +1547,10 @@ def chat():
         elif is_followup:
             logger.info(f"[Chat] æ·±æŽ˜ã‚Šè³ªå•ã¸ã®å›žç­”: {response_text[:100]}...")
 
+        # 【デバッグ】最終的なshopsの内容を確認
+        logger.info(f"[Chat] 最終shops配列: {len(shops)}件")
+        if shops:
+            logger.info(f"[Chat] shops[0] keys: {list(shops[0].keys())}")
         return jsonify({
             'response': response_text,
             'summary': result['summary'],
