@@ -78,6 +78,9 @@ def after_request(response):
         response.headers['Access-Control-Allow-Credentials'] = 'true'
         response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization'
+    # UTF-8エンコーディングを明示
+    if response.content_type and 'application/json' in response.content_type:
+        response.headers['Content-Type'] = 'application/json; charset=utf-8'
     return response
 
 # Gemini ã‚¯ãƒ©ã‚¤ã‚¢ãƒ³ãƒˆåˆæœŸåŒ–ï¼ˆ1å›žã ã‘ï¼‰
