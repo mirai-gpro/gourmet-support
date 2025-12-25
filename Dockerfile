@@ -10,7 +10,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app_customer_support.py .
 COPY support_core.py .
 COPY api_integrations.py .
-COPY prompt_manager.py .
 COPY templates/ templates/
 COPY prompts/ prompts/
 
