@@ -1312,19 +1312,16 @@ class SupportAssistant:
             cleaned_text = text.strip()
 
             # 【重要】Gemini 2.0が```json```で囲む問題に対応
-            # ```json または ``` で始まる場合、コードブロックを削除
             if cleaned_text.startswith('```json'):
                 cleaned_text = cleaned_text[7:]  # ```json を削除
             elif cleaned_text.startswith('```'):
                 cleaned_text = cleaned_text[3:]  # ``` を削除
 
-            # 末尾の``` を削除
             if cleaned_text.endswith('```'):
                 cleaned_text = cleaned_text[:-3]
 
             cleaned_text = cleaned_text.strip()
 
-            # デバッグログ：パース前のテキストを確認
             logger.info(f"[JSON Parse] Parsing text (first 200 chars): {cleaned_text[:200]}")
 
             data = json.loads(cleaned_text)
@@ -1340,7 +1337,6 @@ class SupportAssistant:
             logger.warning(f"[JSON Parse] Failed text (first 500 chars): {text[:500]}")
             shops = extract_shops_from_response(text)
             return text, shops
-
 
     def _generate_summary(self, user_message, assistant_response):
         """ä¼šè©±ã®è¦ç´„ã‚’ç”Ÿæˆ"""
