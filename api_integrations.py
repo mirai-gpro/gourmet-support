@@ -48,23 +48,23 @@ HOTPEPPER_AREA_CODES = {
 }
 
 # ========================================
-# ãƒ›ãƒƒãƒˆãƒšãƒƒãƒ‘ãƒ¼API é€£æº
+# ホットペッパーAPI 連携
 # ========================================
 
 def search_hotpepper(shop_name: str, area: str = '', geo_info: dict = None) -> str:
     """
-    ãƒ›ãƒƒãƒˆãƒšãƒƒãƒ‘ãƒ¼APIã§åº—èˆ—ã‚’æ¤œç´¢ã—ã¦åº—èˆ—ãƒšãƒ¼ã‚¸URLã‚’è¿”ã™
+    ホットペッパーAPIで店舗を検索して店舗ページURLを返す
     """
     if not HOTPEPPER_API_KEY:
-        logger.warning("[Hotpepper API] APIã‚­ãƒ¼ãŒè¨­å®šã•ã‚Œã¦ã„ã¾ã›ã‚“")
+        logger.warning("[Hotpepper API] APIキーが設定されていません")
         return None
 
-    # Geocoding APIã®çµæžœã‹ã‚‰éƒ½é“åºœçœŒã‚’å–å¾—
-    large_area = 'Z011'  # ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆæ±äº¬
+    # Geocoding APIの結果から都道府県を取得
+    large_area = 'Z011'  # デフォルト東京
     if geo_info:
         region = geo_info.get('region', '')
-        # "æ±äº¬éƒ½" â†’ "æ±äº¬" ã«å¤‰æ›ã—ã¦ã‚¨ãƒªã‚¢ã‚³ãƒ¼ãƒ‰ã‚’å–å¾—
-        pref = region.rstrip('éƒ½é“åºœçœŒ') if region else ''
+        # "東京都" → "東京" に変換してエリアコードを取得
+        pref = region.rstrip('都道府県') if region else ''
         large_area = HOTPEPPER_AREA_CODES.get(pref, 'Z011')
 
     try:
@@ -77,7 +77,7 @@ def search_hotpepper(shop_name: str, area: str = '', geo_info: dict = None) -> s
             'count': 1
         }
 
-        logger.info(f"[Hotpepper API] æ¤œç´¢: {shop_name} (ã‚¨ãƒªã‚¢: {large_area})")
+        logger.info(f"[Hotpepper API] 検索: {shop_name} (エリア: {large_area})")
 
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
@@ -87,25 +87,25 @@ def search_hotpepper(shop_name: str, area: str = '', geo_info: dict = None) -> s
 
         if shops:
             shop_url = shops[0].get('urls', {}).get('pc', '')
-            logger.info(f"[Hotpepper API] å–å¾—æˆåŠŸ: {shop_name} -> {shop_url}")
+            logger.info(f"[Hotpepper API] 取得成功: {shop_name} -> {shop_url}")
             return shop_url
         else:
-            logger.info(f"[Hotpepper API] çµæžœãªã—: {shop_name}")
+            logger.info(f"[Hotpepper API] 結果なし: {shop_name}")
             return None
 
     except Exception as e:
-        logger.error(f"[Hotpepper API] ã‚¨ãƒ©ãƒ¼: {e}")
+        logger.error(f"[Hotpepper API] エラー: {e}")
         return None
 
 # ========================================
-# TripAdvisor Content API é€£æº
+# TripAdvisor Content API 連携
 # ========================================
 def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = None, language: str = 'en') -> dict:
     """
-    TripAdvisor Location Search APIã§åº—èˆ—ã®location_idã‚’æ¤œç´¢
+    TripAdvisor Location Search APIで店舗のlocation_idを検索
     """
     if not TRIPADVISOR_API_KEY:
-        logger.warning("[TripAdvisor API] APIã‚­ãƒ¼ãŒè¨­å®šã•ã‚Œã¦ã„ã¾ã›ã‚“")
+        logger.warning("[TripAdvisor API] APIキーが設定されていません")
         return None
 
     try:
@@ -117,11 +117,11 @@ def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = 
             'language': language
         }
 
-        # åº§æ¨™ãŒã‚ã‚‹å ´åˆã¯è¿½åŠ 
+        # 座標がã'ã'‹å ´åˆã¯è¿½åŠ 
         if lat is not None and lng is not None:
             params['latLong'] = f"{lat},{lng}"
 
-        # ã€ä¿®æ­£ã€‘Referer (httpsä»˜ã) ã¨ User-Agent (ãƒ–ãƒ©ã‚¦ã‚¶å½è£…) ã‚’æŒ‡å®š
+        # 【修正】Referer (https付き) と User-Agent (ブラウザ偽装) を指定
         headers = {
             'accept': 'application/json',
             'Referer': MY_DOMAIN_URL,
@@ -157,7 +157,7 @@ def search_tripadvisor_location(shop_name: str, lat: float = None, lng: float = 
 
 def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
     """
-    TripAdvisor Location Details APIã§è©•ä¾¡æƒ…å ±ã‚’å–å¾—
+    TripAdvisor Location Details APIã§è©•ä¾¡æƒ…å ±ã''取得
     """
     if not TRIPADVISOR_API_KEY or not location_id:
         return None
@@ -170,7 +170,7 @@ def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
             'language': language
         }
 
-        # ã€ä¿®æ­£ã€‘ã“ã“ã«ã‚‚ User-Agent ã‚’è¿½åŠ 
+        # 【修正】ここにも User-Agent ã''è¿½åŠ 
         headers = {
             'accept': 'application/json',
             'Referer': MY_DOMAIN_URL,
@@ -206,14 +206,14 @@ def get_tripadvisor_details(location_id: str, language: str = 'en') -> dict:
 
 def get_tripadvisor_data(shop_name: str, lat: float = None, lng: float = None, language: str = 'en') -> dict:
     """
-    TripAdvisor APIã§åº—èˆ—æƒ…å ±ã‚’å–å¾—(æ¤œç´¢ + è©³ç´°)
+    TripAdvisor APIã§åº—èˆ—æƒ…å ±ã''取得(検索 + 詳細)
     """
-    # Location IDã‚’æ¤œç´¢
+    # Location IDを検索
     location_data = search_tripadvisor_location(shop_name, lat, lng, language)
     if not location_data:
         return None
 
-    # è©³ç´°æƒ…å ±ã‚’å–å¾—
+    # è©³ç´°æƒ…å ±ã''取得
     details = get_tripadvisor_details(location_data['location_id'], language)
     if not details:
         return None
@@ -226,18 +226,18 @@ def get_tripadvisor_data(shop_name: str, lat: float = None, lng: float = None, l
     }
 
 # ========================================
-# Google Geocoding API é€£æº
+# Google Geocoding API 連携
 # ========================================
 
 def get_region_from_area(area: str, language: str = 'ja') -> dict:
     """
-    Geocoding APIã§ã‚¨ãƒªã‚¢ã®åœ°åŸŸæƒ…å ±(å›½ã€éƒ½é“åºœçœŒ/å·žã€åº§æ¨™)ã‚’å–å¾—
+    Geocoding APIでã'¨ãƒªã'¢ã®åœ°åŸŸæƒ…å ±(国、都道府県/州、座標)を取得
     """
     if not area:
         return None
 
     if not GOOGLE_GEOCODING_API_KEY:
-        logger.warning("[Geocoding API] APIã‚­ãƒ¼ãŒè¨­å®šã•ã‚Œã¦ã„ã¾ã›ã‚“")
+        logger.warning("[Geocoding API] APIキーが設定されていません")
         return None
 
     try:
@@ -248,19 +248,19 @@ def get_region_from_area(area: str, language: str = 'ja') -> dict:
             'language': language
         }
 
-        logger.info(f"[Geocoding API] ã‚¨ãƒªã‚¢æ¤œç´¢: {area}")
+        logger.info(f"[Geocoding API] エリア検索: {area}")
 
         response = requests.get(url, params=params, timeout=10)
         data = response.json()
 
         if data.get('status') != 'OK' or not data.get('results'):
-            logger.warning(f"[Geocoding API] çµæžœãªã—: {area} (status: {data.get('status')})")
+            logger.warning(f"[Geocoding API] 結果なし: {area} (status: {data.get('status')})")
             return None
 
         result = data['results'][0]
         address_components = result.get('address_components', [])
 
-        # å›½ã¨éƒ½é“åºœçœŒ/å·žã‚’æŠ½å‡º
+        # 国と都道府県/州を抽出
         country = None
         country_code = None
         region = None
@@ -275,7 +275,7 @@ def get_region_from_area(area: str, language: str = 'ja') -> dict:
             if 'administrative_area_level_1' in types:
                 region = component.get('long_name')
 
-        # åº§æ¨™ã‚’å–å¾—
+        # 座標を取得
         location = result.get('geometry', {}).get('location', {})
         lat = location.get('lat')
         lng = location.get('lng')
@@ -289,24 +289,24 @@ def get_region_from_area(area: str, language: str = 'ja') -> dict:
             'lng': lng
         }
 
-        logger.info(f"[Geocoding API] å–å¾—æˆåŠŸ: {area} â†’ country={country}, region={region}, lat={lat}, lng={lng}")
+        logger.info(f"[Geocoding API] 取得成功: {area} → country={country}, region={region}, lat={lat}, lng={lng}")
         return geo_result
 
     except requests.exceptions.Timeout:
-        logger.error(f"[Geocoding API] ã‚¿ã‚¤ãƒ ã‚¢ã‚¦ãƒˆ: {area}")
+        logger.error(f"[Geocoding API] タイムアウト: {area}")
         return None
     except Exception as e:
-        logger.error(f"[Geocoding API] ã‚¨ãƒ©ãƒ¼: {e}")
+        logger.error(f"[Geocoding API] エラー: {e}")
         return None
 
 
 # ========================================
-# Google Places API é€£æº
+# Google Places API 連携
 # ========================================
 
 def get_place_details(place_id: str, language: str = 'ja') -> dict:
     """
-    Place Details APIã§é›»è©±ç•ªå·ã¨å›½ã‚³ãƒ¼ãƒ‰ã‚’å–å¾—
+    Place Details APIで電話番号と国コードを取得
     """
     if not GOOGLE_PLACES_API_KEY or not place_id:
         return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
@@ -324,15 +324,15 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
         data = response.json()
 
         if data.get('status') != 'OK':
-            logger.warning(f"[Place Details API] å–å¾—å¤±æ•—: {data.get('status')} - {place_id}")
+            logger.warning(f"[Place Details API] 取得失敗: {data.get('status')} - {place_id}")
             return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
 
         result = data.get('result', {})
 
-        # é›»è©±ç•ªå·å–å¾—(å›½å†…å½¢å¼ã‚’å„ªå…ˆã€ãªã‘ã‚Œã°å›½éš›å½¢å¼)
+        # 電話番号取得(国内形式を優先、なければ国際形式)
         phone = result.get('formatted_phone_number') or result.get('international_phone_number')
 
-        # å›½ã‚³ãƒ¼ãƒ‰å–å¾—
+        # 国コード取得
         country_code = None
         if result.get('address_components'):
             for component in result['address_components']:
@@ -358,26 +358,26 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
 
 
     except requests.exceptions.Timeout:
-        logger.error(f"[Place Details API] ã‚¿ã‚¤ãƒ ã‚¢ã‚¦ãƒˆ: {place_id}")
+        logger.error(f"[Place Details API] タイムアウト: {place_id}")
         return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
     except Exception as e:
-        logger.error(f"[Place Details API] ã‚¨ãƒ©ãƒ¼: {e}")
+        logger.error(f"[Place Details API] エラー: {e}")
         return {'phone': None, 'country_code': None, 'photos': None, 'formatted_address': None}
 
 
 def search_place(shop_name: str, area: str = '', geo_info: dict = None, language: str = 'ja') -> dict:
     """
-    Google Places APIã§åº—èˆ—ã‚’æ¤œç´¢(å›½ã‚³ãƒ¼ãƒ‰æ¤œè¨¼ä»˜ã)
+    Google Places APIで店舗を検索(国コード検証付き)
     """
     if not GOOGLE_PLACES_API_KEY:
-        logger.warning("[Places API] APIã‚­ãƒ¼ãŒè¨­å®šã•ã‚Œã¦ã„ã¾ã›ã‚“")
+        logger.warning("[Places API] APIキーが設定されていません")
         return None
 
-    # Geocoding APIã®çµæžœã‹ã‚‰éƒ½é“åºœçœŒ/å·žã‚’å–å¾—
+    # Geocoding APIの結果から都道府県/州を取得
     region = geo_info.get('region', '') if geo_info else ''
     expected_country = geo_info.get('country_code', 'JP') if geo_info else 'JP'
 
-    # æ¤œç´¢ã‚¯ã‚¨ãƒªã‚’æ§‹ç¯‰
+    # 検索クエリを構築
     if region:
         query = f"{shop_name} {area} {region}".strip()
     else:
@@ -393,28 +393,28 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
             'type': 'restaurant'
         }
 
-        # Geocoding APIã®åº§æ¨™ãŒã‚ã‚Œã°ä½ç½®ãƒã‚¤ã‚¢ã‚¹ã‚’è¿½åŠ 
+        # Geocoding APIの座標がã'ã'Œã°ä½ç½®ãƒã'¤ã'¢ã'¹ã''è¿½åŠ 
         if geo_info and geo_info.get('lat') and geo_info.get('lng'):
             params['location'] = f"{geo_info['lat']},{geo_info['lng']}"
 
-            # å›½ã«ã‚ˆã£ã¦æ¤œç´¢åŠå¾„ã‚’å¤‰ãˆã‚‹
+            # 国によって検索半径を変える
             if expected_country == 'JP':
                 params['radius'] = 3000
                 params['region'] = 'jp'
             else:
                 params['radius'] = 50000
 
-        logger.info(f"[Places API] æ¤œç´¢ã‚¯ã‚¨ãƒª: {query}")
+        logger.info(f"[Places API] 検索クエリ: {query}")
 
         response = requests.get(search_url, params=params, timeout=10)
         data = response.json()
 
         if data.get('status') != 'OK':
-            logger.warning(f"[Places API] æ¤œç´¢å¤±æ•—: {data.get('status')} - {query}")
+            logger.warning(f"[Places API] 検索失敗: {data.get('status')} - {query}")
             return None
 
         if not data.get('results'):
-            logger.info(f"[Places API] çµæžœãªã—: {query}")
+            logger.info(f"[Places API] 結果なし: {query}")
             return None
 
         place = data['results'][0]
@@ -436,7 +436,7 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         details = get_place_details(place_id, language)
         actual_country = details.get('country_code')
 
-        # 📷 画像URLを生成（Text Search API → Place Details API の順で試行）
+        # 📷 画像URLを生成(Text Search API → Place Details API の順で試行)
         photo_url = None
         photos_source = place.get('photos') or details.get('photos')
         if photos_source:
@@ -455,10 +455,10 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
 
         logger.info(f"[Places API] 🌍 国コード検証: expected={expected_country}, actual={actual_country}")
 
-        # âœ… å›½ã‚³ãƒ¼ãƒ‰æ¤œè¨¼
+        # ✅ 国コード検証
         if actual_country and expected_country and actual_country != expected_country:
-            logger.warning(f"[Places API] å›½ã‚³ãƒ¼ãƒ‰ä¸ä¸€è‡´: {place.get('name')} "
-                          f"(æœŸå¾…: {expected_country}, å®Ÿéš›: {actual_country}) - ã‚¹ã‚­ãƒƒãƒ—")
+            logger.warning(f"[Places API] 国コード不一致: {place.get('name')} "
+                          f"(期待: {expected_country}, 実際: {actual_country}) - スキップ")
             return None
 
         result = {
@@ -475,47 +475,47 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
             'phone': details.get('phone')
         }
 
-        logger.info(f"[Places API] å–å¾—æˆåŠŸ: {result['name']} (å›½: {actual_country}, é›»è©±: {result['phone']})")
+        logger.info(f"[Places API] 取得成功: {result['name']} (国: {actual_country}, 電話: {result['phone']})")
         return result
 
     except requests.exceptions.Timeout:
-        logger.error(f"[Places API] ã‚¿ã‚¤ãƒ ã‚¢ã‚¦ãƒˆ: {query}")
+        logger.error(f"[Places API] タイムアウト: {query}")
         return None
     except Exception as e:
-        logger.error(f"[Places API] ã‚¨ãƒ©ãƒ¼: {e}")
+        logger.error(f"[Places API] エラー: {e}")
         return None
 
 # ========================================
-# ã‚·ãƒ§ãƒƒãƒ—æƒ…å ± æ‹¡å¼µãƒ­ã‚¸ãƒƒã‚¯ (åˆ·æ–°ç‰ˆ)
+# ã'·ãƒ§ãƒƒãƒ—æƒ…å ± 拡張ロジック (刷新版)
 # ========================================
 
 def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') -> list:
     """
-    ã‚·ãƒ§ãƒƒãƒ—ãƒªã‚¹ãƒˆã«å¤–éƒ¨APIãƒ‡ãƒ¼ã‚¿ã‚’è¿½åŠ (place_idé‡è¤‡æŽ’é™¤ä»˜ãã€å›½ã‚³ãƒ¼ãƒ‰æ¤œè¨¼å¼·åŒ–ç‰ˆ)
-    - åŸºæœ¬: ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã‚’è¡¨ç¤º
-    - ä¾‹å¤–(æ—¥æœ¬èªžã‹ã¤æ—¥æœ¬å›½å†…): å›½å†…3ã‚µã‚¤ãƒˆã‚’è¡¨ç¤ºã—ã€ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã¯éžè¡¨ç¤º
+    ショップリストに外部APIデーã'¿ã''è¿½åŠ (place_id重複排除付き、国コード検証強化版)
+    - 基本: トリップアドバイザーを表示
+    - 例外(日本語かつ日本国内): 国内3サイトを表示し、トリップアドバイザーは非表示
     """
     enriched_shops = []
-    seen_place_ids = set()  # âœ… é‡è¤‡ãƒã‚§ãƒƒã‚¯ç”¨
+    seen_place_ids = set()  # ✅ 重複チェック用
     duplicate_count = 0
     validation_failed_count = 0
     
     logger.info(f"[Enrich] é–‹å§‹: area='{area}', language={language}, shops={len(shops)}ä»¶")
 
-    # Geocodingã¯ã‚ãã¾ã§è£œåŠ©æƒ…å ±ã¨ã—ã¦å–å¾—(å¤±æ•—ã—ã¦ã‚‚æ­¢ã¾ã‚‰ãªã„)
+    # Geocodingはã'ãã¾ã§è£œåŠ©æƒ…å ±ã¨ã—ã¦å–å¾—(失敗しても止まらない)
     geo_info = None
     if area:
         try:
             geo_info = get_region_from_area(area, language)
             if geo_info:
-                logger.info(f"[Enrich] GeocodingæˆåŠŸ: {geo_info.get('formatted_address', '')} "
-                           f"(å›½: {geo_info.get('country_code', '')}, "
-                           f"åº§æ¨™: {geo_info.get('lat', '')}, {geo_info.get('lng', '')})")
+                logger.info(f"[Enrich] Geocoding成功: {geo_info.get('formatted_address', '')} "
+                           f"(国: {geo_info.get('country_code', '')}, "
+                           f"座標: {geo_info.get('lat', '')}, {geo_info.get('lng', '')})")
         except Exception as e:
             logger.error(f"[Enrich] Geocoding Error: {e}")
 
-    # LLMãŒå›žç­”ã—ãŸåº—èˆ—åã‚’ãƒ­ã‚°å‡ºåŠ›
-    logger.info(f"[Enrich] LLMã®å›žç­”åº—èˆ—:")
+    # LLMが回答した店舗名をログ出力
+    logger.info(f"[Enrich] LLMの回答店舗:")
     for i, shop in enumerate(shops, 1):
         logger.info(f"[Enrich]   {i}. {shop.get('name', '')}")
 
@@ -525,12 +525,12 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
             continue
 
         logger.info(f"[Enrich] ----------")
-        logger.info(f"[Enrich] {i}/{len(shops)} æ¤œç´¢: '{shop_name}'")
+        logger.info(f"[Enrich] {i}/{len(shops)} 検索: '{shop_name}'")
 
         # -------------------------------------------------------
-        # 1. Google Places APIã§åŸºæœ¬æƒ…å ±ã‚’å–å¾—(å›½ã‚³ãƒ¼ãƒ‰æ¤œè¨¼ä»˜ã)
+        # 1. Google Places APIã§åŸºæœ¬æƒ…å ±ã''取得(国コード検証付き)
         # -------------------------------------------------------
-        # 店舗ごとのエリアを使用（LLMのJSONから取得）
+        # 店舗ごとのエリアを使用(LLMのJSONから取得)
         shop_area = shop.get('area', '') or area  # LLMのareaを優先、なければグローバルのareaを使用
         logger.info(f"[Enrich] → 使用エリア: '{shop_area}'")
         place_data = search_place(shop_name, shop_area, geo_info, language)
@@ -544,47 +544,47 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         place_id = place_data.get('place_id')
         place_name = place_data.get('name')
         
-        logger.info(f"[Enrich] â†’ æ¤œç´¢çµæžœ: '{place_name}'")
-        logger.info(f"[Enrich] â†’ place_id: {place_id}")
+        logger.info(f"[Enrich] → 検索結果: '{place_name}'")
+        logger.info(f"[Enrich] → place_id: {place_id}")
         logger.info(f"[Enrich] → photo_url: {place_data.get('photo_url', 'なし')}")
 
-        # âœ… place_idé‡è¤‡ãƒã‚§ãƒƒã‚¯
+        # ✅ place_id重複チェック
         if place_id in seen_place_ids:
             duplicate_count += 1
-            logger.warning(f"[Enrich] â†’ âŒ é‡è¤‡æ¤œå‡º!æ—¢ã«è¿½åŠ æ¸ˆã¿(ã‚¹ã‚­ãƒƒãƒ—)")
-            logger.warning(f"[Enrich]    LLMåº—èˆ—å: '{shop_name}' â†’ Googleåº—èˆ—å: '{place_name}'")
+            logger.warning(f"[Enrich] → ❌ 重複検出!æ—¢ã«è¿½åŠ æ¸ˆã¿(スキップ)")
+            logger.warning(f"[Enrich]    LLM店舗名: '{shop_name}' → Google店舗名: '{place_name}'")
             continue
         
-        # âœ… place_idã‚’è¨˜éŒ²
+        # ✅ place_idを記録
         seen_place_ids.add(place_id)
-        logger.info(f"[Enrich] â†’ âœ… è¿½åŠ æ±ºå®š")
+        logger.info(f"[Enrich] → ✅ è¿½åŠ æ±ºå®š")
 
-        # å›½ã‚³ãƒ¼ãƒ‰ã®å–å¾—
+        # 国コードの取得
         shop_country = place_data.get('country_code', '')
         
         # -------------------------------------------------------
-        # 2. ãƒ­ã‚¸ãƒƒã‚¯åˆ¤å®š(ãƒ•ãƒ©ã‚°è¨­å®š)
+        # 2. ロジック判定(フラグ設定)
         # -------------------------------------------------------
-        # ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆè¨­å®š (åŸºæœ¬ã¯TripAdvisorã‚’è¡¨ç¤º)
+        # デフォルト設定 (基本はTripAdvisorを表示)
         show_tripadvisor = True
         show_domestic_sites = False
 
-        # ã€ä¾‹å¤–ãƒ«ãƒ¼ãƒ«ã€‘è¨€èªžãŒæ—¥æœ¬èªž(ja) ã‹ã¤ æ—¥æœ¬å›½å†…(JP) ã®å ´åˆ
+        # 【例外ルール】言語が日本語(ja) かつ 日本国内(JP) ã®å ´åˆ
         if language == 'ja' and shop_country == 'JP':
-            show_tripadvisor = False      # ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã¯å‡ºã•ãªã„
-            show_domestic_sites = True    # å›½å†…3ã‚µã‚¤ãƒˆã‚’å‡ºã™
+            show_tripadvisor = False      # トリップアドバイザーは出さない
+            show_domestic_sites = True    # 国内3サイトを出す
         
-        # å°†æ¥çš„ãªæ‹¡å¼µ(ä¾‹:å°æ¹¾ãƒ»éŸ“å›½ã§ã‚‚é£Ÿã¹ãƒ­ã‚°ã‚’å‡ºã™å ´åˆ)
+        # 将来的な拡張(例:台湾・éŸ"国でã''食べロã'°ã''å‡ºã™å ´åˆ)
         # if language == 'ja' and shop_country in ['TW', 'KR']:
         #     show_domestic_sites = True
         
-        logger.info(f"[Enrich] åˆ¤å®šçµæžœ: {shop_name} (Country: {shop_country}, Lang: {language}) "
+        logger.info(f"[Enrich] 判定結果: {shop_name} (Country: {shop_country}, Lang: {language}) "
                    f"-> TripAdvisor: {show_tripadvisor}, Domestic: {show_domestic_sites}")
 
         # -------------------------------------------------------
-        # 3. ãƒ‡ãƒ¼ã‚¿ã®æ³¨å…¥
+        # 3. データの注入
         # -------------------------------------------------------
-        # Google Placesã®å…±é€šãƒ‡ãƒ¼ã‚¿
+        # Google Placesの共通データ
         if place_data.get('name'): 
             shop['name'] = place_data['name']
         if place_data.get('photo_url'): 
@@ -602,35 +602,35 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         if place_data.get('place_id'): 
             shop['place_id'] = place_data['place_id']
 
-        # A. å›½å†…3ã‚µã‚¤ãƒˆã®ãƒªãƒ³ã‚¯ç”Ÿæˆ (ä¾‹å¤–ãƒ«ãƒ¼ãƒ«é©ç”¨æ™‚)
+        # A. 国内3サイトのリンク生成 (例外ルール適用時)
         if show_domestic_sites:
             try:
-                # TripAdvisorãƒ•ã‚£ãƒ¼ãƒ«ãƒ‰ã‚’æ˜Žç¤ºçš„ã«å‰Šé™¤
+                # TripAdvisorフィールドを明示的に削除
                 shop.pop('tripadvisor_url', None)
                 shop.pop('tripadvisor_rating', None)
                 shop.pop('tripadvisor_reviews', None)
 
-                # ãƒ›ãƒƒãƒˆãƒšãƒƒãƒ‘ãƒ¼
+                # ホットペッパー
                 hotpepper_url = None
                 try:
                     hotpepper_url = search_hotpepper(shop_name, area, geo_info)
                     if not hotpepper_url:
-                        # åå‰ã‚’å¤‰ãˆã¦å†ãƒˆãƒ©ã‚¤
+                        # 名前を変えて再トライ
                         places_name = place_data.get('name', '')
                         if places_name and places_name != shop_name:
                             hotpepper_url = search_hotpepper(places_name, area, geo_info)
                 except Exception:
                     pass
 
-                shop['hotpepper_url'] = hotpepper_url if hotpepper_url else f"https://www.google.com/search?q={shop_name}+{area}+ãƒ›ãƒƒãƒˆãƒšãƒƒãƒ‘ãƒ¼ã‚°ãƒ«ãƒ¡"
+                shop['hotpepper_url'] = hotpepper_url if hotpepper_url else f"https://www.google.com/search?q={shop_name}+{area}+ホットペッパーグルメ"
 
-                # é£Ÿã¹ãƒ­ã‚°
+                # 食べログ
                 try:
                     places_name = place_data.get('name', '')
-                    region_name = geo_info.get('region', '') if geo_info else 'æ±äº¬'
-                    # éƒ½é“åºœçœŒã‚³ãƒ¼ãƒ‰å¤‰æ›(ç°¡æ˜“ç‰ˆ)
-                    pref_code_map = {'æ±äº¬': 'tokyo', 'ç¥žå¥ˆå·': 'kanagawa', 'å¤§é˜ª': 'osaka', 'äº¬éƒ½': 'kyoto', 'å…µåº«': 'hyogo', 'åŒ—æµ·é“': 'hokkaido', 'æ„›çŸ¥': 'aichi', 'ç¦å²¡': 'fukuoka'}
-                    pref = region_name.rstrip('éƒ½é“åºœçœŒ') if region_name else 'æ±äº¬'
+                    region_name = geo_info.get('region', '') if geo_info else '東京'
+                    # 都道府県コード変換(簡易版)
+                    pref_code_map = {'東京': 'tokyo', '神奈川': 'kanagawa', '大阪': 'osaka', '京都': 'kyoto', '兵庫': 'hyogo', '北海道': 'hokkaido', '愛知': 'aichi', '福岡': 'fukuoka'}
+                    pref = region_name.rstrip('都道府県') if region_name else '東京'
                     pref_code = pref_code_map.get(pref, 'tokyo')
 
                     tabelog_search_query = requests.utils.quote(places_name if places_name else shop_name)
@@ -638,60 +638,60 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
                 except Exception:
                     shop['tabelog_url'] = f"https://tabelog.com/tokyo/rstLst/?sw={shop_name}"
 
-                # ãã‚‹ãªã³
-                shop['gnavi_url'] = f"https://www.google.com/search?q={shop_name}+{area}+ãã‚‹ãªã³"
+                # ぐるなび
+                shop['gnavi_url'] = f"https://www.google.com/search?q={shop_name}+{area}+ぐるなび"
 
             except Exception as e:
                 logger.error(f"[Enrich] Domestic Sites Error: {e}")
 
-        # B. ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã®ãƒªãƒ³ã‚¯ç”Ÿæˆ (ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆé©ç”¨æ™‚)
+        # B. トリップアドバイザーのリンク生成 (デフォルト適用時)
         if show_tripadvisor:
             try:
                 lat = place_data.get('lat')
                 lng = place_data.get('lng')
                 
                 if TRIPADVISOR_API_KEY:
-                    # è¨€èªžãƒžãƒƒãƒ”ãƒ³ã‚°
+                    # 言語マッピング
                     tripadvisor_lang_map = {'ja': 'ja', 'en': 'en', 'zh': 'zh', 'ko': 'ko'}
                     search_lang = tripadvisor_lang_map.get(language, 'en')
                     
-                    # æ¤œç´¢å®Ÿè¡Œ
+                    # 検索実行
                     tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, search_lang)
 
-                    # 0ä»¶ã‹ã¤æ—¥æœ¬èªžã®å ´åˆã€è‹±èªžã§å†ãƒˆãƒ©ã‚¤(ãƒ’ãƒƒãƒˆçŽ‡å‘ä¸Šç­–)
+                    # 0ä»¶ã‹ã¤æ—¥æœ¬èªžã®å ´åˆã€è‹±èªžã§å†ãƒˆãƒ©ã'¤(ヒット率向上策)
                     if not tripadvisor_data and search_lang == 'ja':
-                        logger.info(f"[TripAdvisor] æ—¥æœ¬èªžã§ãƒ’ãƒƒãƒˆã›ãšã€‚è‹±èªžã§å†æ¤œç´¢: {shop_name}")
+                        logger.info(f"[TripAdvisor] 日本語でヒットせず。英語で再検索: {shop_name}")
                         tripadvisor_data = get_tripadvisor_data(shop_name, lat, lng, 'en')
 
                     if tripadvisor_data:
                         shop['tripadvisor_url'] = tripadvisor_data.get('web_url')
                         shop['tripadvisor_rating'] = tripadvisor_data.get('rating')
                         shop['tripadvisor_reviews'] = tripadvisor_data.get('num_reviews')
-                        logger.info(f"[TripAdvisor] ãƒªãƒ³ã‚¯ç”ŸæˆæˆåŠŸ: {shop_name}")
+                        logger.info(f"[TripAdvisor] リンク生成成功: {shop_name}")
             except Exception as e:
                 logger.error(f"[Enrich] TripAdvisor Error: {e}")
 
         enriched_shops.append(shop)
 
-    logger.info(f"[Enrich] ========== å®Œäº† ==========")
-    logger.info(f"[Enrich] å‡ºåŠ›: {len(enriched_shops)}ä»¶")
-    logger.info(f"[Enrich] é‡è¤‡é™¤å¤–: {duplicate_count}ä»¶")
-    logger.info(f"[Enrich] æ¤œè¨¼å¤±æ•—: {validation_failed_count}ä»¶")
-    logger.info(f"[Enrich] åˆè¨ˆå…¥åŠ›: {len(shops)}ä»¶")
+    logger.info(f"[Enrich] ========== 完了 ==========")
+    logger.info(f"[Enrich] 出力: {len(enriched_shops)}件")
+    logger.info(f"[Enrich] 重複除外: {duplicate_count}件")
+    logger.info(f"[Enrich] 検証失敗: {validation_failed_count}件")
+    logger.info(f"[Enrich] 合計入力: {len(shops)}件")
 
     return enriched_shops
 
 
 def extract_area_from_text(text: str, language: str = 'ja') -> str:
     """
-    ãƒ†ã‚­ã‚¹ãƒˆã‹ã‚‰ã‚¨ãƒªã‚¢åã‚’æŠ½å‡º(Geocoding APIã§å‹•çš„ã«æ¤œè¨¼)
+    テキストからエリア名を抽出(Geocoding APIで動的に検証)
     """
     jp_chars = r'[\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF\uFF66-\uFF9Fa-zA-Z]'
     patterns = [
-        rf'({jp_chars}{{2,10}})ã®{jp_chars}',
-        rf'({jp_chars}{{2,10}})ã§{jp_chars}',
-        rf'({jp_chars}{{2,10}})ã«ã‚ã‚‹',
-        rf'({jp_chars}{{2,10}})å‘¨è¾º',
+        rf'({jp_chars}{{2,10}})の{jp_chars}',
+        rf'({jp_chars}{{2,10}})で{jp_chars}',
+        rf'({jp_chars}{{2,10}})にある',
+        rf'({jp_chars}{{2,10}})周辺',
     ]
 
     for pattern in patterns:
@@ -700,16 +700,16 @@ def extract_area_from_text(text: str, language: str = 'ja') -> str:
             candidate = match.group(1)
             geo_info = get_region_from_area(candidate, language)
             if geo_info and geo_info.get('region'):
-                logger.info(f"[Extract Area] ã‚¨ãƒªã‚¢æŠ½å‡ºæˆåŠŸ: '{candidate}' from '{text}'")
+                logger.info(f"[Extract Area] エリア抽出成功: '{candidate}' from '{text}'")
                 return candidate
 
-    logger.info(f"[Extract Area] ã‚¨ãƒªã‚¢æŠ½å‡ºå¤±æ•—: '{text}'")
+    logger.info(f"[Extract Area] エリア抽出失敗: '{text}'")
     return ''
 
 
 def extract_shops_from_response(text: str) -> list:
     """
-    LLMã®å¿œç­”ãƒ†ã‚­ã‚¹ãƒˆã‹ã‚‰ã‚·ãƒ§ãƒƒãƒ—æƒ…å ±ã‚’æŠ½å‡º
+    LLMの応ç­"テã'­ã'¹ãƒˆã‹ã'‰ã'·ãƒ§ãƒƒãƒ—æƒ…å ±ã''抽出
     """
     shops = []
     pattern = r'(\d+)\.\s*\*\*([^*]+)\*\*\s*(?:\([^)]+\))?\s*[-:]:]\s*([^\n]+)'
@@ -727,7 +727,7 @@ def extract_shops_from_response(text: str) -> list:
         shops.append({
             'name': name,
             'description': description,
-            'category': 'ãƒ¬ã‚¹ãƒˆãƒ©ãƒ³'
+            'category': 'レストラン'
         })
 
-    logger.info(f"[Extract] {len(shops)}ä»¶ã®ã‚·ãƒ§ãƒƒãƒ—ã‚’æŠ½å‡º")
+    logger.info(f"[Extract] {len(shops)}件のショップを抽出")

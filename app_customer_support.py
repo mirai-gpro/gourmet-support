@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 汎用カスタマーサポートシステム (Gemini API版) - 改善版
-モジュール分割版（3ファイル構成）
+モジュール分割版(3ファイル構成)
 
 分割構成:
 - api_integrations.py: 外部API連携
 - support_core.py: ビジネスロジック・コアクラス
-- app_customer_support.py: Webアプリケーション層（本ファイル）
+- app_customer_support.py: Webアプリケーション層(本ファイル)
 """
 import os
 import re
@@ -38,7 +38,7 @@ from support_core import (
     SupportAssistant
 )
 
-# ãƒ­ã‚®ãƒ³ã‚°è¨­å®š
+# ロギング設定
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s'
@@ -49,17 +49,17 @@ app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False  # UTF-8エンコーディングを有効化
 
 # ========================================
-# CORS & SocketIO è¨­å®š (Claudeã‚¢ãƒ‰ãƒã‚¤ã‚¹é©ç”¨ç‰ˆ)
+# CORS & SocketIO 設定 (Claudeアドバイス適用版)
 # ========================================
 
-# è¨±å¯ã™ã‚‹ã‚ªãƒªã‚¸ãƒ³(æœ«å°¾ã®ã‚¹ãƒ©ãƒƒã‚·ãƒ¥ãªã—)
+# 許可するオリジン(末尾のスラッシュなし)
 allowed_origins = [
     "https://gourmet-sp-two.vercel.app",
     "https://gourmet-sp.vercel.app",
     "http://localhost:4321"
 ]
 
-# SocketIOåˆæœŸåŒ– (cors_allowed_originsã‚’æ˜Žç¤ºçš„ã«æŒ‡å®š)
+# SocketIO初期化 (cors_allowed_originsを明示的に指定)
 socketio = SocketIO(
     app,
     cors_allowed_origins=allowed_origins,
@@ -68,7 +68,7 @@ socketio = SocketIO(
     engineio_logger=False
 )
 
-# Flask-CORSåˆæœŸåŒ– (supports_credentials=True)
+# Flask-CORS初期化 (supports_credentials=True)
 CORS(app, resources={
     r"/*": {
         "origins": allowed_origins,
@@ -78,7 +78,7 @@ CORS(app, resources={
     }
 })
 
-# ã€é‡è¦ã€‘å…¨ãƒ¬ã‚¹ãƒãƒ³ã‚¹ã«å¼·åˆ¶çš„ã«CORSãƒ˜ãƒƒãƒ€ãƒ¼ã‚’æ³¨å…¥ã™ã‚‹ãƒ•ãƒƒã‚¯
+# 【重要】全レスポンスに強制的にCORSヘッダーを注入するフック
 @app.after_request
 def after_request(response):
     origin = request.headers.get('Origin')
@@ -92,7 +92,7 @@ def after_request(response):
         response.headers['Content-Type'] = 'application/json; charset=utf-8'
     return response
 
-# Google Cloud TTS/STTåˆæœŸåŒ–
+# Google Cloud TTS/STT初期化
 tts_client = texttospeech.TextToSpeechClient()
 stt_client = speech.SpeechClient()
 
@@ -101,19 +101,19 @@ SYSTEM_PROMPTS = load_system_prompts()
 
 @app.route('/')
 def index():
-    """ãƒ•ãƒ­ãƒ³ãƒˆã‚¨ãƒ³ãƒ‰è¡¨ç¤º"""
+    """フロントエンド表示"""
     return render_template('support.html')
 
 
 @app.route('/api/session/start', methods=['POST', 'OPTIONS'])
 def start_session():
     """
-    ã‚»ãƒƒã‚·ãƒ§ãƒ³é–‹å§‹ - ãƒ¢ãƒ¼ãƒ‰å¯¾å¿œ
+    セッション開始 - モード対応
     
-    ã€é‡è¦ã€‘æ”¹å–„ã•ã‚ŒãŸãƒ•ãƒ­ãƒ¼:
-    1. ã‚»ãƒƒã‚·ãƒ§ãƒ³åˆæœŸåŒ–ï¼ˆãƒ¢ãƒ¼ãƒ‰ãƒ»è¨€èªžè¨­å®šï¼‰
-    2. ã‚¢ã‚·ã‚¹ã‚¿ãƒ³ãƒˆä½œæˆï¼ˆæœ€æ–°ã®çŠ¶æ…‹ã§ï¼‰
-    3. åˆå›žãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ç”Ÿæˆ
+    【重要】改善されたフロー:
+    1. セッション初期化(モード・言語設定)
+    2. アシスタント作成(最新の状態で)
+    3. 初回メッセージ生成
     4. å±¥æ­´ã«è¿½åŠ 
     """
     if request.method == 'OPTIONS':
@@ -125,21 +125,21 @@ def start_session():
         language = data.get('language', 'ja')
         mode = data.get('mode', 'chat')
 
-        # 1. ã‚»ãƒƒã‚·ãƒ§ãƒ³åˆæœŸåŒ–
+        # 1. セッション初期化
         session = SupportSession()
         session.initialize(user_info, language=language, mode=mode)
-        logger.info(f"[Start Session] æ–°è¦ã‚»ãƒƒã‚·ãƒ§ãƒ³ä½œæˆ: {session.session_id}")
+        logger.info(f"[Start Session] 新規セッション作成: {session.session_id}")
 
-        # 2. ã‚¢ã‚·ã‚¹ã‚¿ãƒ³ãƒˆä½œæˆï¼ˆæœ€æ–°ã®çŠ¶æ…‹ã§ï¼‰
+        # 2. アシスタント作成(最新の状態で)
         assistant = SupportAssistant(session, SYSTEM_PROMPTS)
         
-        # 3. åˆå›žãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ç”Ÿæˆ
+        # 3. 初回メッセージ生成
         initial_message = assistant.get_initial_message()
 
-        # 4. å±¥æ­´ã«è¿½åŠ ï¼ˆroleã¯'model'ï¼‰
+        # 4. å±¥æ­´ã«è¿½åŠ ï¼ˆroleは'model')
         session.add_message('model', initial_message, 'chat')
 
-        logger.info(f"[API] ã‚»ãƒƒã‚·ãƒ§ãƒ³é–‹å§‹: {session.session_id}, è¨€èªž: {language}, ãƒ¢ãƒ¼ãƒ‰: {mode}")
+        logger.info(f"[API] セッション開始: {session.session_id}, 言語: {language}, モード: {mode}")
 
         return jsonify({
             'session_id': session.session_id,
@@ -147,21 +147,21 @@ def start_session():
         })
 
     except Exception as e:
-        logger.error(f"[API] ã‚»ãƒƒã‚·ãƒ§ãƒ³é–‹å§‹ã‚¨ãƒ©ãƒ¼: {e}")
+        logger.error(f"[API] セッション開始エラー: {e}")
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/chat', methods=['POST', 'OPTIONS'])
 def chat():
     """
-    ãƒãƒ£ãƒƒãƒˆå‡¦ç† - æ”¹å–„ç‰ˆ
+    チャット処理 - 改善版
     
-    ã€é‡è¦ã€‘æ”¹å–„ã•ã‚ŒãŸãƒ•ãƒ­ãƒ¼ï¼ˆé †åºã‚’åŽ³å®ˆï¼‰:
-    1. çŠ¶æ…‹ç¢ºå®š (State First): ãƒ¢ãƒ¼ãƒ‰ãƒ»è¨€èªžã‚’æ›´æ–°
-    2. ãƒ¦ãƒ¼ã‚¶ãƒ¼å…¥åŠ›ã‚’è¨˜éŒ²: ãƒ¡ãƒƒã‚»ãƒ¼ã‚¸ã‚’å±¥æ­´ã«è¿½åŠ 
-    3. çŸ¥èƒ½ç”Ÿæˆ (Assistantä½œæˆ): æœ€æ–°ã®çŠ¶æ…‹ã§ã‚¢ã‚·ã‚¹ã‚¿ãƒ³ãƒˆã‚’ä½œæˆ
-    4. æŽ¨è«–é–‹å§‹: Gemini APIã‚’å‘¼ã³å‡ºã—
-    5. ã‚¢ã‚·ã‚¹ã‚¿ãƒ³ãƒˆå¿œç­”ã‚’è¨˜éŒ²: å±¥æ­´ã«è¿½åŠ 
+    【重要ã€'æ"¹å–"さã'ŒãŸãƒ•ãƒ­ãƒ¼ï¼ˆé †åºã''厳守):
+    1. 状態確定 (State First): モード・言語を更新
+    2. ユーザー入力を記録: メッã'»ãƒ¼ã'¸ã''å±¥æ­´ã«è¿½åŠ 
+    3. 知能生成 (Assistant作成): 最新の状態でアシスタントを作成
+    4. 推論開始: Gemini APIを呼び出し
+    5. アシスタント応答を記録: å±¥æ­´ã«è¿½åŠ 
     """
     if request.method == 'OPTIONS':
         return '', 204
@@ -175,41 +175,41 @@ def chat():
         mode = data.get('mode', 'chat')
 
         if not session_id or not user_message:
-            return jsonify({'error': 'session_idã¨messageãŒå¿…è¦ã§ã™'}), 400
+            return jsonify({'error': 'session_idとmessageが必要です'}), 400
 
         session = SupportSession(session_id)
         session_data = session.get_data()
 
         if not session_data:
-            return jsonify({'error': 'ã‚»ãƒƒã‚·ãƒ§ãƒ³ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“'}), 404
+            return jsonify({'error': 'セッションが見つかりません'}), 404
 
-        logger.info(f"[Chat] ã‚»ãƒƒã‚·ãƒ§ãƒ³: {session_id}, ãƒ¢ãƒ¼ãƒ‰: {mode}, è¨€èªž: {language}")
+        logger.info(f"[Chat] セッション: {session_id}, モード: {mode}, 言語: {language}")
 
-        # 1. çŠ¶æ…‹ç¢ºå®š (State First)
+        # 1. 状態確定 (State First)
         session.update_language(language)
         session.update_mode(mode)
 
-        # 2. ãƒ¦ãƒ¼ã‚¶ãƒ¼å…¥åŠ›ã‚’è¨˜éŒ²
+        # 2. ユーザー入力を記録
         session.add_message('user', user_message, 'chat')
 
-        # 3. çŸ¥èƒ½ç”Ÿæˆ (Assistantä½œæˆ)
+        # 3. 知能生成 (Assistant作成)
         assistant = SupportAssistant(session, SYSTEM_PROMPTS)
         
-        # 4. æŽ¨è«–é–‹å§‹
+        # 4. 推論開始
         result = assistant.process_user_message(user_message, stage)
         
-        # 5. ã‚¢ã‚·ã‚¹ã‚¿ãƒ³ãƒˆå¿œç­”ã‚’è¨˜éŒ²
+        # 5. アシスタント応答を記録
         session.add_message('model', result['response'], 'chat')
 
         if result['summary']:
             session.add_message('model', result['summary'], 'summary')
 
-        # ã‚·ãƒ§ãƒƒãƒ—ãƒ‡ãƒ¼ã‚¿å‡¦ç†
+        # ショップデータ処理
         shops = result.get('shops', [])
         response_text = result['response']
         is_followup = result.get('is_followup', False)
 
-        # å¤šè¨€èªžãƒ¡ãƒƒã‚»ãƒ¼ã‚¸è¾žæ›¸
+        # 多言語メッセージ辞書
         shop_messages = {
             'ja': {
                 'intro': lambda count: f"ご希望に合うお店を{count}件ご紹介します。\n\n",
@@ -234,9 +234,9 @@ def chat():
         if shops and not is_followup:
             original_count = len(shops)
             area = extract_area_from_text(user_message, language)
-            logger.info(f"[Chat] æŠ½å‡ºã‚¨ãƒªã‚¢: '{area}' from '{user_message}'")
+            logger.info(f"[Chat] 抽出エリア: '{area}' from '{user_message}'")
 
-            # Places APIã§å†™çœŸã‚’å–å¾—
+            # Places APIで写真を取得
             shops = enrich_shops_with_photos(shops, area, language)
 
             if shops:
@@ -251,13 +251,13 @@ def chat():
                         shop_list.append(f"{i}. **{name}**: {description}")
 
                 response_text = current_messages['intro'](len(shops)) + "\n\n".join(shop_list)
-                logger.info(f"[Chat] {len(shops)}ä»¶ã®ã‚·ãƒ§ãƒƒãƒ—ãƒ‡ãƒ¼ã‚¿ã‚’è¿”å´(å…ƒ: {original_count}ä»¶, è¨€èªž: {language})")
+                logger.info(f"[Chat] {len(shops)}件のショップデータを返却(元: {original_count}件, 言語: {language})")
             else:
                 response_text = current_messages['not_found']
-                logger.warning(f"[Chat] å…¨åº—èˆ—ãŒé™¤å¤–ã•ã‚Œã¾ã—ãŸ(å…ƒ: {original_count}ä»¶)")
+                logger.warning(f"[Chat] 全店舗が除外されました(元: {original_count}件)")
 
         elif is_followup:
-            logger.info(f"[Chat] æ·±æŽ˜ã‚Šè³ªå•ã¸ã®å›žç­”: {response_text[:100]}...")
+            logger.info(f"[Chat] 深掘り質問への回答: {response_text[:100]}...")
 
         # 【デバッグ】最終的なshopsの内容を確認
         logger.info(f"[Chat] 最終shops配列: {len(shops)}件")
@@ -272,13 +272,13 @@ def chat():
         })
 
     except Exception as e:
-        logger.error(f"[API] ãƒãƒ£ãƒƒãƒˆã‚¨ãƒ©ãƒ¼: {e}")
+        logger.error(f"[API] チャットエラー: {e}")
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/finalize', methods=['POST', 'OPTIONS'])
 def finalize_session():
-    """ã‚»ãƒƒã‚·ãƒ§ãƒ³å®Œäº†"""
+    """セッション完了"""
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -287,13 +287,13 @@ def finalize_session():
         session_id = data.get('session_id')
 
         if not session_id:
-            return jsonify({'error': 'session_idãŒå¿…è¦ã§ã™'}), 400
+            return jsonify({'error': 'session_idが必要です'}), 400
 
         session = SupportSession(session_id)
         session_data = session.get_data()
 
         if not session_data:
-            return jsonify({'error': 'ã‚»ãƒƒã‚·ãƒ§ãƒ³ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“'}), 404
+            return jsonify({'error': 'セッションが見つかりません'}), 404
 
         assistant = SupportAssistant(session, SYSTEM_PROMPTS)
         final_summary = assistant.generate_final_summary()
@@ -304,13 +304,13 @@ def finalize_session():
         })
 
     except Exception as e:
-        logger.error(f"[API] å®Œäº†å‡¦ç†ã‚¨ãƒ©ãƒ¼: {e}")
+        logger.error(f"[API] 完了処理エラー: {e}")
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/cancel', methods=['POST', 'OPTIONS'])
 def cancel_processing():
-    """å‡¦ç†ä¸­æ­¢"""
+    """処理中止"""
     if request.method == 'OPTIONS':
         return '', 204
     
@@ -319,11 +319,11 @@ def cancel_processing():
         session_id = data.get('session_id')
         
         if not session_id:
-            return jsonify({'error': 'session_idãŒå¿…è¦ã§ã™'}), 400
+            return jsonify({'error': 'session_idが必要です'}), 400
         
-        logger.info(f"[API] å‡¦ç†ä¸­æ­¢ãƒªã‚¯ã‚¨ã‚¹ãƒˆ: {session_id}")
+        logger.info(f"[API] 処理中止リクエスト: {session_id}")
         
-        # ã‚»ãƒƒã‚·ãƒ§ãƒ³ã®ã‚¹ãƒ†ãƒ¼ã‚¿ã‚¹ã‚’æ›´æ–°
+        # セッションのステータスを更新
         session = SupportSession(session_id)
         session_data = session.get_data()
         
@@ -332,17 +332,17 @@ def cancel_processing():
         
         return jsonify({
             'success': True,
-            'message': 'å‡¦ç†ã‚’ä¸­æ­¢ã—ã¾ã—ãŸ'
+            'message': '処理を中止しました'
         })
         
     except Exception as e:
-        logger.error(f"[API] ä¸­æ­¢å‡¦ç†ã‚¨ãƒ©ãƒ¼: {e}")
+        logger.error(f"[API] 中止処理エラー: {e}")
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/tts/synthesize', methods=['POST', 'OPTIONS'])
 def synthesize_speech():
-    """éŸ³å£°åˆæˆ"""
+    """音声合成"""
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -355,14 +355,14 @@ def synthesize_speech():
         pitch = data.get('pitch', 0.0)
 
         if not text:
-            return jsonify({'success': False, 'error': 'ãƒ†ã‚­ã‚¹ãƒˆãŒå¿…è¦ã§ã™'}), 400
+            return jsonify({'success': False, 'error': 'テキストが必要です'}), 400
 
         MAX_CHARS = 1000
         if len(text) > MAX_CHARS:
-            logger.warning(f"[TTS] ãƒ†ã‚­ã‚¹ãƒˆãŒé•·ã™ãŽã‚‹ãŸã‚åˆ‡ã‚Šè©°ã‚ã¾ã™: {len(text)} â†’ {MAX_CHARS} æ–‡å­—")
+            logger.warning(f"[TTS] テキストが長すぎるため切り詰めます: {len(text)} → {MAX_CHARS} 文字")
             text = text[:MAX_CHARS] + '...'
 
-        logger.info(f"[TTS] åˆæˆé–‹å§‹: {len(text)} æ–‡å­—")
+        logger.info(f"[TTS] 合成開始: {len(text)} 文字")
 
         synthesis_input = texttospeech.SynthesisInput(text=text)
 
@@ -372,7 +372,7 @@ def synthesize_speech():
                 name=voice_name
             )
         except Exception as voice_error:
-            logger.warning(f"[TTS] æŒ‡å®šéŸ³å£°ãŒç„¡åŠ¹ã€ãƒ‡ãƒ•ã‚©ãƒ«ãƒˆã«å¤‰æ›´: {voice_error}")
+            logger.warning(f"[TTS] 指定音声が無効、デフォルトに変更: {voice_error}")
             voice = texttospeech.VoiceSelectionParams(
                 language_code=language_code,
                 name='ja-JP-Neural2-B'
@@ -392,7 +392,7 @@ def synthesize_speech():
 
         audio_base64 = base64.b64encode(response.audio_content).decode('utf-8')
 
-        logger.info(f"[TTS] åˆæˆæˆåŠŸ: {len(audio_base64)} bytes (base64)")
+        logger.info(f"[TTS] 合成成功: {len(audio_base64)} bytes (base64)")
 
         return jsonify({
             'success': True,
@@ -400,7 +400,7 @@ def synthesize_speech():
         })
 
     except Exception as e:
-        logger.error(f"[TTS] ã‚¨ãƒ©ãƒ¼: {e}", exc_info=True)
+        logger.error(f"[TTS] エラー: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': str(e)
@@ -409,7 +409,7 @@ def synthesize_speech():
 
 @app.route('/api/stt/transcribe', methods=['POST', 'OPTIONS'])
 def transcribe_audio():
-    """éŸ³å£°èªè­˜"""
+    """音声認識"""
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -419,9 +419,9 @@ def transcribe_audio():
         language_code = data.get('language_code', 'ja-JP')
 
         if not audio_base64:
-            return jsonify({'success': False, 'error': 'éŸ³å£°ãƒ‡ãƒ¼ã‚¿ãŒå¿…è¦ã§ã™'}), 400
+            return jsonify({'success': False, 'error': '音声データが必要です'}), 400
 
-        logger.info(f"[STT] èªè­˜é–‹å§‹: {len(audio_base64)} bytes (base64)")
+        logger.info(f"[STT] 認識開始: {len(audio_base64)} bytes (base64)")
 
         audio_content = base64.b64decode(audio_base64)
         audio = speech.RecognitionAudio(content=audio_content)
@@ -440,9 +440,9 @@ def transcribe_audio():
         if response.results:
             transcript = response.results[0].alternatives[0].transcript
             confidence = response.results[0].alternatives[0].confidence
-            logger.info(f"[STT] èªè­˜æˆåŠŸ: '{transcript}' (ä¿¡é ¼åº¦: {confidence:.2f})")
+            logger.info(f"[STT] 認識成功: '{transcript}' (ä¿¡é ¼åº¦: {confidence:.2f})")
         else:
-            logger.warning("[STT] éŸ³å£°ãŒèªè­˜ã•ã‚Œã¾ã›ã‚“ã§ã—ãŸ")
+            logger.warning("[STT] 音声が認識されませんでした")
 
         return jsonify({
             'success': True,
@@ -450,7 +450,7 @@ def transcribe_audio():
         })
 
     except Exception as e:
-        logger.error(f"[STT] ã‚¨ãƒ©ãƒ¼: {e}", exc_info=True)
+        logger.error(f"[STT] エラー: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': str(e)
@@ -459,7 +459,7 @@ def transcribe_audio():
 
 @app.route('/api/stt/stream', methods=['POST', 'OPTIONS'])
 def transcribe_audio_streaming():
-    """éŸ³å£°èªè­˜ (Streaming)"""
+    """音声認識 (Streaming)"""
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -469,9 +469,9 @@ def transcribe_audio_streaming():
         language_code = data.get('language_code', 'ja-JP')
 
         if not audio_base64:
-            return jsonify({'success': False, 'error': 'éŸ³å£°ãƒ‡ãƒ¼ã‚¿ãŒå¿…è¦ã§ã™'}), 400
+            return jsonify({'success': False, 'error': '音声データが必要です'}), 400
 
-        logger.info(f"[STT Streaming] èªè­˜é–‹å§‹: {len(audio_base64)} bytes (base64)")
+        logger.info(f"[STT Streaming] 認識開始: {len(audio_base64)} bytes (base64)")
 
         audio_content = base64.b64decode(audio_base64)
 
@@ -509,14 +509,14 @@ def transcribe_audio_streaming():
                 if result.is_final and result.alternatives:
                     transcript = result.alternatives[0].transcript
                     confidence = result.alternatives[0].confidence
-                    logger.info(f"[STT Streaming] èªè­˜æˆåŠŸ: '{transcript}' (ä¿¡é ¼åº¦: {confidence:.2f})")
+                    logger.info(f"[STT Streaming] 認識成功: '{transcript}' (ä¿¡é ¼åº¦: {confidence:.2f})")
                     break
 
             if transcript:
                 break
 
         if not transcript:
-            logger.warning("[STT Streaming] éŸ³å£°ãŒèªè­˜ã•ã‚Œã¾ã›ã‚“ã§ã—ãŸ")
+            logger.warning("[STT Streaming] 音声が認識されませんでした")
 
         return jsonify({
             'success': True,
@@ -525,7 +525,7 @@ def transcribe_audio_streaming():
         })
 
     except Exception as e:
-        logger.error(f"[STT Streaming] ã‚¨ãƒ©ãƒ¼: {e}", exc_info=True)
+        logger.error(f"[STT Streaming] エラー: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': str(e)
@@ -534,7 +534,7 @@ def transcribe_audio_streaming():
 
 @app.route('/api/session/<session_id>', methods=['GET', 'OPTIONS'])
 def get_session(session_id):
-    """ã‚»ãƒƒã‚·ãƒ§ãƒ³æƒ…å ±å–å¾—"""
+    """ã'»ãƒƒã'·ãƒ§ãƒ³æƒ…å ±å–å¾—"""
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -543,18 +543,18 @@ def get_session(session_id):
         data = session.get_data()
 
         if not data:
-            return jsonify({'error': 'ã‚»ãƒƒã‚·ãƒ§ãƒ³ãŒè¦‹ã¤ã‹ã‚Šã¾ã›ã‚“'}), 404
+            return jsonify({'error': 'セッションが見つかりません'}), 404
 
         return jsonify(data)
 
     except Exception as e:
-        logger.error(f"[API] ã‚»ãƒƒã‚·ãƒ§ãƒ³å–å¾—ã‚¨ãƒ©ãƒ¼: {e}")
+        logger.error(f"[API] セッション取得エラー: {e}")
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/health', methods=['GET', 'OPTIONS'])
 def health_check():
-    """ãƒ˜ãƒ«ã‚¹ãƒã‚§ãƒƒã‚¯"""
+    """ヘルスチェック"""
     if request.method == 'OPTIONS':
         return '', 204
 
@@ -579,12 +579,12 @@ active_streams = {}
 
 @socketio.on('connect')
 def handle_connect():
-    logger.info(f"[WebSocket STT] ã‚¯ãƒ©ã‚¤ã‚¢ãƒ³ãƒˆæŽ¥ç¶š: {request.sid}")
+    logger.info(f"[WebSocket STT] クライアント接続: {request.sid}")
     emit('connected', {'status': 'ready'})
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    logger.info(f"[WebSocket STT] ã‚¯ãƒ©ã‚¤ã‚¢ãƒ³ãƒˆåˆ‡æ–­: {request.sid}")
+    logger.info(f"[WebSocket STT] クライアント切断: {request.sid}")
     if request.sid in active_streams:
         stream_data = active_streams[request.sid]
         if 'stop_event' in stream_data:
@@ -594,16 +594,16 @@ def handle_disconnect():
 @socketio.on('start_stream')
 def handle_start_stream(data):
     language_code = data.get('language_code', 'ja-JP')
-    sample_rate = data.get('sample_rate', 16000)  # ãƒ•ãƒ­ãƒ³ãƒˆã‚¨ãƒ³ãƒ‰ã‹ã‚‰å—ã‘å–ã‚‹
+    sample_rate = data.get('sample_rate', 16000)  # フロントエンドから受け取る
     client_sid = request.sid
-    logger.info(f"[WebSocket STT] ã‚¹ãƒˆãƒªãƒ¼ãƒ é–‹å§‹: {client_sid}, è¨€èªž: {language_code}, ã‚µãƒ³ãƒ—ãƒ«ãƒ¬ãƒ¼ãƒˆ: {sample_rate}Hz")
+    logger.info(f"[WebSocket STT] ストリーム開始: {client_sid}, 言語: {language_code}, サンプルレート: {sample_rate}Hz")
 
     recognition_config = speech.RecognitionConfig(
         encoding=speech.RecognitionConfig.AudioEncoding.LINEAR16,
-        sample_rate_hertz=sample_rate,  # å‹•çš„ã«è¨­å®š
+        sample_rate_hertz=sample_rate,  # 動的に設定
         language_code=language_code,
         enable_automatic_punctuation=True,
-        model='latest_long'  # ã‚ˆã‚Šé«˜ç²¾åº¦ãªãƒ¢ãƒ‡ãƒ«ã«å¤‰æ›´
+        model='latest_long'  # より高精度なモデルに変更
     )
 
     streaming_config = speech.StreamingRecognitionConfig(
@@ -633,7 +633,7 @@ def handle_start_stream(data):
 
     def recognition_thread():
         try:
-            logger.info(f"[WebSocket STT] èªè­˜ã‚¹ãƒ¬ãƒƒãƒ‰é–‹å§‹: {client_sid}")
+            logger.info(f"[WebSocket STT] 認識スレッド開始: {client_sid}")
             responses = stt_client.streaming_recognize(streaming_config, audio_generator())
 
             for response in responses:
@@ -656,12 +656,12 @@ def handle_start_stream(data):
                     }, room=client_sid)
 
                     if result.is_final:
-                        logger.info(f"[WebSocket STT] æœ€çµ‚èªè­˜: '{transcript}' (ä¿¡é ¼åº¦: {confidence:.2f})")
+                        logger.info(f"[WebSocket STT] 最終認識: '{transcript}' (ä¿¡é ¼åº¦: {confidence:.2f})")
                     else:
-                        logger.debug(f"[WebSocket STT] é€”ä¸­èªè­˜: '{transcript}'")
+                        logger.debug(f"[WebSocket STT] 途中認識: '{transcript}'")
 
         except Exception as e:
-            logger.error(f"[WebSocket STT] èªè­˜ã‚¨ãƒ©ãƒ¼: {e}", exc_info=True)
+            logger.error(f"[WebSocket STT] 認識エラー: {e}", exc_info=True)
             socketio.emit('error', {'message': str(e)}, room=client_sid)
 
     thread = threading.Thread(target=recognition_thread, daemon=True)
@@ -672,7 +672,7 @@ def handle_start_stream(data):
 @socketio.on('audio_chunk')
 def handle_audio_chunk(data):
     if request.sid not in active_streams:
-        logger.warning(f"[WebSocket STT] æœªåˆæœŸåŒ–ã®ã‚¹ãƒˆãƒªãƒ¼ãƒ : {request.sid}")
+        logger.warning(f"[WebSocket STT] 未初期化のストリーム: {request.sid}")
         return
 
     try:
@@ -680,33 +680,33 @@ def handle_audio_chunk(data):
         if not chunk_base64:
             return
 
-        # â˜…â˜…â˜… sample_rateã‚’å–å¾—(16kHzã§å—ä¿¡) â˜…â˜…â˜…
+        # ★★★ sample_rateを取得(16kHzで受信) ★★★
         sample_rate = data.get('sample_rate', 16000)
         
-        # â˜…â˜…â˜… çµ±è¨ˆæƒ…å ±ã‚’å–å¾—ã—ã¦ãƒ­ã‚°å‡ºåŠ›(å¿…ãšå‡ºåŠ›) â˜…â˜…â˜…
+        # ★★★ çµ±è¨ˆæƒ…å ±ã''取得してロã'°å‡ºåŠ›(必ず出力) ★★★
         stats = data.get('stats')
-        logger.info(f"[audio_chunkå—ä¿¡] sample_rate: {sample_rate}Hz, stats: {stats}")
+        logger.info(f"[audio_chunk受信] sample_rate: {sample_rate}Hz, stats: {stats}")
         
         if stats:
-            logger.info(f"[AudioWorkletçµ±è¨ˆ] ã‚µãƒ³ãƒ—ãƒ«ãƒ¬ãƒ¼ãƒˆ: {sample_rate}Hz, "
-                       f"ã‚µãƒ³ãƒ—ãƒ«ç·æ•°: {stats.get('totalSamples')}, "
-                       f"é€ä¿¡ãƒãƒ£ãƒ³ã‚¯æ•°: {stats.get('chunksSent')}, "
-                       f"ç©ºå…¥åŠ›å›žæ•°: {stats.get('emptyInputCount')}, "
-                       f"processå‘¼ã³å‡ºã—å›žæ•°: {stats.get('processCalls')}, "
-                       f"ã‚ªãƒ¼ãƒãƒ¼ãƒ•ãƒ­ãƒ¼å›žæ•°: {stats.get('overflowCount', 0)}")  # â˜… ã‚ªãƒ¼ãƒãƒ¼ãƒ•ãƒ­ãƒ¼è¿½åŠ 
+            logger.info(f"[AudioWorklet統計] サンプルレート: {sample_rate}Hz, "
+                       f"サンプル総数: {stats.get('totalSamples')}, "
+                       f"送信チャンク数: {stats.get('chunksSent')}, "
+                       f"空入力回数: {stats.get('emptyInputCount')}, "
+                       f"process呼び出し回数: {stats.get('processCalls')}, "
+                       f"オーバーフロー回数: {stats.get('overflowCount', 0)}")  # ★ ã'ªãƒ¼ãƒãƒ¼ãƒ•ãƒ­ãƒ¼è¿½åŠ 
 
         audio_chunk = base64.b64decode(chunk_base64)
         
-        # â˜…â˜…â˜… 16kHzãã®ã¾ã¾Google STTã«é€ã‚‹ â˜…â˜…â˜…
+        # ★★★ 16kHzそのままGoogle STTに送る ★★★
         stream_data = active_streams[request.sid]
         stream_data['audio_queue'].put(audio_chunk)
 
     except Exception as e:
-        logger.error(f"[WebSocket STT] ãƒãƒ£ãƒ³ã‚¯å‡¦ç†ã‚¨ãƒ©ãƒ¼: {e}", exc_info=True)
+        logger.error(f"[WebSocket STT] チャンク処理エラー: {e}", exc_info=True)
 
 @socketio.on('stop_stream')
 def handle_stop_stream():
-    logger.info(f"[WebSocket STT] ã‚¹ãƒˆãƒªãƒ¼ãƒ åœæ­¢: {request.sid}")
+    logger.info(f"[WebSocket STT] ストリーム停止: {request.sid}")
 
     if request.sid in active_streams:
         stream_data = active_streams[request.sid]
