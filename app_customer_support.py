@@ -706,7 +706,7 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
     - åŸºæœ¬: ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã‚’è¡¨ç¤º
     - ä¾‹å¤–(æ—¥æœ¬èªžã‹ã¤æ—¥æœ¬å›½å†…): å›½å†…3ã‚µã‚¤ãƒˆã‚’è¡¨ç¤ºã—ã€ãƒˆãƒªãƒƒãƒ—ã‚¢ãƒ‰ãƒã‚¤ã‚¶ãƒ¼ã¯éžè¡¨ç¤º
     """
-
+    enriched_shops = []
     seen_place_ids = set()  # âœ… é‡è¤‡ãƒã‚§ãƒƒã‚¯ç”¨
     duplicate_count = 0
     validation_failed_count = 0
