@@ -157,18 +157,11 @@ export class ConciergeController extends CoreController {
   }
 
   // ========================================
-  // 🎯 UI言語更新をオーバーライド(挨拶文をコンシェルジュ用に)
+  // 🎯 UI言語更新をオーバーライド（不要なのでコメントアウト）
   // ========================================
-  protected updateUILanguage() {
-    // 親クラスのupdateUILanguageを実行
-    super.updateUILanguage();
-    
-    // ✅ 初期メッセージをコンシェルジュ用に再設定
-    const initialMessage = this.els.chatArea.querySelector('.message.assistant[data-initial="true"] .message-text');
-    if (initialMessage) {
-      initialMessage.textContent = this.t('initialGreetingConcierge');
-    }
-  }
+  // protected updateUILanguage() {
+  //   super.updateUILanguage();
+  // }
 
   // モード切り替え処理 - ページ遷移
   private toggleMode() {

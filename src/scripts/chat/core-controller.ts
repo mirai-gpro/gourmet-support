@@ -156,9 +156,10 @@ export class CoreController {
       if (e.key === 'Enter') this.sendMessage();
     });
     
-    this.els.languageSelect?.addEventListener('change', () => {
+    this.els.languageSelect?.addEventListener('change', async () => {
       this.currentLanguage = this.els.languageSelect.value as any;
-      this.updateUILanguage();
+      // 言語切り替え時はセッションを再初期化（長期記憶対応）
+      await this.resetAppContent();
     });
 
     const floatingButtons = this.container.querySelector('.floating-buttons');
@@ -976,10 +977,9 @@ protected async toggleRecording() {
     const pageFooter = document.getElementById('pageFooter');
     if (pageFooter) pageFooter.innerHTML = `${this.t('footerMessage')} ✨`;
 
-    const initialMessage = this.els.chatArea.querySelector('.message.assistant[data-initial="true"] .message-text');
-    if (initialMessage) {
-      initialMessage.textContent = this.t('initialGreeting');
-    }
+    // ❌ 初期メッセージは更新しない
+    // initializeSession() で設定されたバックエンドの initial_message を保持
+    // 言語切り替え時はセッションを再初期化するため、ここでの更新は不要
     
     const waitText = document.querySelector('.wait-text');
     if (waitText) waitText.textContent = this.t('waitMessage');
