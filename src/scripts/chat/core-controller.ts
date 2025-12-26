@@ -138,6 +138,7 @@ export class CoreController {
 
     await new Promise(resolve => setTimeout(resolve, 300));
     await this.initializeSession();
+    this.updateUILanguage();  // リセット後にUIを更新
     console.log('[Reset] Completed');
   }
 
