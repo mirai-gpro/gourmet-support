@@ -151,7 +151,7 @@ def load_system_prompts():
 SYSTEM_PROMPTS = load_system_prompts()
 INITIAL_GREETINGS = {
     'chat': {
-        'ja': 'こんにちは!お店探しをお手伝いします。どのようなお店をお探しですか?(例:新宿で美味しいイタリアン、明日19時に予約できる焼肉店など)',
+        'ja': 'グルメサポートAIです。どんなお店をお探しか伺えれば、直ぐに何軒かご提案いたします。',
         'en': 'Hello! I\'m here to help you find restaurants. What kind of restaurant are you looking for?',
         'zh': '您好!我来帮您找餐厅。您在寻找什么样的餐厅?',
         'ko': '안녕하세요! 레스토랑 찾기를 도와드리겠습니다. 어떤 레스토랑을 찾으시나요?'
