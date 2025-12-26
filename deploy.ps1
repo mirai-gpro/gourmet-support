@@ -7,11 +7,15 @@ $REGION = "us-central1"
 $IMAGE_NAME = "gcr.io/$PROJECT_ID/$SERVICE_NAME"
 
 # 環境変数
-$GEMINI_API_KEY = "AIzaSyBMCiZxyCof-db2jB8WWWW6bWWTWxWXLuM"
+$GEMINI_API_KEY = "AIza********************************"
 $PROMPTS_BUCKET_NAME = "hp-support-477512-prompts"
-$GOOGLE_PLACES_API_KEY = "AIzaSyCGqO4DE9uOMDgN-yRMSZ7qNFCYn-P3k3I"
-$HOTPEPPER_API_KEY = "c22031a566715e40"  # https://webservice.recruit.co.jp/ で取得
-$TRIPADVISOR_API_KEY="14516430BFB74E94A198B967C4DDD17F"
+$GOOGLE_PLACES_API_KEY = "AIza****************************"
+$HOTPEPPER_API_KEY = "c***********"  # https://webservice.recruit.co.jp/ で取得
+$TRIPADVISOR_API_KEY = "1************************7F"
+
+# Supabase設定
+$SUPABASE_URL = "https://bisguyfngvlpcgagrdmr.supabase.co"
+$SUPABASE_KEY = "YOUR_SERVICE_ROLE_KEY_HERE"  # Supabase Dashboard → Settings → API → service_role
 
 Write-Host "====================================" -ForegroundColor Cyan
 Write-Host "カスタマーサポートシステム デプロイ" -ForegroundColor Cyan
@@ -21,6 +25,7 @@ Write-Host ""
 # デバッグ: 変数確認
 Write-Host "PROJECT_ID: $PROJECT_ID" -ForegroundColor Gray
 Write-Host "IMAGE_NAME: $IMAGE_NAME" -ForegroundColor Gray
+Write-Host "SUPABASE_URL: $SUPABASE_URL" -ForegroundColor Gray
 Write-Host ""
 
 # 1. イメージビルド
@@ -36,16 +41,16 @@ Write-Host ""
 
 # 2. Cloud Runにデプロイ
 Write-Host "[2/3] Cloud Runにデプロイ中..." -ForegroundColor Yellow
-gcloud run deploy "$SERVICE_NAME" `
-    --image "$IMAGE_NAME" `
-    --platform managed `
-    --region "$REGION" `
-    --allow-unauthenticated `
-    --set-env-vars "GEMINI_API_KEY=$GEMINI_API_KEY,PROMPTS_BUCKET_NAME=$PROMPTS_BUCKET_NAME,GOOGLE_PLACES_API_KEY=$GOOGLE_PLACES_API_KEY,TRIPADVISOR_API_KEY=$TRIPADVISOR_API_KEY,HOTPEPPER_API_KEY=$HOTPEPPER_API_KEY" `
-    --memory 512Mi `
-    --cpu 1 `
-    --timeout 300 `
-    --max-instances 10 `
+gcloud run deploy "$SERVICE_NAME" \`
+    --image "$IMAGE_NAME" \`
+    --platform managed \`
+    --region "$REGION" \`
+    --allow-unauthenticated \`
+    --set-env-vars "GEMINI_API_KEY=$GEMINI_API_KEY,PROMPTS_BUCKET_NAME=$PROMPTS_BUCKET_NAME,GOOGLE_PLACES_API_KEY=$GOOGLE_PLACES_API_KEY,TRIPADVISOR_API_KEY=$TRIPADVISOR_API_KEY,HOTPEPPER_API_KEY=$HOTPEPPER_API_KEY,SUPABASE_URL=$SUPABASE_URL,SUPABASE_KEY=$SUPABASE_KEY" \`
+    --memory 512Mi \`
+    --cpu 1 \`
+    --timeout 300 \`
+    --max-instances 10 \`
     --project "$PROJECT_ID"
 
 if ($LASTEXITCODE -ne 0) {
@@ -57,9 +62,9 @@ Write-Host ""
 
 # 3. URLを取得
 Write-Host "[3/3] サービスURLを取得中..." -ForegroundColor Yellow
-$SERVICE_URL = gcloud run services describe "$SERVICE_NAME" `
-    --region "$REGION" `
-    --format 'value(status.url)' `
+$SERVICE_URL = gcloud run services describe "$SERVICE_NAME" \`
+    --region "$REGION" \`
+    --format 'value(status.url)' \`
     --project "$PROJECT_ID"
 
 Write-Host ""
@@ -71,5 +76,11 @@ Write-Host "サービスURL: $SERVICE_URL" -ForegroundColor Yellow
 Write-Host ""
 Write-Host "次のステップ:" -ForegroundColor Cyan
 Write-Host "1. GCSバケットにプロンプトをアップロード"
-Write-Host "2. 上記URLにアクセスして動作確認"
+Write-Host "2. Supabaseのservice_roleキーを設定"
+Write-Host "3. 上記URLにアクセスして動作確認"
+Write-Host ""
+Write-Host "【長期記憶機能】" -ForegroundColor Green
+Write-Host "- 初回訪問時に名前を取得"
+Write-Host "- 2回目以降は「お帰りなさいませ、〇〇様」と挨拶"
+Write-Host "- アレルギー・好みを自動保存"
 Write-Host ""
