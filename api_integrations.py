@@ -329,6 +329,12 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
 
         result = data.get('result', {})
 
+        # デバッグ：photosの有無を確認
+        if 'photos' in result:
+            logger.info(f"[Place Details API] photos フィールド存在: {len(result['photos'])}枚")
+        else:
+            logger.warning(f"[Place Details API] photos フィールドなし - place_id: {place_id}")
+
         # 電話番号取得(国内形式を優先、なければ国際形式)
         phone = result.get('formatted_phone_number') or result.get('international_phone_number')
 
@@ -420,6 +426,12 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         place = data['results'][0]
         results_count = len(data.get('results', []))
         logger.info(f"[Places API] 📊 検索結果: {results_count}件ヒット")
+
+        # デバッグ：Text Search APIのphotosを確認
+        if 'photos' in place:
+            logger.info(f"[Text Search API] photos フィールド存在: {len(place['photos'])}枚")
+        else:
+            logger.warning(f"[Text Search API] photos フィールドなし: {place.get('name')}")
 
         place_id = place['place_id']
 
