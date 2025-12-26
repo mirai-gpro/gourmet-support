@@ -219,8 +219,10 @@ export class CoreController {
       });
       const data = await res.json();
       this.sessionId = data.session_id;
-      
-      this.addMessage('assistant', this.t('initialGreeting'), null, true);
+
+      // ✅ バックエンドの initial_message を使用（長期記憶対応）
+      const initialMessage = data.initial_message || this.t('initialGreeting');
+      this.addMessage('assistant', initialMessage, null, true);
       
       const ackTexts = [
         this.t('ackConfirm'), this.t('ackSearch'), this.t('ackUnderstood'), 
@@ -245,7 +247,7 @@ export class CoreController {
       });
 
       await Promise.all([
-        this.speakTextGCP(this.t('initialGreeting')), 
+        this.speakTextGCP(initialMessage),
         ...ackPromises
       ]);
       
