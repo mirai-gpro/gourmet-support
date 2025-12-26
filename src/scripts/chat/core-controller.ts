@@ -958,16 +958,17 @@ protected async toggleRecording() {
 
   protected updateUILanguage() {
     console.log('[Core] Updating UI language to:', this.currentLanguage);
-    
+
     this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
     this.els.userInput.placeholder = this.t('inputPlaceholder');
     this.els.micBtn.title = this.t('btnVoiceInput');
     this.els.speakerBtn.title = this.isTTSEnabled ? this.t('btnTTSOn') : this.t('btnTTSOff');
     this.els.sendBtn.textContent = this.t('btnSend');
     this.els.reservationBtn.innerHTML = this.t('btnReservation');
-    
+
     const pageTitle = document.getElementById('pageTitle');
-    if (pageTitle) pageTitle.innerHTML = `<img src="/pwa-152x152.png" alt="Logo" class="app-logo" /> ${this.t('pageTitle')}`;
+    const titleKey = this.currentMode === 'concierge' ? 'pageTitleConcierge' : 'pageTitle';
+    if (pageTitle) pageTitle.innerHTML = `<img src="/pwa-152x152.png" alt="Logo" class="app-logo" /> ${this.t(titleKey)}`;
     const pageSubtitle = document.getElementById('pageSubtitle');
     if (pageSubtitle) pageSubtitle.textContent = this.t('pageSubtitle');
     const shopListTitle = document.getElementById('shopListTitle');
