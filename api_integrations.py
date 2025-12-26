@@ -439,15 +439,18 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         # 📷 画像URLを生成(Text Search API → Place Details API の順で試行)
         photo_url = None
         photos_source = place.get('photos') or details.get('photos')
-        if photos_source:
-            photo_reference = photos_source[0]['photo_reference']
-            photo_url = (
-                f"https://maps.googleapis.com/maps/api/place/photo"
-                f"?maxwidth=800"
-                f"&photo_reference={photo_reference}"
-                f"&key={GOOGLE_PLACES_API_KEY}"
-            )
-            logger.info(f"[Places API] 📷 写真取得元: {'Text Search' if place.get('photos') else 'Place Details'}")
+        if photos_source and len(photos_source) > 0:
+            photo_reference = photos_source[0].get('photo_reference', '')
+            if photo_reference:
+                photo_url = (
+                    f"https://maps.googleapis.com/maps/api/place/photo"
+                    f"?maxwidth=800"
+                    f"&photo_reference={photo_reference}"
+                    f"&key={GOOGLE_PLACES_API_KEY}"
+                )
+                logger.info(f"[Places API] 📷 写真取得元: {'Text Search' if place.get('photos') else 'Place Details'}")
+            else:
+                logger.warning(f"[Places API] ⚠️ photo_reference が空: {place.get('name')}")
         else:
             logger.warning(f"[Places API] ⚠️ 写真データなし: {place.get('name')}")
 
@@ -670,6 +673,12 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
                         logger.info(f"[TripAdvisor] リンク生成成功: {shop_name}")
             except Exception as e:
                 logger.error(f"[Enrich] TripAdvisor Error: {e}")
+
+        # 画像がない店舗はオミット
+        if not shop.get('image'):
+            logger.warning(f"[Enrich] → ❌ 画像なしのためスキップ: {shop.get('name')}")
+            validation_failed_count += 1
+            continue
 
         enriched_shops.append(shop)
 
