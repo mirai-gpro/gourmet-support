@@ -1,6 +1,6 @@
 // src/scripts/chat/audio-manager.ts
+// ★根本修正: サーバー準備完了を待ってから音声送信開始
 
-// ★重要: オリジナルにあった独自のBase64変換関数をそのまま復元
 const b64chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 function fastArrayBufferToBase64(buffer: ArrayBuffer) {
     let binary = '';
@@ -38,17 +38,22 @@ export class AudioManager {
   private recordingStartTime = 0;
   private recordingTimer: number | null = null;
   
-  // ★追加: iOS用の状態管理
-  private isRecordingActive = false;
+  // ★追加: 音声送信を遅延開始するためのフラグ
+  private canSendAudio = false;
+  private audioBuffer: Array<{chunk: ArrayBuffer, sampleRate: number}> = [];
   
   private readonly SILENCE_THRESHOLD = 35;
-  private readonly SILENCE_DURATION = 2000;
+  private SILENCE_DURATION: number;
   private readonly MIN_RECORDING_TIME = 3000;
-  private readonly MAX_RECORDING_TIME = 55000;
+  private readonly MAX_RECORDING_TIME = 60000;
+  
+  private consecutiveSilenceCount = 0;
+  private readonly REQUIRED_SILENCE_CHECKS = 5;
 
   private isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
 
-  constructor() {
+  constructor(silenceDuration: number = 3500) {
+    this.SILENCE_DURATION = silenceDuration;
   }
 
   public unlockAudioParams(elementToUnlock: HTMLAudioElement) {
@@ -58,14 +63,6 @@ export class AudioManager {
     if (this.audioContext && this.audioContext.state === 'suspended') {
       this.audioContext.resume();
     }
-    
-  // ★削除: Audio要素の play/pause は音楽プレーヤーと干渉するため実行しない
-  // if (elementToUnlock) {
-  //     elementToUnlock.play().then(() => {
-  //         elementToUnlock.pause();
-  //         elementToUnlock.currentTime = 0;
-  //     }).catch(() => {});
-  // }
   }
 
   public fullResetAudioResources() {
@@ -122,26 +119,27 @@ export class AudioManager {
       this.mediaRecorder.stop();
     }
     this.mediaRecorder = null;
+    
+    // ★バッファとフラグをリセット
+    this.canSendAudio = false;
+    this.audioBuffer = [];
   }
 
-  // --- iOS用実装 (停止処理改善版) ---
+  // --- iOS用実装 ---
   private async startStreaming_iOS(socket: any, languageCode: string, onStopCallback: () => void) {
     try {
-      // ★修正1: 録音中フラグをチェック
-      if (this.isRecordingActive) {
-        throw new Error('Already recording');
-      }
+      // ★初期化
+      this.canSendAudio = false;
+      this.audioBuffer = [];
       
       if (this.recordingTimer) { clearTimeout(this.recordingTimer); this.recordingTimer = null; }
       
-      // Workletクリーンアップ
       if (this.audioWorkletNode) { 
         this.audioWorkletNode.port.onmessage = null;
         this.audioWorkletNode.disconnect(); 
         this.audioWorkletNode = null; 
       }
 
-      // AudioContext作成
       if (!this.globalAudioContext) {
         // @ts-ignore
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -155,7 +153,6 @@ export class AudioManager {
         await this.globalAudioContext.resume();
       }
 
-      // ★修正2: MediaStreamの状態を厳密にチェック
       const audioConstraints = { 
           channelCount: 1,
           echoCancellation: true,
@@ -168,7 +165,6 @@ export class AudioManager {
       
       if (this.mediaStream) {
         const tracks = this.mediaStream.getAudioTracks();
-        // ★修正: より厳密な判定
         if (tracks.length === 0 || 
             tracks[0].readyState !== 'live' || 
             !tracks[0].enabled ||
@@ -194,7 +190,6 @@ export class AudioManager {
       const source = this.globalAudioContext.createMediaStreamSource(this.mediaStream);
       const processorName = 'audio-processor-ios-' + Date.now(); 
 
-      // Workletコード
       const audioProcessorCode = `
       class AudioProcessor extends AudioWorkletProcessor {
         constructor() {
@@ -244,34 +239,73 @@ export class AudioManager {
       await this.globalAudioContext.audioWorklet.addModule(processorUrl);
       URL.revokeObjectURL(processorUrl);
       
+      // ★STEP1: AudioWorkletNode生成後、初期化完了を待つ
       this.audioWorkletNode = new AudioWorkletNode(this.globalAudioContext, processorName);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      // ★STEP2: onmessageハンドラー設定(バッファリング付き)
       this.audioWorkletNode.port.onmessage = (event) => {
         const { audioChunk } = event.data;
-        if (socket && socket.connected && this.isRecordingActive) {
-          try {
-            const base64 = fastArrayBufferToBase64(audioChunk.buffer);
-            socket.emit('audio_chunk', { chunk: base64, sample_rate: 16000 });
-          } catch (e) { }
-        }
+        if (!socket || !socket.connected) return;
+        
+        try {
+          const base64 = fastArrayBufferToBase64(audioChunk.buffer);
+          
+          // ★送信許可が出ていない場合はバッファに保存
+          if (!this.canSendAudio) {
+            this.audioBuffer.push({ chunk: audioChunk.buffer, sampleRate: 16000 });
+            // バッファが大きくなりすぎないよう制限(最大3秒分 = 48チャンク)
+            if (this.audioBuffer.length > 48) {
+              this.audioBuffer.shift();
+            }
+            return;
+          }
+          
+          // ★送信許可が出たら即座に送信
+          socket.emit('audio_chunk', { chunk: base64, sample_rate: 16000 });
+        } catch (e) { }
       };
       
-      // Socket送信準備
+      // ★STEP3: 音声グラフ接続
+      source.connect(this.audioWorkletNode);
+      this.audioWorkletNode.connect(this.globalAudioContext.destination);
+      
+      // ★STEP4: Socket通知(サーバー準備開始)
       if (socket && socket.connected) {
         socket.emit('stop_stream');
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise(resolve => setTimeout(resolve, 100));
       }
+      
+      // ★STEP5: start_stream送信して、サーバー準備完了を待つ
+      const streamReadyPromise = new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => resolve(), 500);
+        socket.once('stream_ready', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
       
       socket.emit('start_stream', { 
         language_code: languageCode,
         sample_rate: 16000
       });
-
-      // 接続
-      source.connect(this.audioWorkletNode);
-      this.audioWorkletNode.connect(this.globalAudioContext.destination);
       
-      // ★修正3: 録音中フラグをON
-      this.isRecordingActive = true;
+      // ★STEP6: サーバー準備完了を待機(最大500ms)
+      await streamReadyPromise;
+      
+      // ★STEP7: 送信許可フラグを立てる
+      this.canSendAudio = true;
+      
+      // ★STEP8: バッファに溜まった音声を一気に送信
+      if (this.audioBuffer.length > 0) {
+        for (const buffered of this.audioBuffer) {
+          try {
+            const base64 = fastArrayBufferToBase64(buffered.chunk);
+            socket.emit('audio_chunk', { chunk: base64, sample_rate: buffered.sampleRate });
+          } catch (e) { }
+        }
+        this.audioBuffer = [];
+      }
       
       this.recordingTimer = window.setTimeout(() => { 
         this.stopStreaming_iOS();
@@ -279,8 +313,8 @@ export class AudioManager {
       }, this.MAX_RECORDING_TIME);
 
     } catch (error) {
-      // ★修正4: エラー時にフラグをリセット
-      this.isRecordingActive = false;
+      this.canSendAudio = false;
+      this.audioBuffer = [];
       if (this.audioWorkletNode) { 
         this.audioWorkletNode.port.onmessage = null;
         this.audioWorkletNode.disconnect(); 
@@ -291,35 +325,29 @@ export class AudioManager {
   }
 
   private stopStreaming_iOS() {
-    // ★修正5: 録音中フラグをOFF
-    this.isRecordingActive = false;
+    this.canSendAudio = false;
+    this.audioBuffer = [];
     
     if (this.recordingTimer) { clearTimeout(this.recordingTimer); this.recordingTimer = null; }
     
-    // ★修正6: Workletを完全に切断してから破棄
     if (this.audioWorkletNode) {
       try {
         this.audioWorkletNode.port.onmessage = null;
         this.audioWorkletNode.disconnect();
-      } catch (e) {
-        // 切断エラーは無視
-      }
+      } catch (e) { }
       this.audioWorkletNode = null;
     }
     
-    // ★修正7: MediaStreamの状態を確認してから処理
     if (this.mediaStream) {
       const tracks = this.mediaStream.getAudioTracks();
-      // トラックが無効な場合のみ停止
       if (tracks.length === 0 || tracks[0].readyState === 'ended') {
         this.mediaStream.getTracks().forEach(track => track.stop());
         this.mediaStream = null;
       }
-      // それ以外は再利用のため残す
     }
   }
 
-  // --- PC / Android用実装 ---
+  // --- PC / Android用実装(修正版) ---
   private async startStreaming_Default(
     socket: any, 
     languageCode: string, 
@@ -327,6 +355,10 @@ export class AudioManager {
     onSpeechStart?: () => void
   ) {
     try {
+      // ★初期化
+      this.canSendAudio = false;
+      this.audioBuffer = [];
+      
       if (this.recordingTimer) { clearTimeout(this.recordingTimer); this.recordingTimer = null; }
       
       if (this.audioWorkletNode) { 
@@ -338,7 +370,10 @@ export class AudioManager {
       if (!this.audioContext) {
         // @ts-ignore
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        this.audioContext = new AudioContextClass({ latencyHint: 'playback' });
+        this.audioContext = new AudioContextClass({ 
+          latencyHint: 'interactive',
+          sampleRate: 48000
+        });
       }
       
       if (this.audioContext!.state === 'suspended') {
@@ -416,32 +451,101 @@ export class AudioManager {
         throw new Error(`音声処理初期化エラー: ${(workletError as Error).message}`);
       }
       
+      // ★STEP1: AudioWorkletNode生成後、初期化完了を待つ
       this.audioWorkletNode = new AudioWorkletNode(this.audioContext!, 'audio-processor');
+      await new Promise(resolve => setTimeout(resolve, 50));
+      
+      // ★STEP2: onmessageハンドラー設定(バッファリング付き)
       this.audioWorkletNode.port.onmessage = (event) => {
         const { audioChunk } = event.data;
-        if (socket && socket.connected) {
-          try {
-            const blob = new Blob([audioChunk], { type: 'application/octet-stream' });
-            const reader = new FileReader();
-            reader.onload = () => {
-                const result = reader.result as string;
-                const base64 = result.split(',')[1];
-                socket.emit('audio_chunk', { chunk: base64, sample_rate: 16000 });
-            };
-            reader.readAsDataURL(blob);
-          } catch (e) { }
-        }
+        if (!socket || !socket.connected) return;
+        
+        try {
+          // ★送信許可が出ていない場合はバッファに保存
+          if (!this.canSendAudio) {
+            this.audioBuffer.push({ chunk: audioChunk, sampleRate: 16000 });
+            if (this.audioBuffer.length > 48) {
+              this.audioBuffer.shift();
+            }
+            return;
+          }
+          
+          // ★送信許可が出たら即座に送信
+          const blob = new Blob([audioChunk], { type: 'application/octet-stream' });
+          const reader = new FileReader();
+          reader.onload = () => {
+              const result = reader.result as string;
+              const base64 = result.split(',')[1];
+              socket.emit('audio_chunk', { chunk: base64, sample_rate: 16000 });
+          };
+          reader.readAsDataURL(blob);
+        } catch (e) { }
       };
       
+      // ★STEP3: 音声グラフ接続
       source.connect(this.audioWorkletNode);
       this.audioWorkletNode.connect(this.audioContext!.destination);
+      
+      // ★待機: AudioWorkletが音声処理を開始するまで
+      await new Promise(resolve => setTimeout(resolve, 200));
 
+      // ★STEP4: Socket通知(サーバー準備開始)
+      if (socket && socket.connected) {
+        socket.emit('stop_stream');
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      
+      // ★STEP5: start_stream送信して、サーバー準備完了を待つ
+      const streamReadyPromise = new Promise<void>((resolve) => {
+        const timeout = setTimeout(() => resolve(), 700);
+        socket.once('stream_ready', () => {
+          clearTimeout(timeout);
+          resolve();
+        });
+      });
+      
+      socket.emit('start_stream', { 
+        language_code: languageCode,
+        sample_rate: 16000
+      });
+      
+      // ★STEP6: サーバー準備完了を待機(最大700ms)
+      await streamReadyPromise;
+      
+      // ★追加待機: バッファに音声を蓄積
+      await new Promise(resolve => setTimeout(resolve, 200));
+      
+      // ★STEP7: 送信許可フラグを立てる
+      this.canSendAudio = true;
+      
+      // ★STEP8: バッファに溜まった音声を一気に送信（順序保証）
+      if (this.audioBuffer.length > 0) {
+        for (const buffered of this.audioBuffer) {
+          try {
+            const blob = new Blob([buffered.chunk], { type: 'application/octet-stream' });
+            const base64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const result = reader.result as string;
+                resolve(result.split(',')[1]);
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(blob);
+            });
+            socket.emit('audio_chunk', { chunk: base64, sample_rate: buffered.sampleRate });
+          } catch (e) { }
+        }
+        this.audioBuffer = [];
+      }
+
+      // VAD設定
       this.analyser = this.audioContext!.createAnalyser();
       this.analyser.fftSize = 512;
       source.connect(this.analyser);
       const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
       this.hasSpoken = false;
       this.recordingStartTime = Date.now();
+      this.consecutiveSilenceCount = 0;
       
       this.vadCheckInterval = window.setInterval(() => {
         if (!this.analyser) return;
@@ -450,26 +554,23 @@ export class AudioManager {
         const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
         
         if (average > this.SILENCE_THRESHOLD) { 
-           this.hasSpoken = true; 
-           if (this.silenceTimer) clearTimeout(this.silenceTimer);
+           this.hasSpoken = true;
+           this.consecutiveSilenceCount = 0;
+           if (this.silenceTimer) {
+             clearTimeout(this.silenceTimer);
+             this.silenceTimer = null;
+           }
            if (onSpeechStart) onSpeechStart(); 
-        } else if (this.hasSpoken && !this.silenceTimer) { 
-           this.silenceTimer = window.setTimeout(() => { 
-             this.stopStreaming_Default();
-             onStopCallback();
-           }, this.SILENCE_DURATION); 
+        } else if (this.hasSpoken) {
+           this.consecutiveSilenceCount++;
+           if (this.consecutiveSilenceCount >= this.REQUIRED_SILENCE_CHECKS && !this.silenceTimer) {
+             this.silenceTimer = window.setTimeout(() => { 
+               this.stopStreaming_Default();
+               onStopCallback();
+             }, this.SILENCE_DURATION);
+           }
         }
       }, 100);
-
-      if (socket && socket.connected) {
-        socket.emit('stop_stream');
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      
-      socket.emit('start_stream', { 
-        language_code: languageCode,
-        sample_rate: 16000
-      });
 
       this.recordingTimer = window.setTimeout(() => { 
         this.stopStreaming_Default();
@@ -477,6 +578,8 @@ export class AudioManager {
       }, this.MAX_RECORDING_TIME);
 
     } catch (error) {
+      this.canSendAudio = false;
+      this.audioBuffer = [];
       if (this.mediaStream) { 
         this.mediaStream.getTracks().forEach(track => track.stop()); 
         this.mediaStream = null; 
@@ -489,6 +592,7 @@ export class AudioManager {
       if (this.vadCheckInterval) { clearInterval(this.vadCheckInterval); this.vadCheckInterval = null; }
       if (this.silenceTimer) { clearTimeout(this.silenceTimer); this.silenceTimer = null; }
       if (this.analyser) { this.analyser = null; }
+      this.consecutiveSilenceCount = 0;
       if (this.audioContext && this.audioContext.state !== 'closed') { 
         this.audioContext.close(); 
         this.audioContext = null; 
@@ -497,6 +601,9 @@ export class AudioManager {
 
   private stopStreaming_Default() {
     this.stopVAD_Default();
+    this.canSendAudio = false;
+    this.audioBuffer = [];
+    
     if (this.recordingTimer) { clearTimeout(this.recordingTimer); this.recordingTimer = null; }
     
     if (this.audioWorkletNode) { 
@@ -509,6 +616,7 @@ export class AudioManager {
       this.mediaStream = null;
     }
     this.hasSpoken = false;
+    this.consecutiveSilenceCount = 0;
   }
 
   // --- レガシー録音 ---
@@ -534,6 +642,7 @@ export class AudioManager {
       this.audioChunks = [];
       this.hasSpoken = false;
       this.recordingStartTime = Date.now();
+      this.consecutiveSilenceCount = 0;
 
       // @ts-ignore
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -554,15 +663,22 @@ export class AudioManager {
         const average = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
         
         if (average > this.SILENCE_THRESHOLD) { 
-           this.hasSpoken = true; 
-           if (this.silenceTimer) clearTimeout(this.silenceTimer);
+           this.hasSpoken = true;
+           this.consecutiveSilenceCount = 0;
+           if (this.silenceTimer) {
+             clearTimeout(this.silenceTimer);
+             this.silenceTimer = null;
+           }
            if (onSpeechStart) onSpeechStart(); 
-        } else if (this.hasSpoken && !this.silenceTimer) { 
-           this.silenceTimer = window.setTimeout(() => { 
-             if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
-                this.mediaRecorder.stop();
-             }
-           }, this.SILENCE_DURATION); 
+        } else if (this.hasSpoken) {
+           this.consecutiveSilenceCount++;
+           if (this.consecutiveSilenceCount >= this.REQUIRED_SILENCE_CHECKS && !this.silenceTimer) {
+             this.silenceTimer = window.setTimeout(() => { 
+               if (this.mediaRecorder && this.mediaRecorder.state === 'recording') {
+                  this.mediaRecorder.stop();
+               }
+             }, this.SILENCE_DURATION);
+           }
         }
       }, 100);
 

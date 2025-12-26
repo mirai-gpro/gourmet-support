@@ -261,42 +261,59 @@ export class CoreController {
     }
   }
 
-  protected async toggleRecording() {
-    this.enableAudioPlayback();
-    this.els.userInput.value = '';
-    
-    if (this.isTTSEnabled) {
-      this.stopCurrentAudio();
-    }
-    
-    if (this.isRecording) { 
-      this.stopAllActivities();
-      return;
-    }
-    
-    if (this.socket && this.socket.connected) {
-        this.isRecording = true;
-        this.els.micBtn.classList.add('recording');
-        this.els.voiceStatus.innerHTML = this.t('voiceStatusListening');
-        this.els.voiceStatus.className = 'voice-status listening';
+  // 📍 core-controller.ts の該当部分のみ修正
 
-        try {
-          const langCode = this.LANGUAGE_CODE_MAP[this.currentLanguage].stt;
-          await this.audioManager.startStreaming(
-            this.socket, langCode, 
-            () => { this.stopStreamingSTT(); },
-            () => { this.els.voiceStatus.innerHTML = this.t('voiceStatusRecording'); }
-          );
-        } catch (error: any) {
-          this.stopStreamingSTT();
-          if (!error.message?.includes('マイク')) {
-              this.showError(this.t('micAccessError'));
-          }
-        }
-    } else {
-        await this.startLegacyRecording();
-    }
+protected async toggleRecording() {
+  this.enableAudioPlayback();
+  this.els.userInput.value = '';
+  
+  // 録音中の場合は停止のみ
+  if (this.isRecording) { 
+    this.stopStreamingSTT();
+    return;
   }
+  
+  // ★追加: 他の処理が動いていたらすべて停止してから録音開始
+  if (this.isProcessing || this.isAISpeaking || !this.ttsPlayer.paused) {
+    if (this.isProcessing) {
+      fetch(`${this.apiBase}/api/cancel`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: this.sessionId })
+      }).catch(err => console.error('中止リクエスト失敗:', err));
+    }
+    
+    this.stopCurrentAudio();
+    this.hideWaitOverlay();
+    this.isProcessing = false;
+    this.isAISpeaking = false;
+    this.resetInputState();
+  }
+  
+  // 録音開始
+  if (this.socket && this.socket.connected) {
+    this.isRecording = true;
+    this.els.micBtn.classList.add('recording');
+    this.els.voiceStatus.innerHTML = this.t('voiceStatusListening');
+    this.els.voiceStatus.className = 'voice-status listening';
+
+    try {
+      const langCode = this.LANGUAGE_CODE_MAP[this.currentLanguage].stt;
+      await this.audioManager.startStreaming(
+        this.socket, langCode, 
+        () => { this.stopStreamingSTT(); },
+        () => { this.els.voiceStatus.innerHTML = this.t('voiceStatusRecording'); }
+      );
+    } catch (error: any) {
+      this.stopStreamingSTT();
+      if (!error.message?.includes('マイク')) {
+        this.showError(this.t('micAccessError'));
+      }
+    }
+  } else {
+    await this.startLegacyRecording();
+  }
+}
   
   protected async startLegacyRecording() {
       try {
