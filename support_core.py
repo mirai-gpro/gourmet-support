@@ -18,6 +18,14 @@ import google.generativeai as genai_legacy
 # api_integrations から必要な関数をインポート
 from api_integrations import extract_shops_from_response
 
+# 長期記憶モジュールをインポート
+try:
+    from long_term_memory import LongTermMemory, PreferenceExtractor, extract_name_from_text
+    LONG_TERM_MEMORY_ENABLED = True
+except Exception as e:
+    logger.warning(f"[LTM] 長期記憶モジュールのインポート失敗: {e}")
+    LONG_TERM_MEMORY_ENABLED = False
+
 logger = logging.getLogger(__name__)
 
 # Gemini クライアント初期化
@@ -177,7 +185,32 @@ class SupportSession:
         self.session_id = session_id or str(uuid.uuid4())
 
     def initialize(self, user_info=None, language='ja', mode='chat'):
-        """新規セッション初期化 - モード対応"""
+        """新規セッション初期化 - モード対応 + 長期記憶統合"""
+        # 長期記憶から既存プロファイルを取得
+        long_term_profile = None
+        is_first_visit = True
+        user_context = ""
+
+        if LONG_TERM_MEMORY_ENABLED:
+            try:
+                ltm = LongTermMemory()
+                # プロファイル取得または作成
+                long_term_profile = ltm.get_or_create_profile(
+                    self.session_id,
+                    {'language': language, 'mode': mode}
+                )
+
+                # 初回訪問判定
+                is_first_visit = ltm.is_first_visit(self.session_id)
+
+                # システムプロンプトに注入するコンテキスト生成
+                if not is_first_visit:
+                    user_context = ltm.generate_system_prompt_context(self.session_id, language)
+                    logger.info(f"[Session] 長期記憶コンテキスト取得: {self.session_id}")
+
+            except Exception as e:
+                logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
+
         data = {
             'session_id': self.session_id,
             'messages': [],  # SDKネイティブのリスト形式用
@@ -187,10 +220,14 @@ class SupportSession:
             'mode': mode,
             'summary': None,
             'inquiry_summary': None,
-            'current_shops': []
+            'current_shops': [],
+            # 長期記憶関連の追加フィールド
+            'is_first_visit': is_first_visit,
+            'user_context': user_context,
+            'long_term_profile': long_term_profile
         }
         _SESSION_CACHE[self.session_id] = data
-        logger.info(f"[Session] RAM作成: {self.session_id}, 言語: {language}, モード: {mode}")
+        logger.info(f"[Session] RAM作成: {self.session_id}, 言語: {language}, モード: {mode}, 初回: {is_first_visit}")
         return data
 
     def add_message(self, role, content, message_type='chat'):
@@ -299,17 +336,55 @@ class SupportAssistant:
         self.session = session
         self.language = session.get_language()
         self.mode = session.get_mode()  # ★ モードを取得
-        
+
         # ★★★ モードに応じたプロンプトを選択 ★★★
         mode_prompts = system_prompts.get(self.mode, SYSTEM_PROMPTS.get('chat', {}))
         self.system_prompt = mode_prompts.get(self.language, mode_prompts.get('ja', ''))
-        
+
+        # ★★★ 長期記憶のコンテキストをシステムプロンプトに追加 ★★★
+        session_data = session.get_data()
+        if session_data and session_data.get('user_context'):
+            user_context = session_data['user_context']
+            self.system_prompt = f"{self.system_prompt}\n\n{user_context}"
+            logger.info(f"[Assistant] 長期記憶コンテキストを注入")
+
         logger.info(f"[Assistant] 初期化: mode={self.mode}, language={self.language}")
 
     def get_initial_message(self):
-        """初回メッセージ - モード別"""
+        """初回メッセージ - モード別 + 初回訪問判定"""
+        session_data = self.session.get_data()
+        is_first_visit = session_data.get('is_first_visit', True) if session_data else True
+
+        # 初回訪問の場合、名前を聞く
+        if is_first_visit:
+            first_visit_greetings = {
+                'ja': '初めまして、AIコンシェルジュです。\n宜しければ、あなたを何とお呼びすればいいか、教えて頂けますか？',
+                'en': 'Nice to meet you! I am your AI Concierge.\nMay I ask what I should call you?',
+                'zh': '您好！我是AI礼宾员。\n请问我应该怎么称呼您？',
+                'ko': '처음 뵙겠습니다! AI 컨시어지입니다.\n어떻게 불러드리면 될까요?'
+            }
+            return first_visit_greetings.get(self.language, first_visit_greetings['ja'])
+
+        # 2回目以降は、名前を呼びかけてから通常の挨拶
+        profile = session_data.get('long_term_profile', {}) if session_data else {}
+        preferred_name = profile.get('preferred_name', '') if profile else ''
+        name_honorific = profile.get('name_honorific', '') if profile else ''
+
+        # 通常の挨拶
         greetings = INITIAL_GREETINGS.get(self.mode, INITIAL_GREETINGS.get('chat', {}))
-        return greetings.get(self.language, greetings.get('ja', ''))
+        base_greeting = greetings.get(self.language, greetings.get('ja', ''))
+
+        # 名前がある場合、個別挨拶に変更
+        if preferred_name:
+            personalized_greetings = {
+                'ja': f'お帰りなさいませ、{preferred_name}{name_honorific}。\n{base_greeting}',
+                'en': f'Welcome back, {preferred_name}{name_honorific}!\n{base_greeting}',
+                'zh': f'欢迎回来，{preferred_name}{name_honorific}！\n{base_greeting}',
+                'ko': f'다시 오신 것을 환영합니다, {preferred_name}{name_honorific}!\n{base_greeting}'
+            }
+            return personalized_greetings.get(self.language, base_greeting)
+
+        return base_greeting
 
     def is_followup_question(self, user_message, current_shops):
         """深掘り質問かどうかを判定"""
