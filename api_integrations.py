@@ -674,12 +674,6 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
             except Exception as e:
                 logger.error(f"[Enrich] TripAdvisor Error: {e}")
 
-        # 画像がない店舗はオミット
-        if not shop.get('image'):
-            logger.warning(f"[Enrich] → ❌ 画像なしのためスキップ: {shop.get('name')}")
-            validation_failed_count += 1
-            continue
-
         enriched_shops.append(shop)
 
     logger.info(f"[Enrich] ========== 完了 ==========")
