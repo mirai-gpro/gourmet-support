@@ -58,9 +58,9 @@ export class ConciergeController extends CoreController {
       });
       const data = await res.json();
       this.sessionId = data.session_id;
-      
-      // ✅ コンシェルジュモード用の挨拶文を使用
-      const greetingText = this.t('initialGreetingConcierge');
+
+      // ✅ バックエンドの initial_message を使用（長期記憶対応）
+      const greetingText = data.initial_message || this.t('initialGreetingConcierge');
       this.addMessage('assistant', greetingText, null, true);
       
       const ackTexts = [
