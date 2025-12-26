@@ -188,6 +188,167 @@ export class ConciergeController extends CoreController {
   }
 
   // ========================================
+  // 🎯 並行処理フロー: 応答を分割してTTS処理
+  // ========================================
+
+  /**
+   * センテンス単位でテキストを分割
+   * 日本語: 。で分割
+   * 英語・韓国語: . で分割
+   * 中国語: 。で分割
+   */
+  private splitIntoSentences(text: string, language: string): string[] {
+    let separator: RegExp;
+
+    if (language === 'ja' || language === 'zh') {
+      // 日本語・中国語: 。で分割
+      separator = /。/;
+    } else {
+      // 英語・韓国語: . で分割
+      separator = /\.\s+/;
+    }
+
+    const sentences = text.split(separator).filter(s => s.trim().length > 0);
+
+    // 分割したセンテンスに句点を戻す
+    return sentences.map((s, idx) => {
+      if (idx < sentences.length - 1 || text.endsWith('。') || text.endsWith('. ')) {
+        return language === 'ja' || language === 'zh' ? s + '。' : s + '. ';
+      }
+      return s;
+    });
+  }
+
+  /**
+   * 応答を分割して並行処理でTTS生成・再生
+   * チャットモードのお店紹介フローを参考に実装
+   */
+  private async speakResponseInChunks(response: string, isTextInput: boolean = false) {
+    // テキスト入力またはTTS無効の場合は従来通り
+    if (isTextInput || !this.isTTSEnabled) {
+      return this.speakTextGCP(response, true, false, isTextInput);
+    }
+
+    try {
+      this.isAISpeaking = true;
+      if (this.isRecording) {
+        this.stopStreamingSTT();
+      }
+
+      // センテンス分割
+      const sentences = this.splitIntoSentences(response, this.currentLanguage);
+
+      // 1センテンスしかない場合は従来通り
+      if (sentences.length <= 1) {
+        await this.speakTextGCP(response, true, false, isTextInput);
+        this.isAISpeaking = false;
+        return;
+      }
+
+      // 最初のセンテンスと残りのセンテンスに分割
+      const firstSentence = sentences[0];
+      const remainingSentences = sentences.slice(1).join('');
+
+      const langConfig = this.LANGUAGE_CODE_MAP[this.currentLanguage];
+
+      // ★並行処理開始: 最初のセンテンスと残りのセンテンスを同時にTTS生成
+      let firstSentenceAudioPromise: Promise<string | null> | null = null;
+      let remainingAudioPromise: Promise<string | null> | null = null;
+
+      if (this.isUserInteracted) {
+        // 最初のセンテンスのTTS生成（並行開始）
+        firstSentenceAudioPromise = (async () => {
+          const cleanText = this.stripMarkdown(firstSentence);
+          const response = await fetch(`${this.apiBase}/api/tts/synthesize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: cleanText,
+              language_code: langConfig.tts,
+              voice_name: langConfig.voice
+            })
+          });
+          const result = await response.json();
+          return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
+        })();
+
+        // 残りのセンテンスのTTS生成（並行開始）
+        if (remainingSentences.trim().length > 0) {
+          remainingAudioPromise = (async () => {
+            const cleanText = this.stripMarkdown(remainingSentences);
+            const response = await fetch(`${this.apiBase}/api/tts/synthesize`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                text: cleanText,
+                language_code: langConfig.tts,
+                voice_name: langConfig.voice
+              })
+            });
+            const result = await response.json();
+            return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
+          })();
+        }
+
+        // ★最初のセンテンスの音声が完成したらすぐに再生
+        if (firstSentenceAudioPromise) {
+          const firstSentenceAudio = await firstSentenceAudioPromise;
+          if (firstSentenceAudio) {
+            const firstSentenceText = this.stripMarkdown(firstSentence);
+            this.lastAISpeech = this.normalizeText(firstSentenceText);
+
+            this.stopCurrentAudio();
+            this.ttsPlayer.src = firstSentenceAudio;
+
+            await new Promise<void>((resolve) => {
+              this.ttsPlayer.onended = () => {
+                this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+                this.els.voiceStatus.className = 'voice-status stopped';
+                resolve();
+              };
+              this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
+              this.els.voiceStatus.className = 'voice-status speaking';
+              this.ttsPlayer.play();
+            });
+
+            // ★残りのセンテンスの音声が完成したら続けて再生
+            if (remainingAudioPromise) {
+              const remainingAudio = await remainingAudioPromise;
+              if (remainingAudio) {
+                const remainingText = this.stripMarkdown(remainingSentences);
+                this.lastAISpeech = this.normalizeText(remainingText);
+
+                await new Promise(r => setTimeout(r, 300)); // 短い間隔
+
+                this.stopCurrentAudio();
+                this.ttsPlayer.src = remainingAudio;
+
+                await new Promise<void>((resolve) => {
+                  this.ttsPlayer.onended = () => {
+                    this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+                    this.els.voiceStatus.className = 'voice-status stopped';
+                    resolve();
+                  };
+                  this.els.voiceStatus.innerHTML = this.t('voiceStatusSpeaking');
+                  this.els.voiceStatus.className = 'voice-status speaking';
+                  this.ttsPlayer.play();
+                });
+              }
+            }
+          }
+        }
+      }
+
+      this.isAISpeaking = false;
+    } catch (error) {
+      console.error('[TTS並行処理エラー]', error);
+      this.isAISpeaking = false;
+      // エラー時はフォールバック
+      await this.speakTextGCP(response, true, false, isTextInput);
+    }
+  }
+
+  // ========================================
   // 🎯 コンシェルジュモード専用: 音声入力完了時の即答処理
   // ========================================
   protected async handleStreamingSTTComplete(transcript: string) {
@@ -513,14 +674,16 @@ export class ConciergeController extends CoreController {
           if (extractedShops.length > 0) {
             this.currentShops = extractedShops;
             this.els.reservationBtn.classList.add('visible');
-            document.dispatchEvent(new CustomEvent('displayShops', { 
-              detail: { shops: extractedShops, language: this.currentLanguage } 
+            document.dispatchEvent(new CustomEvent('displayShops', {
+              detail: { shops: extractedShops, language: this.currentLanguage }
             }));
             const section = document.getElementById('shopListSection');
             if (section) section.classList.add('has-shops');
-            this.speakTextGCP(data.response, true, false, isTextInput);
-          } else { 
-            this.speakTextGCP(data.response, true, false, isTextInput); 
+            // ★並行処理フローを適用
+            this.speakResponseInChunks(data.response, isTextInput);
+          } else {
+            // ★並行処理フローを適用
+            this.speakResponseInChunks(data.response, isTextInput);
           }
         }
       }
