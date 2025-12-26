@@ -959,6 +959,8 @@ protected async toggleRecording() {
 
   protected updateUILanguage() {
     console.log('[Core] Updating UI language to:', this.currentLanguage);
+    console.log('[Core] Current mode:', this.currentMode);
+    console.log('[Core] Setting title for mode:', this.currentMode);
 
     this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
     this.els.userInput.placeholder = this.t('inputPlaceholder');
