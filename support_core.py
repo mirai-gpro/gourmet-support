@@ -18,6 +18,8 @@ import google.generativeai as genai_legacy
 # api_integrations から必要な関数をインポート
 from api_integrations import extract_shops_from_response
 
+logger = logging.getLogger(__name__)
+
 # 長期記憶モジュールをインポート
 try:
     from long_term_memory import LongTermMemory, PreferenceExtractor, extract_name_from_text
@@ -25,8 +27,6 @@ try:
 except Exception as e:
     logger.warning(f"[LTM] 長期記憶モジュールのインポート失敗: {e}")
     LONG_TERM_MEMORY_ENABLED = False
-
-logger = logging.getLogger(__name__)
 
 # Gemini クライアント初期化
 gemini_client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))

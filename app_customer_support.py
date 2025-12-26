@@ -38,21 +38,20 @@ from support_core import (
     SupportAssistant
 )
 
-# 長期記憶モジュールをインポート
-try:
-    from long_term_memory import LongTermMemory, PreferenceExtractor, extract_name_from_text
-    LONG_TERM_MEMORY_ENABLED = True
-except Exception as e:
-    logger = logging.getLogger(__name__)
-    logger.warning(f"[LTM] 長期記憶モジュールのインポート失敗: {e}")
-    LONG_TERM_MEMORY_ENABLED = False
-
 # ロギング設定
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s'
 )
 logger = logging.getLogger(__name__)
+
+# 長期記憶モジュールをインポート
+try:
+    from long_term_memory import LongTermMemory, PreferenceExtractor, extract_name_from_text
+    LONG_TERM_MEMORY_ENABLED = True
+except Exception as e:
+    logger.warning(f"[LTM] 長期記憶モジュールのインポート失敗: {e}")
+    LONG_TERM_MEMORY_ENABLED = False
 
 app = Flask(__name__)
 app.config["JSON_AS_ASCII"] = False  # UTF-8エンコーディングを有効化
