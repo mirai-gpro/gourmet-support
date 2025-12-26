@@ -749,6 +749,9 @@ const { apiBaseUrl = '' } = Astro.props;
 
       // デフォルト画像
       const imageUrl = shop.image || 'https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&h=450&fit=crop';
+      console.log(`[ShopCard] ${shop.name}`);
+      console.log(`  shop.image: ${shop.image || '(undefined)'}`);
+      console.log(`  imageUrl: ${imageUrl}`);
       // 星の生成
       const starsHtml = this.createStarsHtml(shop.rating || 0);
       // おすすめポイントの生成
