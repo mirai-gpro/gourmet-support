@@ -202,6 +202,7 @@ class SupportSession:
 
                 # 初回訪問判定
                 is_first_visit = ltm.is_first_visit(self.session_id)
+                logger.info(f"[Session] is_first_visit={is_first_visit} for session {self.session_id}")
 
                 # システムプロンプトに注入するコンテキスト生成
                 if not is_first_visit:
@@ -354,6 +355,12 @@ class SupportAssistant:
         """初回メッセージ - モード別 + 初回訪問判定"""
         session_data = self.session.get_data()
         is_first_visit = session_data.get('is_first_visit', True) if session_data else True
+
+        # デバッグログ
+        logger.info(f"[Assistant] get_initial_message: is_first_visit={is_first_visit}")
+        if session_data:
+            profile = session_data.get('long_term_profile', {})
+            logger.info(f"[Assistant] Profile: {profile}")
 
         # 初回訪問の場合、名前を聞く
         if is_first_visit:
