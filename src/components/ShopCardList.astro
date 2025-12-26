@@ -804,7 +804,8 @@ const { apiBaseUrl = '' } = Astro.props;
       card.innerHTML = `
         <a href="${mapsUrl}" target="_blank" rel="noopener noreferrer" class="hero-image-link" data-maps-url="${mapsUrl}">
           <div class="hero-image">
-            <img src="${imageUrl}" alt="${shop.name}" loading="lazy" />
+            <img src="${imageUrl}" alt="${shop.name}" loading="lazy"
+                 onerror="this.onerror=null; this.src='https://images.unsplash.com/photo-1517248135467-4c7edcad34c4?w=800&h=450&fit=crop';" />
             ${shop.category ? `<span class="category-badge">${shop.category}</span>` : ''}
             ${shop.location ? `
               <div class="location-badge">
