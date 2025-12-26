@@ -329,6 +329,12 @@ def get_place_details(place_id: str, language: str = 'ja') -> dict:
 
         result = data.get('result', {})
 
+        # デバッグ：photosの有無を確認
+        if 'photos' in result:
+            logger.info(f"[Place Details API] photos フィールド存在: {len(result['photos'])}枚")
+        else:
+            logger.warning(f"[Place Details API] photos フィールドなし - place_id: {place_id}")
+
         # 電話番号取得(国内形式を優先、なければ国際形式)
         phone = result.get('formatted_phone_number') or result.get('international_phone_number')
 
@@ -421,6 +427,12 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         results_count = len(data.get('results', []))
         logger.info(f"[Places API] 📊 検索結果: {results_count}件ヒット")
 
+        # デバッグ：Text Search APIのphotosを確認
+        if 'photos' in place:
+            logger.info(f"[Text Search API] photos フィールド存在: {len(place['photos'])}枚")
+        else:
+            logger.warning(f"[Text Search API] photos フィールドなし: {place.get('name')}")
+
         place_id = place['place_id']
 
         logger.info(f"[Places API] 🏆 1番目の結果: name='{place.get('name')}', address='{place.get('formatted_address', '')[:50]}...'")
@@ -439,7 +451,7 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         # 📷 画像URLを生成(Text Search API → Place Details API の順で試行)
         photo_url = None
         photos_source = place.get('photos') or details.get('photos')
-        if photos_source:
+        if photos_source and len(photos_source) > 0:
             photo_reference = photos_source[0]['photo_reference']
             photo_url = (
                 f"https://maps.googleapis.com/maps/api/place/photo"
@@ -448,8 +460,6 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
                 f"&key={GOOGLE_PLACES_API_KEY}"
             )
             logger.info(f"[Places API] 📷 写真取得元: {'Text Search' if place.get('photos') else 'Place Details'}")
-        else:
-            logger.warning(f"[Places API] ⚠️ 写真データなし: {place.get('name')}")
 
 
 
