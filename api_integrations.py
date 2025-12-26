@@ -452,19 +452,14 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
         photo_url = None
         photos_source = place.get('photos') or details.get('photos')
         if photos_source and len(photos_source) > 0:
-            photo_reference = photos_source[0].get('photo_reference', '')
-            if photo_reference:
-                photo_url = (
-                    f"https://maps.googleapis.com/maps/api/place/photo"
-                    f"?maxwidth=800"
-                    f"&photo_reference={photo_reference}"
-                    f"&key={GOOGLE_PLACES_API_KEY}"
-                )
-                logger.info(f"[Places API] 📷 写真取得元: {'Text Search' if place.get('photos') else 'Place Details'}")
-            else:
-                logger.warning(f"[Places API] ⚠️ photo_reference が空: {place.get('name')}")
-        else:
-            logger.warning(f"[Places API] ⚠️ 写真データなし: {place.get('name')}")
+            photo_reference = photos_source[0]['photo_reference']
+            photo_url = (
+                f"https://maps.googleapis.com/maps/api/place/photo"
+                f"?maxwidth=800"
+                f"&photo_reference={photo_reference}"
+                f"&key={GOOGLE_PLACES_API_KEY}"
+            )
+            logger.info(f"[Places API] 📷 写真取得元: {'Text Search' if place.get('photos') else 'Place Details'}")
 
 
 
