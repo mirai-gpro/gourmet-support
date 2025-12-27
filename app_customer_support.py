@@ -268,32 +268,11 @@ def chat():
             logger.info(f"[Chat] 深掘り質問への回答: {response_text[:100]}...")
 
         # ========================================
-        # 長期記憶: 名前取得フロー & 好み抽出
+        # 長期記憶: 好み抽出 & LLMからのaction処理
         # ========================================
         if LONG_TERM_MEMORY_ENABLED:
             try:
                 ltm = LongTermMemory()
-                profile = session_data.get('long_term_profile', {})
-
-                # 初回訪問時の名前取得
-                if session_data.get('is_first_visit') and not profile.get('preferred_name'):
-                    extracted_name = extract_name_from_text(user_message)
-                    if extracted_name:
-                        # 名前を保存（敬称はデフォルトで「様」）
-                        ltm.update_profile(session_id, {
-                            'preferred_name': extracted_name,
-                            'name_honorific': '様'
-                        })
-                        logger.info(f"[LTM] 名前を保存: {extracted_name}")
-
-                        # 敬称確認をAI応答に追加
-                        confirmation = {
-                            'ja': f"\n\n{extracted_name}様とお呼びすればよろしいですか？「様はいらない」などとお伝えいただければ、呼び方を調整いたします。",
-                            'en': f"\n\nShall I address you as {extracted_name}-sama? Please let me know if you prefer a different style.",
-                            'zh': f"\n\n我应该称呼您为{extracted_name}吗？如果您希望其他称呼方式，请告诉我。",
-                            'ko': f"\n\n{extracted_name}님으로 불러드려도 될까요? 다른 호칭을 원하시면 말씀해 주세요."
-                        }
-                        response_text += confirmation.get(language, confirmation['ja'])
 
                 # 好みの自動抽出（会話全体から）
                 PreferenceExtractor.extract_and_save(session_id, user_message, language)
@@ -302,6 +281,7 @@ def chat():
                 # ========================================
                 # LLMからのaction指示を処理
                 # ========================================
+                # 初回訪問時の名前登録も、名前変更も、すべてLLMのactionで統一
                 action = result.get('action')
                 if action and action.get('type') == 'update_user_profile':
                     updates = action.get('updates', {})
