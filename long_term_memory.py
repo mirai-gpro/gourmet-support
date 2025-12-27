@@ -515,22 +515,31 @@ class PreferenceExtractor:
 
 def extract_name_from_text(text: str) -> Optional[str]:
     """テキストから名前を抽出"""
-    # パターン1: 「〜と呼んで」
+    # パターン1: 「〜と申します」「〜と言います」（フォーマルな自己紹介）
+    match = re.search(r'^?([ぁ-んァ-ヶー\u4e00-\u9fafA-Za-z\s]+?)(?:と申します|と言います|といいます|と言う|という)', text)
+    if match:
+        name = match.group(1).strip()
+        if 2 <= len(name) <= 20:
+            return name
+
+    # パターン2: 「〜と呼んで」
     match = re.search(r'([^\s、。]+)(?:と|って)(?:呼んで|呼ばれ)', text)
     if match:
         return match.group(1)
 
-    # パターン2: 「名前は〜」
-    match = re.search(r'名前は([^\s、。]+)', text)
+    # パターン3: 「名前は〜」（名前部分のみ抽出）
+    match = re.search(r'名前は([ぁ-んァ-ヶー\u4e00-\u9fafA-Za-z\s]+?)(?:です|と申します|と言います|$|。)', text)
     if match:
-        return match.group(1)
+        name = match.group(1).strip()
+        if 2 <= len(name) <= 20:
+            return name
 
-    # パターン3: 「〜です」「〜だよ」などの文末パターン
+    # パターン4: 「〜です」「〜だよ」などの文末パターン
     match = re.search(r'^([ぁ-んァ-ヶー\u4e00-\u9fafA-Za-z]{2,10})(?:です|だよ|っす|やで)?[。!！]*$', text.strip())
     if match:
         return match.group(1)
 
-    # パターン4: 単独の名前（ひらがな・カタカナ・漢字・アルファベット2-10文字）
+    # パターン5: 単独の名前（ひらがな・カタカナ・漢字・アルファベット2-10文字）
     match = re.search(r'^([ぁ-んァ-ヶー\u4e00-\u9fafA-Za-z]{2,10})$', text.strip())
     if match:
         return match.group(1)
