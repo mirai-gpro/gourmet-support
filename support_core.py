@@ -342,22 +342,36 @@ class SupportAssistant:
         mode_prompts = system_prompts.get(self.mode, SYSTEM_PROMPTS.get('chat', {}))
         self.system_prompt = mode_prompts.get(self.language, mode_prompts.get('ja', ''))
 
-        # ★★★ 長期記憶のコンテキストをシステムプロンプトに追加 ★★★
+        # ★★★ 長期記憶のコンテキストをシステムプロンプトに追加（コンシェルジュモードのみ） ★★★
         session_data = session.get_data()
-        if session_data and session_data.get('user_context'):
+        if self.mode == 'concierge' and session_data and session_data.get('user_context'):
             user_context = session_data['user_context']
             self.system_prompt = f"{self.system_prompt}\n\n{user_context}"
-            logger.info(f"[Assistant] 長期記憶コンテキストを注入")
+            logger.info(f"[Assistant] 長期記憶コンテキストを注入（コンシェルジュモード）")
 
         logger.info(f"[Assistant] 初期化: mode={self.mode}, language={self.language}")
 
     def get_initial_message(self):
-        """初回メッセージ - モード別 + 初回訪問判定"""
+        """初回メッセージ - モード別 + 初回訪問判定（コンシェルジュモードのみ）"""
         session_data = self.session.get_data()
+
+        # 通常の挨拶（デフォルト）
+        greetings = INITIAL_GREETINGS.get(self.mode, INITIAL_GREETINGS.get('chat', {}))
+        base_greeting = greetings.get(self.language, greetings.get('ja', ''))
+
+        # チャットモードは常にシンプルな挨拶のみ
+        if self.mode != 'concierge':
+            logger.info(f"[Assistant] チャットモード: シンプルな挨拶")
+            return base_greeting
+
+        # ========================================
+        # 以下はコンシェルジュモードのみ
+        # ========================================
+
         is_first_visit = session_data.get('is_first_visit', True) if session_data else True
 
         # デバッグログ
-        logger.info(f"[Assistant] get_initial_message: is_first_visit={is_first_visit}")
+        logger.info(f"[Assistant] コンシェルジュモード: is_first_visit={is_first_visit}")
         if session_data:
             profile = session_data.get('long_term_profile', {})
             logger.info(f"[Assistant] Profile: {profile}")
@@ -376,10 +390,6 @@ class SupportAssistant:
         profile = session_data.get('long_term_profile', {}) if session_data else {}
         preferred_name = profile.get('preferred_name', '') if profile else ''
         name_honorific = profile.get('name_honorific', '') if profile else ''
-
-        # 通常の挨拶
-        greetings = INITIAL_GREETINGS.get(self.mode, INITIAL_GREETINGS.get('chat', {}))
-        base_greeting = greetings.get(self.language, greetings.get('ja', ''))
 
         # 名前がある場合、個別挨拶に変更
         if preferred_name:
