@@ -293,6 +293,11 @@ def chat():
                 if action and action.get('type') == 'update_user_profile':
                     updates = action.get('updates', {})
                     if updates:
+                        # 名前を登録する際、user_idも設定（空の場合のみ）
+                        if 'preferred_name' in updates:
+                            profile = session_data.get('long_term_profile', {})
+                            if not profile.get('user_id'):
+                                updates['user_id'] = lookup_id
                         ltm.update_profile(lookup_id, updates)
                         logger.info(f"[LTM] LLMからの指示でプロファイル更新: {updates} (lookup_id: {lookup_id})")
 
