@@ -73,7 +73,7 @@ class LongTermMemory:
         try:
             profile_data = {
                 'session_id': session_id,
-                'user_id': None,  # 初回作成時は null、名前登録時に session_id を設定
+                'user_id': session_id,  # user_idカラムにも同じ値を設定
                 'preferred_name': data.get('preferred_name') if data else None,
                 'name_honorific': data.get('name_honorific', '') if data else '',
                 'default_language': data.get('language', 'ja') if data else 'ja',
@@ -140,13 +140,9 @@ class LongTermMemory:
             return self.create_profile(session_id, initial_data)
 
     def is_first_visit(self, session_id: str) -> bool:
-        """初回訪問かどうか判定（user_idベース）"""
+        """初回訪問かどうか判定（preferred_nameベース）"""
         profile = self.get_profile(session_id)
-        if profile is None:
-            return True
-        # user_id がセットされていれば2回目以降
-        user_id = profile.get('user_id')
-        return user_id is None or user_id == ''
+        return profile is None or profile.get('preferred_name') is None
 
     # ----------------------------------------
     # 好み・傾向の管理

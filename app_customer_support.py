@@ -274,9 +274,16 @@ def chat():
             try:
                 ltm = LongTermMemory()
 
+                # user_id があればそれを使う、なければ session_id を使う
+                user_info = session_data.get('user_info', {})
+                lookup_id = user_info.get('user_id') if user_info else None
+                if not lookup_id:
+                    lookup_id = session_id
+                logger.info(f"[LTM] lookup_id={lookup_id} (session_id={session_id})")
+
                 # 好みの自動抽出（会話全体から）
-                PreferenceExtractor.extract_and_save(session_id, user_message, language)
-                PreferenceExtractor.extract_and_save(session_id, response_text, language)
+                PreferenceExtractor.extract_and_save(lookup_id, user_message, language)
+                PreferenceExtractor.extract_and_save(lookup_id, response_text, language)
 
                 # ========================================
                 # LLMからのaction指示を処理
@@ -286,11 +293,8 @@ def chat():
                 if action and action.get('type') == 'update_user_profile':
                     updates = action.get('updates', {})
                     if updates:
-                        # 名前が含まれている場合、user_idも設定
-                        if 'preferred_name' in updates:
-                            updates['user_id'] = session_id
-                        ltm.update_profile(session_id, updates)
-                        logger.info(f"[LTM] LLMからの指示でプロファイル更新: {updates} (user_id: {session_id})")
+                        ltm.update_profile(lookup_id, updates)
+                        logger.info(f"[LTM] LLMからの指示でプロファイル更新: {updates} (lookup_id: {lookup_id})")
 
             except Exception as e:
                 logger.error(f"[LTM] 処理エラー: {e}")
