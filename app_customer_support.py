@@ -286,6 +286,9 @@ def chat():
                 if action and action.get('type') == 'update_user_profile':
                     updates = action.get('updates', {})
                     if updates:
+                        # 名前が含まれている場合、user_idも設定
+                        if 'preferred_name' in updates:
+                            updates['user_id'] = session_id
                         ltm.update_profile(session_id, updates)
                         logger.info(f"[LTM] LLMからの指示でプロファイル更新: {updates} (user_id: {session_id})")
 
