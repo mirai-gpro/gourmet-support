@@ -493,7 +493,7 @@ class SupportAssistant:
                 logger.info(f"[DEBUG] UTF-8 encoding test: OK ({len(test_encode)} bytes)")
             except Exception as e:
                 logger.error(f"[DEBUG] UTF-8 encoding test: FAILED - {e}")
-            parsed_message, parsed_shops = self._parse_json_response(assistant_text)
+            parsed_message, parsed_shops, parsed_action = self._parse_json_response(assistant_text)
 
             if parsed_shops:
                 self.session.save_current_shops(parsed_shops)
@@ -517,7 +517,8 @@ class SupportAssistant:
                 'summary': summary,
                 'shops': parsed_shops,
                 'should_confirm': conversation_stage == 'conversation',
-                'is_followup': is_followup
+                'is_followup': is_followup,
+                'action': parsed_action
             }
 
         except Exception as e:
@@ -633,8 +634,8 @@ class SupportAssistant:
             if start_idx == -1:
                 logger.warning("[JSON Parse] JSON形式が見つかりません")
                 shops = extract_shops_from_response(text)
-                return text, shops
-            
+                return text, shops, None
+
             # ブレースのカウントで対応する閉じブレースを見つける
             brace_count = 0
             end_idx = -1
@@ -646,27 +647,28 @@ class SupportAssistant:
                     if brace_count == 0:
                         end_idx = i + 1
                         break
-            
+
             if end_idx == -1:
                 logger.warning("[JSON Parse] JSONの閉じブレースが見つかりません")
                 shops = extract_shops_from_response(text)
-                return text, shops
-            
+                return text, shops, None
+
             json_str = text[start_idx:end_idx].strip()
             logger.info(f"[JSON Parse] JSONオブジェクトを検出: {len(json_str)}文字")
-            
+
             data = json.loads(json_str)
-            
+
             message = data.get('message', text)
             shops = data.get('shops', [])
-            
-            logger.info(f"[JSON Parse] 成功: message={len(message)}文字, shops={len(shops)}件")
-            return message, shops
-            
+            action = data.get('action', None)
+
+            logger.info(f"[JSON Parse] 成功: message={len(message)}文字, shops={len(shops)}件, action={action is not None}")
+            return message, shops, action
+
         except json.JSONDecodeError as e:
             logger.warning(f"[JSON Parse] パース失敗: {e}")
             shops = extract_shops_from_response(text)
-            return text, shops
+            return text, shops, None
 
     def _generate_summary(self, user_message, assistant_response):
         """会話の要約を生成"""
