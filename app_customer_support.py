@@ -296,6 +296,30 @@ def chat():
                         }
                         response_text += confirmation.get(language, confirmation['ja'])
 
+                # 名前変更のリクエストを検出
+                if profile.get('preferred_name'):
+                    # 名前変更のパターンマッチング
+                    if re.search(r'(名前|登録名)(?:を)?(?:変更|変えて)', user_message):
+                        # 新しい名前を抽出
+                        new_name = extract_name_from_text(user_message)
+                        if new_name and new_name != profile.get('preferred_name'):
+                            # 名前を更新
+                            ltm.update_profile(user_id, {'preferred_name': new_name})
+                            logger.info(f"[LTM] 名前を更新: {profile.get('preferred_name')} → {new_name} (user_id: {user_id})")
+
+                            # 確認メッセージを追加
+                            honorific = profile.get('name_honorific', '様')
+                            update_msg = {
+                                'ja': f"\n\nかしこまりました。今後は「{new_name}{honorific}」とお呼びいたします。",
+                                'en': f"\n\nUnderstood. I will address you as \"{new_name}-{honorific}\" from now on.",
+                                'zh': f"\n\n明白了。今后我会称呼您为「{new_name}{honorific}」。",
+                                'ko': f"\n\n알겠습니다. 앞으로 「{new_name}{honorific}」으로 부르겠습니다。"
+                            }
+                            response_text += update_msg.get(language, update_msg['ja'])
+
+                            # プロファイルを更新（後続の敬称変更で使用）
+                            profile['preferred_name'] = new_name
+
                 # 敬称変更のリクエストを検出
                 if profile.get('preferred_name'):
                     honorific_match = None
