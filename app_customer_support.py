@@ -289,12 +289,54 @@ def chat():
 
                         # 敬称確認をAI応答に追加
                         confirmation = {
-                            'ja': f"\n\n{extracted_name}様とお呼びすればよろしいですか？「様はいらない」などとお伝えいただければ、呼び方を調整いたします。",
-                            'en': f"\n\nShall I address you as {extracted_name}-sama? Please let me know if you prefer a different style.",
-                            'zh': f"\n\n我应该称呼您为{extracted_name}吗？如果您希望其他称呼方式，请告诉我。",
-                            'ko': f"\n\n{extracted_name}님으로 불러드려도 될까요? 다른 호칭을 원하시면 말씀해 주세요."
+                            'ja': f"\n\n「{extracted_name}様」とお呼びすればよろしいでしょうか？\n敬称を変更したい場合は、「さん」「くん」「ちゃん」など、ご希望の呼び方をお伝えください。",
+                            'en': f"\n\nShall I address you as \"{extracted_name}-sama\"?\nIf you prefer a different honorific, please let me know (e.g., -san, -kun, -chan).",
+                            'zh': f"\n\n我应该称呼您为「{extracted_name}様」吗？\n如果您希望其他称呼方式，请告诉我（例如：先生、小姐等）。",
+                            'ko': f"\n\n「{extracted_name}님」으로 불러드려도 될까요？\n다른 호칭을 원하시면 말씀해 주세요（예: 씨, 군 등）。"
                         }
                         response_text += confirmation.get(language, confirmation['ja'])
+
+                # 敬称変更のリクエストを検出
+                if profile.get('preferred_name'):
+                    honorific_match = None
+                    new_honorific = None
+
+                    # 敬称パターンマッチング
+                    if re.search(r'(様|さま)(?:で|が|は)?(?:いい|良い|ok|OK)', user_message, re.IGNORECASE):
+                        new_honorific = '様'
+                    elif re.search(r'(さん)(?:で|が|は)?(?:いい|良い|ok|OK)', user_message, re.IGNORECASE):
+                        new_honorific = 'さん'
+                    elif re.search(r'(くん|君)(?:で|が|は)?(?:いい|良い|ok|OK)', user_message, re.IGNORECASE):
+                        new_honorific = 'くん'
+                    elif re.search(r'(ちゃん)(?:で|が|は)?(?:いい|良い|ok|OK)', user_message, re.IGNORECASE):
+                        new_honorific = 'ちゃん'
+                    elif re.search(r'(様|さま)(?:は)?(?:いらない|なし|不要)', user_message, re.IGNORECASE):
+                        new_honorific = ''
+                    elif re.search(r'呼び捨て', user_message):
+                        new_honorific = ''
+
+                    # 敬称が検出された場合、更新
+                    if new_honorific is not None and new_honorific != profile.get('name_honorific'):
+                        ltm.update_profile(user_id, {'name_honorific': new_honorific})
+                        logger.info(f"[LTM] 敬称を更新: {new_honorific} (user_id: {user_id})")
+
+                        # 確認メッセージを追加
+                        name = profile.get('preferred_name')
+                        if new_honorific:
+                            update_msg = {
+                                'ja': f"\n\nかしこまりました。「{name}{new_honorific}」とお呼びいたします。",
+                                'en': f"\n\nUnderstood. I will address you as \"{name}-{new_honorific}\".",
+                                'zh': f"\n\n明白了。我会称呼您为「{name}{new_honorific}」。",
+                                'ko': f"\n\n알겠습니다. 「{name}{new_honorific}」으로 부르겠습니다。"
+                            }
+                        else:
+                            update_msg = {
+                                'ja': f"\n\nかしこまりました。「{name}」とお呼びいたします。",
+                                'en': f"\n\nUnderstood. I will address you as \"{name}\".",
+                                'zh': f"\n\n明白了。我会称呼您为「{name}」。",
+                                'ko': f"\n\n알겠습니다. 「{name}」으로 부르겠습니다。"
+                            }
+                        response_text += update_msg.get(language, update_msg['ja'])
 
                 # 好みの自動抽出（会話全体から）
                 PreferenceExtractor.extract_and_save(user_id, user_message, language)
