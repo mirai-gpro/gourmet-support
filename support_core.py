@@ -191,23 +191,26 @@ class SupportSession:
         is_first_visit = True
         user_context = ""
 
+        # ユーザーIDを取得（フロントエンドから送信された永続ID）
+        user_id = (user_info or {}).get('user_id', self.session_id)
+
         if LONG_TERM_MEMORY_ENABLED:
             try:
                 ltm = LongTermMemory()
-                # プロファイル取得または作成
+                # プロファイル取得または作成（user_idを使用）
                 long_term_profile = ltm.get_or_create_profile(
-                    self.session_id,
+                    user_id,
                     {'language': language, 'mode': mode}
                 )
 
                 # 初回訪問判定
-                is_first_visit = ltm.is_first_visit(self.session_id)
-                logger.info(f"[Session] is_first_visit={is_first_visit} for session {self.session_id}")
+                is_first_visit = ltm.is_first_visit(user_id)
+                logger.info(f"[Session] is_first_visit={is_first_visit} for user {user_id}")
 
                 # システムプロンプトに注入するコンテキスト生成
                 if not is_first_visit:
-                    user_context = ltm.generate_system_prompt_context(self.session_id, language)
-                    logger.info(f"[Session] 長期記憶コンテキスト取得: {self.session_id}")
+                    user_context = ltm.generate_system_prompt_context(user_id, language)
+                    logger.info(f"[Session] 長期記憶コンテキスト取得: {user_id}")
 
             except Exception as e:
                 logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
@@ -223,6 +226,7 @@ class SupportSession:
             'inquiry_summary': None,
             'current_shops': [],
             # 長期記憶関連の追加フィールド
+            'user_id': user_id,  # 永続的なユーザーID
             'is_first_visit': is_first_visit,
             'user_context': user_context,
             'long_term_profile': long_term_profile

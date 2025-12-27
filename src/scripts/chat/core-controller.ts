@@ -69,10 +69,36 @@ export class CoreController {
     // ※ init() はコンストラクタで呼ばず、継承先で呼ぶ設計にします
   }
 
+  // 永続的なユーザーIDを取得または生成
+  protected getUserId(): string {
+    const STORAGE_KEY = 'gourmet_support_user_id';
+    let userId = localStorage.getItem(STORAGE_KEY);
+
+    if (!userId) {
+      // 新規ユーザー: UUIDを生成して保存
+      userId = this.generateUUID();
+      localStorage.setItem(STORAGE_KEY, userId);
+      console.log('[Core] New user ID generated:', userId);
+    } else {
+      console.log('[Core] Existing user ID found:', userId);
+    }
+
+    return userId;
+  }
+
+  // UUID v4生成
+  private generateUUID(): string {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  }
+
   // 初期化メソッド (継承先から呼び出す)
   protected async init() {
     console.log('[Core] Starting initialization...');
-    
+
     this.bindEvents();
     this.initSocket();
     
@@ -214,10 +240,11 @@ export class CoreController {
         } catch (e) {}
       }
 
+      const userId = this.getUserId();
       const res = await fetch(`${this.apiBase}/api/session/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_info: {}, language: this.currentLanguage, mode: this.currentMode })
+        body: JSON.stringify({ user_info: { user_id: userId }, language: this.currentLanguage, mode: this.currentMode })
       });
       const data = await res.json();
       this.sessionId = data.session_id;

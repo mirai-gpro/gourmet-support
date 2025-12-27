@@ -274,17 +274,18 @@ def chat():
             try:
                 ltm = LongTermMemory()
                 profile = session_data.get('long_term_profile', {})
+                user_id = session_data.get('user_id', session_id)  # 永続的なユーザーIDを使用
 
                 # 初回訪問時の名前取得
                 if session_data.get('is_first_visit') and not profile.get('preferred_name'):
                     extracted_name = extract_name_from_text(user_message)
                     if extracted_name:
                         # 名前を保存（敬称はデフォルトで「様」）
-                        ltm.update_profile(session_id, {
+                        ltm.update_profile(user_id, {
                             'preferred_name': extracted_name,
                             'name_honorific': '様'
                         })
-                        logger.info(f"[LTM] 名前を保存: {extracted_name}")
+                        logger.info(f"[LTM] 名前を保存: {extracted_name} (user_id: {user_id})")
 
                         # 敬称確認をAI応答に追加
                         confirmation = {
@@ -296,8 +297,8 @@ def chat():
                         response_text += confirmation.get(language, confirmation['ja'])
 
                 # 好みの自動抽出（会話全体から）
-                PreferenceExtractor.extract_and_save(session_id, user_message, language)
-                PreferenceExtractor.extract_and_save(session_id, response_text, language)
+                PreferenceExtractor.extract_and_save(user_id, user_message, language)
+                PreferenceExtractor.extract_and_save(user_id, response_text, language)
 
             except Exception as e:
                 logger.error(f"[LTM] 処理エラー: {e}")
@@ -347,10 +348,11 @@ def finalize_session():
         if LONG_TERM_MEMORY_ENABLED:
             try:
                 ltm = LongTermMemory()
+                user_id = session_data.get('user_id', session_id)  # 永続的なユーザーIDを使用
 
                 # 訪問履歴を保存
                 ltm.save_interaction_history(
-                    session_id=session_id,
+                    session_id=user_id,
                     actual_session_id=session_id,
                     language=session_data.get('language', 'ja'),
                     mode=session_data.get('mode', 'chat'),
@@ -360,7 +362,7 @@ def finalize_session():
                     session_started_at=None,  # TODO: セッション開始時刻を記録
                     session_ended_at=datetime.now()
                 )
-                logger.info(f"[LTM] 訪問履歴を保存: {session_id}")
+                logger.info(f"[LTM] 訪問履歴を保存: user_id={user_id}, session_id={session_id}")
 
             except Exception as e:
                 logger.error(f"[LTM] 保存エラー: {e}")
