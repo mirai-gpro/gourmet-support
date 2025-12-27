@@ -9,8 +9,7 @@
 -- ========================================
 CREATE TABLE IF NOT EXISTS user_profiles (
     -- 識別子
-    session_id VARCHAR(255) PRIMARY KEY,
-    user_id VARCHAR(255),  -- 将来のGoogle認証用（現在はNULL）
+    user_id VARCHAR(255) PRIMARY KEY,  -- ブラウザごとのユニークキー（将来的にGoogle認証IDに置き換え）
 
     -- 呼び方設定
     preferred_name VARCHAR(100),           -- 「ちゃっぴー」
@@ -31,7 +30,6 @@ CREATE TABLE IF NOT EXISTS user_profiles (
 );
 
 -- インデックス
-CREATE INDEX IF NOT EXISTS idx_user_profiles_user_id ON user_profiles(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_profiles_last_visit ON user_profiles(last_visit_at);
 
 -- ========================================
@@ -40,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_user_profiles_last_visit ON user_profiles(last_vi
 -- ========================================
 CREATE TABLE IF NOT EXISTS user_preferences (
     id BIGSERIAL PRIMARY KEY,
-    session_id VARCHAR(255) REFERENCES user_profiles(session_id) ON DELETE CASCADE,
+    user_id VARCHAR(255) REFERENCES user_profiles(user_id) ON DELETE CASCADE,
 
     -- 好みカテゴリ
     category VARCHAR(50) NOT NULL,  -- 'food_type', 'allergy', 'area', 'budget', 'atmosphere', 'other'
@@ -61,11 +59,11 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     updated_at TIMESTAMPTZ DEFAULT NOW(),
 
     -- ユニーク制約（同じカテゴリ・キーの重複を防ぐ）
-    UNIQUE(session_id, category, preference_key)
+    UNIQUE(user_id, category, preference_key)
 );
 
 -- インデックス
-CREATE INDEX IF NOT EXISTS idx_user_preferences_session ON user_preferences(session_id);
+CREATE INDEX IF NOT EXISTS idx_user_preferences_user_id ON user_preferences(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_preferences_category ON user_preferences(category);
 CREATE INDEX IF NOT EXISTS idx_user_preferences_importance ON user_preferences(importance_level);
 
@@ -75,10 +73,10 @@ CREATE INDEX IF NOT EXISTS idx_user_preferences_importance ON user_preferences(i
 -- ========================================
 CREATE TABLE IF NOT EXISTS user_interaction_history (
     id BIGSERIAL PRIMARY KEY,
-    session_id VARCHAR(255) REFERENCES user_profiles(session_id) ON DELETE CASCADE,
+    user_id VARCHAR(255) REFERENCES user_profiles(user_id) ON DELETE CASCADE,
 
     -- セッション情報
-    actual_session_id VARCHAR(255),  -- その時のセッションID
+    session_id VARCHAR(255),  -- その時のセッションID（各訪問ごとに異なる）
     language VARCHAR(10),
     mode VARCHAR(20),
 
@@ -100,6 +98,7 @@ CREATE TABLE IF NOT EXISTS user_interaction_history (
 );
 
 -- インデックス
+CREATE INDEX IF NOT EXISTS idx_interaction_history_user_id ON user_interaction_history(user_id);
 CREATE INDEX IF NOT EXISTS idx_interaction_history_session ON user_interaction_history(session_id);
 CREATE INDEX IF NOT EXISTS idx_interaction_history_started ON user_interaction_history(session_started_at);
 
@@ -145,27 +144,27 @@ CREATE TRIGGER update_user_preferences_updated_at
 -- ========================================
 
 -- サンプルユーザー1
-INSERT INTO user_profiles (session_id, preferred_name, name_honorific, default_language, visit_count)
-VALUES ('test-session-001', 'ちゃっぴー', '', 'ja', 3)
-ON CONFLICT (session_id) DO NOTHING;
+INSERT INTO user_profiles (user_id, preferred_name, name_honorific, default_language, visit_count)
+VALUES ('test-user-001', 'ちゃっぴー', '', 'ja', 3)
+ON CONFLICT (user_id) DO NOTHING;
 
-INSERT INTO user_preferences (session_id, category, preference_key, preference_value, confidence_score, importance_level, mention_count)
+INSERT INTO user_preferences (user_id, category, preference_key, preference_value, confidence_score, importance_level, mention_count)
 VALUES
-    ('test-session-001', 'food_type', 'spicy_food', '辛い料理が好き', 0.9, 'high', 5),
-    ('test-session-001', 'allergy', 'peanut_allergy', 'ピーナッツアレルギー', 1.0, 'critical', 2),
-    ('test-session-001', 'area', 'shibuya_area', '渋谷エリアをよく利用', 0.8, 'medium', 7)
-ON CONFLICT (session_id, category, preference_key) DO NOTHING;
+    ('test-user-001', 'food_type', 'spicy_food', '辛い料理が好き', 0.9, 'high', 5),
+    ('test-user-001', 'allergy', 'peanut_allergy', 'ピーナッツアレルギー', 1.0, 'critical', 2),
+    ('test-user-001', 'area', 'shibuya_area', '渋谷エリアをよく利用', 0.8, 'medium', 7)
+ON CONFLICT (user_id, category, preference_key) DO NOTHING;
 
 -- サンプルユーザー2（英語ユーザー）
-INSERT INTO user_profiles (session_id, preferred_name, name_honorific, default_language, visit_count)
-VALUES ('test-session-002', 'John', '-san', 'en', 2)
-ON CONFLICT (session_id) DO NOTHING;
+INSERT INTO user_profiles (user_id, preferred_name, name_honorific, default_language, visit_count)
+VALUES ('test-user-002', 'John', '-san', 'en', 2)
+ON CONFLICT (user_id) DO NOTHING;
 
-INSERT INTO user_preferences (session_id, category, preference_key, preference_value, confidence_score, importance_level, mention_count)
+INSERT INTO user_preferences (user_id, category, preference_key, preference_value, confidence_score, importance_level, mention_count)
 VALUES
-    ('test-session-002', 'food_type', 'vegetarian', 'Vegetarian diet', 1.0, 'critical', 3),
-    ('test-session-002', 'area', 'shinjuku_area', 'Frequently visits Shinjuku', 0.7, 'medium', 4)
-ON CONFLICT (session_id, category, preference_key) DO NOTHING;
+    ('test-user-002', 'food_type', 'vegetarian', 'Vegetarian diet', 1.0, 'critical', 3),
+    ('test-user-002', 'area', 'shinjuku_area', 'Frequently visits Shinjuku', 0.7, 'medium', 4)
+ON CONFLICT (user_id, category, preference_key) DO NOTHING;
 
 -- ========================================
 -- 便利なクエリ（テスト・デバッグ用）
