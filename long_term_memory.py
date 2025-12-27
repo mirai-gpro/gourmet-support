@@ -525,8 +525,13 @@ def extract_name_from_text(text: str) -> Optional[str]:
     if match:
         return match.group(1)
 
-    # パターン3: 単独の名前らしき文字列（ひらがな・カタカナ2-10文字）
-    match = re.search(r'^([ぁ-んァ-ヶー]{2,10})$', text.strip())
+    # パターン3: 「〜です」「〜だよ」などの文末パターン
+    match = re.search(r'^([ぁ-んァ-ヶー\u4e00-\u9fafA-Za-z]{2,10})(?:です|だよ|っす|やで)?[。!！]*$', text.strip())
+    if match:
+        return match.group(1)
+
+    # パターン4: 単独の名前（ひらがな・カタカナ・漢字・アルファベット2-10文字）
+    match = re.search(r'^([ぁ-んァ-ヶー\u4e00-\u9fafA-Za-z]{2,10})$', text.strip())
     if match:
         return match.group(1)
 
