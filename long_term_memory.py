@@ -140,12 +140,12 @@ class LongTermMemory:
             return self.create_profile(session_id, initial_data)
 
     def is_first_visit(self, session_id: str) -> bool:
-        """初回訪問かどうか判定（visit_countベース）"""
+        """初回訪問かどうか判定（preferred_nameベース）"""
         profile = self.get_profile(session_id)
         if profile is None:
             return True
-        # visit_count で判定: 1なら初回、2以降なら2回目以降
-        return profile.get('visit_count', 0) <= 1
+        # preferred_name がなければ初回訪問
+        return profile.get('preferred_name') is None or profile.get('preferred_name') == ''
 
     # ----------------------------------------
     # 好み・傾向の管理
