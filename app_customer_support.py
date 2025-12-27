@@ -300,12 +300,17 @@ def chat():
                 if profile.get('preferred_name'):
                     # 名前変更のパターンマッチング
                     if re.search(r'(名前|登録名)(?:を)?(?:変更|変えて)', user_message):
+                        logger.info(f"[LTM] 名前変更リクエスト検出: {user_message}")
+
                         # 新しい名前を抽出
                         new_name = extract_name_from_text(user_message)
+                        logger.info(f"[LTM] 抽出された名前: {new_name}")
+                        logger.info(f"[LTM] 現在の名前: {profile.get('preferred_name')}")
+
                         if new_name and new_name != profile.get('preferred_name'):
                             # 名前を更新
-                            ltm.update_profile(user_id, {'preferred_name': new_name})
-                            logger.info(f"[LTM] 名前を更新: {profile.get('preferred_name')} → {new_name} (user_id: {user_id})")
+                            success = ltm.update_profile(user_id, {'preferred_name': new_name})
+                            logger.info(f"[LTM] 名前を更新: {profile.get('preferred_name')} → {new_name} (success={success}, user_id: {user_id})")
 
                             # 確認メッセージを追加
                             honorific = profile.get('name_honorific', '様')
@@ -319,6 +324,10 @@ def chat():
 
                             # プロファイルを更新（後続の敬称変更で使用）
                             profile['preferred_name'] = new_name
+                        else:
+                            logger.warning(f"[LTM] 名前更新スキップ: new_name={new_name}, current={profile.get('preferred_name')}")
+                else:
+                    logger.info(f"[LTM] プロファイルに名前なし: profile={profile}")
 
                 # 敬称変更のリクエストを検出
                 if profile.get('preferred_name'):
