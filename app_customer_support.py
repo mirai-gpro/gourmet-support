@@ -299,6 +299,16 @@ def chat():
                 PreferenceExtractor.extract_and_save(session_id, user_message, language)
                 PreferenceExtractor.extract_and_save(session_id, response_text, language)
 
+                # ========================================
+                # LLMからのaction指示を処理
+                # ========================================
+                action = result.get('action')
+                if action and action.get('type') == 'update_user_profile':
+                    updates = action.get('updates', {})
+                    if updates:
+                        ltm.update_profile(session_id, updates)
+                        logger.info(f"[LTM] LLMからの指示でプロファイル更新: {updates} (user_id: {session_id})")
+
             except Exception as e:
                 logger.error(f"[LTM] 処理エラー: {e}")
 
