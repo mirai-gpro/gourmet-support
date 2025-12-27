@@ -194,20 +194,27 @@ class SupportSession:
         if LONG_TERM_MEMORY_ENABLED:
             try:
                 ltm = LongTermMemory()
+
+                # user_id があればそれを使う、なければ session_id を使う
+                lookup_id = user_info.get('user_id') if user_info else None
+                if not lookup_id:
+                    lookup_id = self.session_id
+                logger.info(f"[Session] lookup_id={lookup_id} (session_id={self.session_id})")
+
                 # プロファイル取得または作成
                 long_term_profile = ltm.get_or_create_profile(
-                    self.session_id,
+                    lookup_id,
                     {'language': language, 'mode': mode}
                 )
 
                 # 初回訪問判定
-                is_first_visit = ltm.is_first_visit(self.session_id)
-                logger.info(f"[Session] is_first_visit={is_first_visit} for session {self.session_id}")
+                is_first_visit = ltm.is_first_visit(lookup_id)
+                logger.info(f"[Session] is_first_visit={is_first_visit} for lookup_id {lookup_id}")
 
                 # システムプロンプトに注入するコンテキスト生成
                 if not is_first_visit:
-                    user_context = ltm.generate_system_prompt_context(self.session_id, language)
-                    logger.info(f"[Session] 長期記憶コンテキスト取得: {self.session_id}")
+                    user_context = ltm.generate_system_prompt_context(lookup_id, language)
+                    logger.info(f"[Session] 長期記憶コンテキスト取得: {lookup_id}")
 
             except Exception as e:
                 logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
