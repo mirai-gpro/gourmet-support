@@ -73,6 +73,7 @@ class LongTermMemory:
         try:
             profile_data = {
                 'session_id': session_id,
+                'user_id': session_id,  # user_idカラムにも同じ値を設定
                 'preferred_name': data.get('preferred_name') if data else None,
                 'name_honorific': data.get('name_honorific', '') if data else '',
                 'default_language': data.get('language', 'ja') if data else 'ja',
