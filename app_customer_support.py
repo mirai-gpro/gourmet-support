@@ -307,6 +307,26 @@ def chat():
                     elif not user_id:
                         logger.warning(f"[LTM] user_id が空のためプロファイル更新をスキップ: action={action}")
 
+                # ========================================
+                # ショップカード提示時にサマリーを保存（マージ）
+                # ========================================
+                if shops and not is_followup and user_id and mode == 'concierge':
+                    try:
+                        # 提案した店舗名を取得
+                        shop_names = [s.get('name', '不明') for s in shops]
+                        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M')
+
+                        # サマリーを生成
+                        shop_summary = f"[{timestamp}] 検索条件: {user_message[:100]}\n提案店舗: {', '.join(shop_names)}"
+
+                        ltm = LongTermMemory()
+                        if ltm.append_conversation_summary(user_id, shop_summary):
+                            logger.info(f"[LTM] ショップ提案サマリー保存成功: {len(shops)}件")
+                        else:
+                            logger.warning(f"[LTM] ショップ提案サマリー保存失敗")
+                    except Exception as e:
+                        logger.error(f"[LTM] ショップサマリー保存エラー: {e}")
+
             except Exception as e:
                 logger.error(f"[LTM] 処理エラー: {e}")
 
@@ -350,15 +370,16 @@ def finalize_session():
         final_summary = assistant.generate_final_summary()
 
         # ========================================
-        # 長期記憶: セッション終了時にサマリーを保存
+        # 長期記憶: セッション終了時にサマリーを追記（マージ）
         # ========================================
         if LONG_TERM_MEMORY_ENABLED and session_data.get('mode') == 'concierge':
             user_id = session_data.get('user_id')
             if user_id and final_summary:
                 try:
                     ltm = LongTermMemory()
-                    ltm.update_profile(user_id, {'conversation_summary': final_summary})
-                    logger.info(f"[LTM] サマリー保存成功: user_id={user_id}")
+                    # 既存サマリーにマージ（過去セッションの記録を保持）
+                    ltm.append_conversation_summary(user_id, final_summary)
+                    logger.info(f"[LTM] セッション終了サマリー追記成功: user_id={user_id}")
                 except Exception as e:
                     logger.error(f"[LTM] サマリー保存エラー: {e}")
 
