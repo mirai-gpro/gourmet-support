@@ -216,14 +216,14 @@ class SupportSession:
                 if not user_id:
                     user_id = self.session_id
 
+                # 初回訪問判定（プロファイル作成前に実行）
+                is_first_visit = ltm.is_first_visit(user_id)
+
                 # プロファイル取得または作成
                 profile = ltm.get_or_create_profile(
                     user_id,
                     {'language': language, 'mode': mode}
                 )
-
-                # 初回訪問判定
-                is_first_visit = ltm.is_first_visit(user_id)
 
                 # 名前情報のみ保持
                 if profile:
