@@ -212,9 +212,7 @@ class SupportSession:
         if LONG_TERM_MEMORY_ENABLED and mode == 'concierge':
             try:
                 ltm = LongTermMemory()
-                user_id = user_info.get('user_id') if user_info else None
-                if not user_id:
-                    user_id = self.session_id
+                user_id = user_info.get('user_id')
 
                 # 初回訪問判定（プロファイル作成前に実行）
                 is_first_visit = ltm.is_first_visit(user_id)
@@ -232,7 +230,6 @@ class SupportSession:
                         'name_honorific': profile.get('name_honorific')
                     }
 
-                logger.info(f"[Session] コンシェルジュモード: user_id={user_id}, is_first_visit={is_first_visit}")
 
             except Exception as e:
                 logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")

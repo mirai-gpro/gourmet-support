@@ -133,10 +133,9 @@ def start_session():
         language = data.get('language', 'ja')
         mode = data.get('mode', 'chat')
 
-        # 1. セッション初期化
+
         session = SupportSession()
         session.initialize(user_info, language=language, mode=mode)
-        logger.info(f"[Start Session] 新規セッション作成: {session.session_id}")
 
         # 2. アシスタント作成(最新の状態で)
         assistant = SupportAssistant(session, SYSTEM_PROMPTS)
@@ -285,7 +284,7 @@ def chat():
                 ltm = LongTermMemory()
                 user_info = session_data.get('user_info', {})
                 user_id = user_info.get('user_id') if user_info else session_id
-
+                user_id = user_info.get('user_id')
                 action = result.get('action')
                 if action and action.get('type') == 'update_user_profile':
                     updates = action.get('updates', {})
