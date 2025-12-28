@@ -221,8 +221,10 @@ class SupportSession:
                     # システムプロンプトに注入するコンテキスト生成
                     user_context = ltm.generate_system_prompt_context(user_id, language)
                     logger.info(f"[Session] 長期記憶コンテキスト取得: user_id={user_id}")
-                # 初回訪問の場合はプロファイルを作成しない
-                # LLMがactionで名前登録を指示した時に作成する
+                else:
+                    # 初回訪問: 空のプロファイルを作成（名前は後でLLM actionで登録）
+                    long_term_profile = ltm.create_profile(user_id, {'language': language, 'mode': mode})
+                    logger.info(f"[Session] 初回訪問: 空のプロファイル作成: user_id={user_id}")
 
             except Exception as e:
                 logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
