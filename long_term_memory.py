@@ -76,10 +76,7 @@ class LongTermMemory:
                 'preferred_name': data.get('preferred_name') if data else None,
                 'name_honorific': data.get('name_honorific', '') if data else '',
                 'default_language': data.get('language', 'ja') if data else 'ja',
-                'preferred_mode': data.get('mode', 'chat') if data else 'chat',
-                'first_visit_at': datetime.now().isoformat(),
-                'last_visit_at': datetime.now().isoformat(),
-                'visit_count': 1
+                'preferred_mode': data.get('mode', 'chat') if data else 'chat'
             }
 
             response = self.client.table('user_profiles').insert(profile_data).execute()
@@ -97,9 +94,6 @@ class LongTermMemory:
     def update_profile(self, user_id: str, updates: Dict[str, Any]) -> bool:
         """プロファイル更新"""
         try:
-            # last_visit_atは常に更新
-            updates['last_visit_at'] = datetime.now().isoformat()
-
             response = self.client.table('user_profiles').update(updates).eq('user_id', user_id).execute()
 
             if response.data:
