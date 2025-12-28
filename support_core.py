@@ -213,25 +213,26 @@ class SupportSession:
             try:
                 ltm = LongTermMemory()
                 user_id = user_info.get('user_id') if user_info else None
+                if not user_id:
+                    user_id = self.session_id
 
-                if user_id:
-                    # プロファイル取得または作成
-                    profile = ltm.get_or_create_profile(
-                        user_id,
-                        {'language': language, 'mode': mode}
-                    )
+                # プロファイル取得または作成
+                profile = ltm.get_or_create_profile(
+                    user_id,
+                    {'language': language, 'mode': mode}
+                )
 
-                    # 初回訪問判定
-                    is_first_visit = ltm.is_first_visit(user_id)
+                # 初回訪問判定
+                is_first_visit = ltm.is_first_visit(user_id)
 
-                    # 名前情報のみ保持
-                    if profile:
-                        long_term_profile = {
-                            'preferred_name': profile.get('preferred_name'),
-                            'name_honorific': profile.get('name_honorific')
-                        }
+                # 名前情報のみ保持
+                if profile:
+                    long_term_profile = {
+                        'preferred_name': profile.get('preferred_name'),
+                        'name_honorific': profile.get('name_honorific')
+                    }
 
-                    logger.info(f"[Session] コンシェルジュモード: user_id={user_id}, is_first_visit={is_first_visit}")
+                logger.info(f"[Session] コンシェルジュモード: user_id={user_id}, is_first_visit={is_first_visit}")
 
             except Exception as e:
                 logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
