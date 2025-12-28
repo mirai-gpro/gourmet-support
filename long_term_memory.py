@@ -93,19 +93,14 @@ class LongTermMemory:
                 'updated_at': now
             }
 
-            # upsertを使用してINSERT or UPDATE動作を保証
-            response = self.client.table('user_profiles').upsert(
-                profile_data,
-                on_conflict='user_id'
-            ).execute()
+            response = self.client.table('user_profiles').insert(profile_data).execute()
 
             if response.data and len(response.data) > 0:
                 logger.info(f"[LTM] プロファイル作成成功: {user_id}")
                 return response.data[0]
             else:
-                # データが返されなくても成功の可能性あり
-                logger.info(f"[LTM] プロファイルupsert実行: {user_id}")
-                return {'user_id': user_id}
+                logger.error(f"[LTM] プロファイル作成失敗: {user_id}")
+                return None
         except Exception as e:
             logger.error(f"[LTM] プロファイル作成エラー: {e}")
             return None
@@ -121,19 +116,26 @@ class LongTermMemory:
             return False
 
         try:
-            now = datetime.now().isoformat()
-            updates['user_id'] = user_id
-            updates['last_visit_at'] = now
-            updates['updated_at'] = now
+            # まず既存のプロファイルを確認
+            existing = self.get_profile(user_id)
 
-            # upsertで確実にINSERT or UPDATE
-            response = self.client.table('user_profiles').upsert(
-                updates,
-                on_conflict='user_id'
-            ).execute()
+            if existing:
+                # 既存レコードを更新
+                updates['last_visit_at'] = datetime.now().isoformat()
+                updates['updated_at'] = datetime.now().isoformat()
 
-            logger.info(f"[LTM] プロファイル更新成功: {user_id}")
-            return True
+                response = self.client.table('user_profiles').update(updates).eq('user_id', user_id).execute()
+
+                if response.data:
+                    logger.info(f"[LTM] プロファイル更新成功: {user_id}")
+                    return True
+                else:
+                    logger.error(f"[LTM] プロファイル更新失敗: {user_id}")
+                    return False
+            else:
+                # 新規レコードを作成（UPSERT動作）
+                result = self.create_profile(user_id, updates)
+                return result is not None
 
         except Exception as e:
             logger.error(f"[LTM] プロファイル更新エラー: {e}")
