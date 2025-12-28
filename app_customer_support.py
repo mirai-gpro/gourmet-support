@@ -284,10 +284,15 @@ def chat():
         # ========================================
         # 長期記憶: LLMからのaction処理（新設計版）
         # ========================================
-        if LONG_TERM_MEMORY_ENABLED:
+        # user_id をセッションデータから取得
+        user_id = session_data.get('user_id')
+
+        if not LONG_TERM_MEMORY_ENABLED:
+            logger.warning(f"[LTM] モジュール無効のためLTM処理スキップ")
+        elif not user_id:
+            logger.warning(f"[LTM] user_id未設定のためLTM処理スキップ (session_data keys: {list(session_data.keys())})")
+        else:
             try:
-                # user_id をセッションデータから取得
-                user_id = session_data.get('user_id')
 
                 # ========================================
                 # LLMからのaction指示を処理
@@ -296,7 +301,7 @@ def chat():
                 action = result.get('action')
                 if action and action.get('type') == 'update_user_profile':
                     updates = action.get('updates', {})
-                    if updates and user_id:
+                    if updates:
                         ltm = LongTermMemory()
                         # user_id をキーにしてプロファイルを更新（UPSERT動作）
                         success = ltm.update_profile(user_id, updates)
@@ -304,13 +309,11 @@ def chat():
                             logger.info(f"[LTM] LLMからの指示でプロファイル更新成功: updates={updates}, user_id={user_id}")
                         else:
                             logger.error(f"[LTM] LLMからの指示でプロファイル更新失敗: updates={updates}, user_id={user_id}")
-                    elif not user_id:
-                        logger.warning(f"[LTM] user_id が空のためプロファイル更新をスキップ: action={action}")
 
                 # ========================================
                 # ショップカード提示時にサマリーを保存（マージ）
                 # ========================================
-                if shops and not is_followup and user_id and mode == 'concierge':
+                if shops and not is_followup and mode == 'concierge':
                     try:
                         # 提案した店舗名を取得
                         shop_names = [s.get('name', '不明') for s in shops]

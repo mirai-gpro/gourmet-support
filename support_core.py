@@ -204,30 +204,40 @@ class SupportSession:
         # チャットモードはDB読み込みをスキップ（高速化）
         if mode == 'chat':
             logger.info(f"[Session] チャットモード: DB読み込みスキップ")
-        elif LONG_TERM_MEMORY_ENABLED and user_id and mode == 'concierge':
-            try:
-                ltm = LongTermMemory()
+        elif mode == 'concierge':
+            # コンシェルジュモードでの条件チェック
+            if not LONG_TERM_MEMORY_ENABLED:
+                logger.warning(f"[Session] LTMモジュール無効のためDB操作スキップ")
+            elif not user_id:
+                logger.warning(f"[Session] user_id未設定のためDB操作スキップ")
+            else:
+                # 条件を満たした場合のみDB操作を実行
+                try:
+                    ltm = LongTermMemory()
 
-                # 初回訪問判定（レコードの存在有無のみで判定）
-                is_first_visit = ltm.is_first_visit(user_id)
-                logger.info(f"[Session] is_first_visit={is_first_visit} for user_id={user_id}")
+                    # 初回訪問判定（レコードの存在有無のみで判定）
+                    is_first_visit = ltm.is_first_visit(user_id)
+                    logger.info(f"[Session] is_first_visit={is_first_visit} for user_id={user_id}")
 
-                if not is_first_visit:
-                    # 2回目以降: プロファイル取得 + 訪問回数インクリメント
-                    long_term_profile = ltm.get_or_create_profile(
-                        user_id,
-                        {'language': language, 'mode': mode}
-                    )
-                    # システムプロンプトに注入するコンテキスト生成
-                    user_context = ltm.generate_system_prompt_context(user_id, language)
-                    logger.info(f"[Session] 長期記憶コンテキスト取得: user_id={user_id}")
-                else:
-                    # 初回訪問: 空のプロファイルを作成（名前は後でLLM actionで登録）
-                    long_term_profile = ltm.create_profile(user_id, {'language': language, 'mode': mode})
-                    logger.info(f"[Session] 初回訪問: 空のプロファイル作成: user_id={user_id}")
+                    if not is_first_visit:
+                        # 2回目以降: プロファイル取得 + 訪問回数インクリメント
+                        long_term_profile = ltm.get_or_create_profile(
+                            user_id,
+                            {'language': language, 'mode': mode}
+                        )
+                        # システムプロンプトに注入するコンテキスト生成
+                        user_context = ltm.generate_system_prompt_context(user_id, language)
+                        logger.info(f"[Session] 長期記憶コンテキスト取得: user_id={user_id}")
+                    else:
+                        # 初回訪問: 空のプロファイルを作成（名前は後でLLM actionで登録）
+                        long_term_profile = ltm.create_profile(user_id, {'language': language, 'mode': mode})
+                        logger.info(f"[Session] 初回訪問: 空のプロファイル作成: user_id={user_id}")
 
-            except Exception as e:
-                logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
+                except Exception as e:
+                    logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
+        else:
+            # modeがchatでもconciergeでもない場合
+            logger.warning(f"[Session] 不明なmode: {mode} (chatかconciergeを期待)")
 
         data = {
             'session_id': self.session_id,
