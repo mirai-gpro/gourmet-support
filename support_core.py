@@ -188,10 +188,12 @@ class SupportSession:
         """
         新規セッション初期化 - モード対応 + 長期記憶統合
 
-        【重要】新設計:
+        【新設計】効率化版:
         - user_id はフロントエンドから user_info.user_id で受け取る
-        - user_id をキーにしてDB操作を行う
         - チャットモードはDB読み込みをスキップ（高速化）
+        - コンシェルジュモードは軽量クエリ（名前のみ）で初期化
+        - サマリーは初回メッセージ時に遅延読み込み
+        - 新規ユーザーはDB INSERTしない（名前登録時に初めてINSERT）
         """
         # user_id を user_info から取得
         user_id = user_info.get('user_id') if user_info else None
@@ -208,23 +210,25 @@ class SupportSession:
             try:
                 ltm = LongTermMemory()
 
-                # 初回訪問判定（レコードの存在有無のみで判定）
-                is_first_visit = ltm.is_first_visit(user_id)
-                logger.info(f"[Session] is_first_visit={is_first_visit} for user_id={user_id}")
+                # 軽量クエリで名前のみ取得（1回のDB照会のみ）
+                profile_basic = ltm.get_profile_basic(user_id)
 
-                if not is_first_visit:
-                    # 2回目以降: プロファイル取得 + 訪問回数インクリメント
-                    long_term_profile = ltm.get_or_create_profile(
-                        user_id,
-                        {'language': language, 'mode': mode}
-                    )
-                    # システムプロンプトに注入するコンテキスト生成
-                    user_context = ltm.generate_system_prompt_context(user_id, language)
-                    logger.info(f"[Session] 長期記憶コンテキスト取得: user_id={user_id}")
+                if profile_basic:
+                    # リピーター: プロファイルあり
+                    is_first_visit = False
+                    long_term_profile = profile_basic
+
+                    # 訪問回数インクリメント（キャッシュ済みなので追加DB照会なし）
+                    current_count = profile_basic.get('visit_count', 0)
+                    ltm.increment_visit_count(user_id, current_count)
+
+                    logger.info(f"[Session] リピーター: user_id={user_id}, 訪問={current_count + 1}回目")
                 else:
-                    # 初回訪問: 空のプロファイルを作成（名前は後でLLM actionで登録）
-                    long_term_profile = ltm.create_profile(user_id, {'language': language, 'mode': mode})
-                    logger.info(f"[Session] 初回訪問: 空のプロファイル作成: user_id={user_id}")
+                    # 新規ユーザー: DBにはまだ書き込まない
+                    # → 名前登録時（LLM action）に初めてINSERT
+                    is_first_visit = True
+                    long_term_profile = None
+                    logger.info(f"[Session] 新規ユーザー: user_id={user_id}")
 
             except Exception as e:
                 logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
@@ -364,7 +368,7 @@ class SupportAssistant:
         session_data = session.get_data()
         if self.mode == 'concierge' and session_data:
             is_first_visit = session_data.get('is_first_visit', True)
-            user_context = session_data.get('user_context', '')
+            profile = session_data.get('long_term_profile', {})
 
             if is_first_visit:
                 # 初回訪問時は、名前登録の指示を追加
@@ -374,12 +378,31 @@ class SupportAssistant:
 - ユーザーが名前を教えてくれたら、必ず action フィールドを使って名前を登録してください
 - action形式: {"type": "update_user_profile", "updates": {"preferred_name": "名前", "name_honorific": "様"}}
 - 敬称はユーザーの希望がなければデフォルトで「様」を使用
+- ユーザーが名前を教えたくない場合は、名前なしで会話を続けてください
 """
                 self.system_prompt = f"{self.system_prompt}\n\n{first_visit_context}"
                 logger.info(f"[Assistant] 初回訪問コンテキストを注入")
-            elif user_context:
+            elif profile:
+                # リピーター: プロファイル情報をコンテキストに注入
+                preferred_name = profile.get('preferred_name', '')
+                name_honorific = profile.get('name_honorific', '')
+                visit_count = profile.get('visit_count', 1)
+
+                if preferred_name:
+                    user_context = f"""
+【ユーザー情報】
+- 呼び方: {preferred_name}{name_honorific}
+- 訪問回数: {visit_count}回目
+"""
+                else:
+                    # 名前未登録のリピーター
+                    user_context = f"""
+【ユーザー情報】
+- 名前: 未登録（名前での呼びかけはしないでください）
+- 訪問回数: {visit_count}回目
+"""
                 self.system_prompt = f"{self.system_prompt}\n\n{user_context}"
-                logger.info(f"[Assistant] 長期記憶コンテキストを注入（コンシェルジュモード）")
+                logger.info(f"[Assistant] ユーザーコンテキストを注入（リピーター）")
 
         logger.info(f"[Assistant] 初期化: mode={self.mode}, language={self.language}")
 
@@ -433,7 +456,14 @@ class SupportAssistant:
             }
             return personalized_greetings.get(self.language, base_greeting)
 
-        return base_greeting
+        # 名前未登録のリピーター: シンプルな挨拶（名前呼びなし）
+        nameless_greetings = {
+            'ja': f'いらっしゃいませ。\n{base_greeting}',
+            'en': f'Welcome!\n{base_greeting}',
+            'zh': f'欢迎光临！\n{base_greeting}',
+            'ko': f'어서오세요!\n{base_greeting}'
+        }
+        return nameless_greetings.get(self.language, base_greeting)
 
     def is_followup_question(self, user_message, current_shops):
         """深掘り質問かどうかを判定"""
