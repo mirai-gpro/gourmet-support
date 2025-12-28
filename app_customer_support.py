@@ -350,10 +350,18 @@ def finalize_session():
         final_summary = assistant.generate_final_summary()
 
         # ========================================
-        # 長期記憶: セッション終了時の保存（新設計版）
+        # 長期記憶: セッション終了時にサマリーを保存
         # ========================================
-        # 注: save_interaction_history は新設計では廃止
-        # サマリーはショップカード提示時に非同期で保存される
+        if LONG_TERM_MEMORY_ENABLED and session_data.get('mode') == 'concierge':
+            user_id = session_data.get('user_id')
+            if user_id and final_summary:
+                try:
+                    ltm = LongTermMemory()
+                    ltm.update_profile(user_id, {'conversation_summary': final_summary})
+                    logger.info(f"[LTM] サマリー保存成功: user_id={user_id}")
+                except Exception as e:
+                    logger.error(f"[LTM] サマリー保存エラー: {e}")
+
         logger.info(f"[LTM] セッション終了: {session_id}")
 
         return jsonify({
