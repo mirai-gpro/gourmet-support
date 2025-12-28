@@ -93,21 +93,16 @@ class LongTermMemory:
                 'updated_at': now
             }
 
-            logger.info(f"[LTM DEBUG] create_profile called: user_id={user_id}, data={data}")
-            logger.info(f"[LTM DEBUG] profile_data to insert: {profile_data}")
-
             response = self.client.table('user_profiles').insert(profile_data).execute()
-
-            logger.info(f"[LTM DEBUG] Supabase response: data={response.data}")
 
             if response.data and len(response.data) > 0:
                 logger.info(f"[LTM] プロファイル作成成功: {user_id}")
                 return response.data[0]
             else:
-                logger.error(f"[LTM] プロファイル作成失敗: {user_id}, response={response}")
+                logger.error(f"[LTM] プロファイル作成失敗: {user_id}")
                 return None
         except Exception as e:
-            logger.error(f"[LTM] プロファイル作成エラー: {e}", exc_info=True)
+            logger.error(f"[LTM] プロファイル作成エラー: {e}")
             return None
 
     def update_profile(self, user_id: str, updates: Dict[str, Any]) -> bool:
@@ -116,8 +111,6 @@ class LongTermMemory:
         - レコードが存在すれば更新
         - レコードがなければ新規作成
         """
-        logger.info(f"[LTM DEBUG] update_profile called: user_id={user_id}, updates={updates}")
-
         if not user_id:
             logger.error("[LTM] update_profile: user_id が空です")
             return False
@@ -125,31 +118,27 @@ class LongTermMemory:
         try:
             # まず既存のプロファイルを確認
             existing = self.get_profile(user_id)
-            logger.info(f"[LTM DEBUG] existing profile: {existing}")
 
             if existing:
                 # 既存レコードを更新
                 updates['last_visit_at'] = datetime.now().isoformat()
                 updates['updated_at'] = datetime.now().isoformat()
 
-                logger.info(f"[LTM DEBUG] Updating existing profile with: {updates}")
                 response = self.client.table('user_profiles').update(updates).eq('user_id', user_id).execute()
 
                 if response.data:
-                    logger.info(f"[LTM] プロファイル更新成功: {user_id}, updates={list(updates.keys())}")
+                    logger.info(f"[LTM] プロファイル更新成功: {user_id}")
                     return True
                 else:
-                    logger.error(f"[LTM] プロファイル更新失敗: {user_id}, response={response}")
+                    logger.error(f"[LTM] プロファイル更新失敗: {user_id}")
                     return False
             else:
                 # 新規レコードを作成（UPSERT動作）
-                logger.info(f"[LTM DEBUG] レコードが存在しないため新規作成: {user_id}")
                 result = self.create_profile(user_id, updates)
-                logger.info(f"[LTM DEBUG] create_profile result: {result}")
                 return result is not None
 
         except Exception as e:
-            logger.error(f"[LTM] プロファイル更新エラー: {e}", exc_info=True)
+            logger.error(f"[LTM] プロファイル更新エラー: {e}")
             return False
 
     def increment_visit_count(self, user_id: str) -> bool:
