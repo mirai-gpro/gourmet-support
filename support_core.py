@@ -221,8 +221,10 @@ class SupportSession:
                     # システムプロンプトに注入するコンテキスト生成
                     user_context = ltm.generate_system_prompt_context(user_id, language)
                     logger.info(f"[Session] 長期記憶コンテキスト取得: user_id={user_id}")
-                # 初回訪問の場合はプロファイルを作成しない
-                # LLMがactionで名前登録を指示した時に作成する
+                else:
+                    # 初回訪問: 空のプロファイルを作成（名前は後でLLM actionで登録）
+                    long_term_profile = ltm.create_profile(user_id, {'language': language, 'mode': mode})
+                    logger.info(f"[Session] 初回訪問: 空のプロファイル作成: user_id={user_id}")
 
             except Exception as e:
                 logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
@@ -360,10 +362,24 @@ class SupportAssistant:
 
         # ★★★ 長期記憶のコンテキストをシステムプロンプトに追加（コンシェルジュモードのみ） ★★★
         session_data = session.get_data()
-        if self.mode == 'concierge' and session_data and session_data.get('user_context'):
-            user_context = session_data['user_context']
-            self.system_prompt = f"{self.system_prompt}\n\n{user_context}"
-            logger.info(f"[Assistant] 長期記憶コンテキストを注入（コンシェルジュモード）")
+        if self.mode == 'concierge' and session_data:
+            is_first_visit = session_data.get('is_first_visit', True)
+            user_context = session_data.get('user_context', '')
+
+            if is_first_visit:
+                # 初回訪問時は、名前登録の指示を追加
+                first_visit_context = """
+【重要: 初回訪問ユーザー】
+このユーザーは初めての訪問です。
+- ユーザーが名前を教えてくれたら、必ず action フィールドを使って名前を登録してください
+- action形式: {"type": "update_user_profile", "updates": {"preferred_name": "名前", "name_honorific": "様"}}
+- 敬称はユーザーの希望がなければデフォルトで「様」を使用
+"""
+                self.system_prompt = f"{self.system_prompt}\n\n{first_visit_context}"
+                logger.info(f"[Assistant] 初回訪問コンテキストを注入")
+            elif user_context:
+                self.system_prompt = f"{self.system_prompt}\n\n{user_context}"
+                logger.info(f"[Assistant] 長期記憶コンテキストを注入（コンシェルジュモード）")
 
         logger.info(f"[Assistant] 初期化: mode={self.mode}, language={self.language}")
 

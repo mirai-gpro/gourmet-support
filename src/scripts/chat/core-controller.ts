@@ -72,10 +72,10 @@ export class CoreController {
   // 初期化メソッド (継承先から呼び出す)
   protected async init() {
     console.log('[Core] Starting initialization...');
-    
+
     this.bindEvents();
     this.initSocket();
-    
+
     // スプラッシュ画面のフェイルセーフ
     setTimeout(() => {
         if (this.els.splashVideo) this.els.splashVideo.loop = false;
@@ -87,15 +87,29 @@ export class CoreController {
 
     await this.initializeSession();
     this.updateUILanguage();
-    
+
     setTimeout(() => {
       if (this.els.splashOverlay) {
         this.els.splashOverlay.classList.add('fade-out');
         setTimeout(() => this.els.splashOverlay.classList.add('hidden'), 800);
       }
     }, 2000);
-    
+
     console.log('[Core] Initialization completed');
+  }
+
+  // ========================================
+  // ★ user_id 取得（localStorage で永続化）
+  // ========================================
+  protected getUserId(): string {
+    const STORAGE_KEY = 'gourmet_support_user_id';
+    let userId = localStorage.getItem(STORAGE_KEY);
+    if (!userId) {
+      userId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+      localStorage.setItem(STORAGE_KEY, userId);
+      console.log('[Core] 新規 user_id を生成:', userId);
+    }
+    return userId;
   }
 
   protected async resetAppContent() {

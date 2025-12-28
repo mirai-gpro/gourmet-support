@@ -127,14 +127,13 @@ class LongTermMemory:
                 response = self.client.table('user_profiles').update(updates).eq('user_id', user_id).execute()
 
                 if response.data:
-                    logger.info(f"[LTM] プロファイル更新成功: {user_id}, updates={list(updates.keys())}")
+                    logger.info(f"[LTM] プロファイル更新成功: {user_id}")
                     return True
                 else:
                     logger.error(f"[LTM] プロファイル更新失敗: {user_id}")
                     return False
             else:
                 # 新規レコードを作成（UPSERT動作）
-                logger.info(f"[LTM] レコードが存在しないため新規作成: {user_id}")
                 result = self.create_profile(user_id, updates)
                 return result is not None
 
@@ -186,6 +185,35 @@ class LongTermMemory:
 
         profile = self.get_profile(user_id)
         return profile is None
+
+    def append_conversation_summary(self, user_id: str, new_summary: str) -> bool:
+        """
+        会話サマリーを追記（マージ）
+        - 既存のサマリーがあれば、新しいサマリーを追記
+        - なければ新規として保存
+        """
+        if not user_id or not new_summary:
+            return False
+
+        try:
+            profile = self.get_profile(user_id)
+            if not profile:
+                logger.warning(f"[LTM] append_conversation_summary: プロファイルが見つかりません user_id={user_id}")
+                return False
+
+            existing_summary = profile.get('conversation_summary', '') or ''
+
+            # 既存サマリーがあればマージ（改行で区切る）
+            if existing_summary:
+                merged_summary = f"{existing_summary}\n\n---\n\n{new_summary}"
+            else:
+                merged_summary = new_summary
+
+            return self.update_profile(user_id, {'conversation_summary': merged_summary})
+
+        except Exception as e:
+            logger.error(f"[LTM] サマリー追記エラー: {e}")
+            return False
 
     # ----------------------------------------
     # システムプロンプト用コンテキスト生成
