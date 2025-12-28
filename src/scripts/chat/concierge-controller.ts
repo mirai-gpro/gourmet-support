@@ -71,10 +71,10 @@ export class ConciergeController extends CoreController {
       if (data.user_profile?.preferred_name) {
         const name = data.user_profile.preferred_name;
         const honorific = data.user_profile.name_honorific || '';
-        const base = this.t('conciergeBaseGreeting');
+        const base = this.t('conciergeBaseGreeting') || 'いらっしゃいませ。グルメコンシェルジュです。今日はどのようなシーンでお店をお探しでしょうか?';
         greetingText = `お帰りなさいませ、${name}${honorific}。${base}`;
       } else {
-        greetingText = this.t('initialGreetingConcierge');
+        greetingText = this.t('initialGreetingConcierge') || 'いらっしゃいませ。グルメコンシェルジュです。';
       }
 
       this.addMessage('assistant', greetingText, null, true);
@@ -173,18 +173,11 @@ export class ConciergeController extends CoreController {
   }
 
   // ========================================
-  // 🎯 UI言語更新をオーバーライド(挨拶文をコンシェルジュ用に)
+  // 🎯 UI言語更新をオーバーライド（不要なのでコメントアウト）
   // ========================================
-  protected updateUILanguage() {
-    // 親クラスのupdateUILanguageを実行
-    super.updateUILanguage();
-    
-    // ✅ 初期メッセージをコンシェルジュ用に再設定
-    const initialMessage = this.els.chatArea.querySelector('.message.assistant[data-initial="true"] .message-text');
-    if (initialMessage) {
-      initialMessage.textContent = this.t('initialGreetingConcierge');
-    }
-  }
+  // protected updateUILanguage() {
+  //   super.updateUILanguage();
+  // }
 
   // モード切り替え処理 - ページ遷移
   private toggleMode() {
