@@ -186,42 +186,59 @@ class SupportSession:
 
     def initialize(self, user_info=None, language='ja', mode='chat'):
         """新規セッション初期化 - モード対応 + 長期記憶統合"""
-        # 長期記憶から既存プロファイルを取得
         long_term_profile = None
         is_first_visit = True
-        user_context = ""
 
-        if LONG_TERM_MEMORY_ENABLED:
+        # チャットモードの場合、DB読込をスキップ
+        if mode == 'chat':
+            data = {
+                'session_id': self.session_id,
+                'messages': [],
+                'status': 'active',
+                'user_info': user_info or {},
+                'language': language,
+                'mode': mode,
+                'summary': None,
+                'inquiry_summary': None,
+                'current_shops': [],
+                'is_first_visit': True,
+                'long_term_profile': None
+            }
+            _SESSION_CACHE[self.session_id] = data
+            logger.info(f"[Session] RAM作成（チャットモード）: {self.session_id}, 言語: {language}")
+            return data
+
+        # コンシェルジュモードの場合、名前情報のみ取得
+        if LONG_TERM_MEMORY_ENABLED and mode == 'concierge':
             try:
                 ltm = LongTermMemory()
+                user_id = user_info.get('user_id') if user_info else None
 
-                # user_id があればそれを使う、なければ session_id を使う
-                lookup_id = user_info.get('user_id') if user_info else None
-                if not lookup_id:
-                    lookup_id = self.session_id
-                logger.info(f"[Session] lookup_id={lookup_id} (session_id={self.session_id})")
+                if user_id:
+                    # プロファイル取得または作成
+                    profile = ltm.get_or_create_profile(
+                        user_id,
+                        {'language': language, 'mode': mode}
+                    )
 
-                # プロファイル取得または作成
-                long_term_profile = ltm.get_or_create_profile(
-                    lookup_id,
-                    {'language': language, 'mode': mode}
-                )
+                    # 初回訪問判定
+                    is_first_visit = ltm.is_first_visit(user_id)
 
-                # 初回訪問判定
-                is_first_visit = ltm.is_first_visit(lookup_id)
-                logger.info(f"[Session] is_first_visit={is_first_visit} for lookup_id {lookup_id}")
+                    # 名前情報のみ保持
+                    if profile:
+                        long_term_profile = {
+                            'preferred_name': profile.get('preferred_name'),
+                            'name_honorific': profile.get('name_honorific')
+                        }
 
-                # システムプロンプトに注入するコンテキスト生成
-                if not is_first_visit:
-                    user_context = ltm.generate_system_prompt_context(lookup_id, language)
-                    logger.info(f"[Session] 長期記憶コンテキスト取得: {lookup_id}")
+                    logger.info(f"[Session] コンシェルジュモード: user_id={user_id}, is_first_visit={is_first_visit}")
 
             except Exception as e:
                 logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
 
         data = {
             'session_id': self.session_id,
-            'messages': [],  # SDKネイティブのリスト形式用
+            'messages': [],
             'status': 'active',
             'user_info': user_info or {},
             'language': language,
@@ -229,9 +246,7 @@ class SupportSession:
             'summary': None,
             'inquiry_summary': None,
             'current_shops': [],
-            # 長期記憶関連の追加フィールド
             'is_first_visit': is_first_visit,
-            'user_context': user_context,
             'long_term_profile': long_term_profile
         }
         _SESSION_CACHE[self.session_id] = data

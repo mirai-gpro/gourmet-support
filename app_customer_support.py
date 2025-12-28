@@ -147,12 +147,22 @@ def start_session():
         # 4. å±¥æ­´ã«è¿½åŠ ï¼ˆroleは'model')
         session.add_message('model', initial_message, 'chat')
 
+        # レスポンスデータ作成
+        response_data = {'session_id': session.session_id}
+
+        # コンシェルジュモードのみ名前情報を返す
+        if mode == 'concierge':
+            session_data = session.get_data()
+            profile = session_data.get('long_term_profile')
+            if profile:
+                response_data['user_profile'] = {
+                    'preferred_name': profile.get('preferred_name'),
+                    'name_honorific': profile.get('name_honorific')
+                }
+
         logger.info(f"[API] セッション開始: {session.session_id}, 言語: {language}, モード: {mode}")
 
-        return jsonify({
-            'session_id': session.session_id,
-            'initial_message': initial_message
-        })
+        return jsonify(response_data)
 
     except Exception as e:
         logger.error(f"[API] セッション開始エラー: {e}")
@@ -281,10 +291,6 @@ def chat():
                     lookup_id = session_id
                 logger.info(f"[LTM] lookup_id={lookup_id} (session_id={session_id})")
 
-                # 好みの自動抽出（会話全体から）
-                PreferenceExtractor.extract_and_save(lookup_id, user_message, language)
-                PreferenceExtractor.extract_and_save(lookup_id, response_text, language)
-
                 # ========================================
                 # LLMからのaction指示を処理
                 # ========================================
@@ -293,11 +299,6 @@ def chat():
                 if action and action.get('type') == 'update_user_profile':
                     updates = action.get('updates', {})
                     if updates:
-                        # 名前を登録する際、user_idも設定（空の場合のみ）
-                        if 'preferred_name' in updates:
-                            profile = session_data.get('long_term_profile', {})
-                            if not profile.get('user_id'):
-                                updates['user_id'] = lookup_id
                         ltm.update_profile(lookup_id, updates)
                         logger.info(f"[LTM] LLMからの指示でプロファイル更新: {updates} (lookup_id: {lookup_id})")
 
@@ -308,13 +309,39 @@ def chat():
         logger.info(f"[Chat] 最終shops配列: {len(shops)}件")
         if shops:
             logger.info(f"[Chat] shops[0] keys: {list(shops[0].keys())}")
-        return jsonify({
+
+        # レスポンスデータ作成
+        response_data = {
             'response': response_text,
             'summary': result['summary'],
             'shops': shops,
             'should_confirm': result['should_confirm'],
             'is_followup': is_followup
-        })
+        }
+
+        # ========================================
+        # ショップカード提示後のサマリー保存（バックグラウンド）
+        # ========================================
+        # TODO: 将来実装 - 現在はサマリー生成メソッドが未実装のためスキップ
+        # if shops and LONG_TERM_MEMORY_ENABLED:
+        #     user_info = session_data.get('user_info', {})
+        #     user_id = user_info.get('user_id')
+        #     if user_id:
+        #         import threading
+        #         def async_save_summary():
+        #             try:
+        #                 ltm = LongTermMemory()
+        #                 messages = session.get_messages()
+        #                 current_summary = ltm.generate_current_summary(messages)
+        #                 profile = ltm.get_profile(user_id)
+        #                 previous_summary = profile.get('conversation_summary', '') if profile else ''
+        #                 merged_summary = ltm.merge_summaries(previous_summary, current_summary)
+        #                 ltm.update_profile(user_id, {'conversation_summary': merged_summary})
+        #             except Exception as e:
+        #                 logger.error(f"[Summary] エラー: {e}")
+        #         threading.Thread(target=async_save_summary).start()
+
+        return jsonify(response_data)
 
     except Exception as e:
         logger.error(f"[API] チャットエラー: {e}")

@@ -66,8 +66,17 @@ export class ConciergeController extends CoreController {
       const data = await res.json();
       this.sessionId = data.session_id;
 
-      // ✅ バックエンドからの初回メッセージを使用（長期記憶対応）
-      const greetingText = data.initial_message || this.t('initialGreetingConcierge');
+      // 名前で挨拶を組み立て
+      let greetingText;
+      if (data.user_profile?.preferred_name) {
+        const name = data.user_profile.preferred_name;
+        const honorific = data.user_profile.name_honorific || '';
+        const base = this.t('conciergeBaseGreeting');
+        greetingText = `お帰りなさいませ、${name}${honorific}。${base}`;
+      } else {
+        greetingText = this.t('initialGreetingConcierge');
+      }
+
       this.addMessage('assistant', greetingText, null, true);
       
       const ackTexts = [
