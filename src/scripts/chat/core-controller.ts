@@ -138,6 +138,7 @@ export class CoreController {
 
     await new Promise(resolve => setTimeout(resolve, 300));
     await this.initializeSession();
+    this.updateUILanguage();  // リセット後にUIを更新
     console.log('[Reset] Completed');
   }
 
@@ -156,9 +157,10 @@ export class CoreController {
       if (e.key === 'Enter') this.sendMessage();
     });
     
-    this.els.languageSelect?.addEventListener('change', () => {
+    this.els.languageSelect?.addEventListener('change', async () => {
       this.currentLanguage = this.els.languageSelect.value as any;
-      this.updateUILanguage();
+      // 言語切り替え時はセッションを再初期化（長期記憶対応）
+      await this.resetAppContent();
     });
 
     const floatingButtons = this.container.querySelector('.floating-buttons');
@@ -212,15 +214,38 @@ export class CoreController {
         } catch (e) {}
       }
 
+      // ブラウザごとのユニークなユーザーIDを取得または生成
+      let userId = localStorage.getItem('gourmet_support_user_id');
+      if (!userId) {
+        userId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('gourmet_support_user_id', userId);
+      }
+
       const res = await fetch(`${this.apiBase}/api/session/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_info: {}, language: this.currentLanguage })
+        body: JSON.stringify({ user_info: { user_id: userId }, language: this.currentLanguage, mode: this.currentMode })
       });
       const data = await res.json();
       this.sessionId = data.session_id;
-      
-      this.addMessage('assistant', this.t('initialGreeting'), null, true);
+
+      // 挨拶文の組み立て
+      let initialMessage;
+      if (this.currentMode === 'concierge' && data.user_profile?.preferred_name) {
+        // コンシェルジュモード：名前で挨拶
+        const name = data.user_profile.preferred_name;
+        const honorific = data.user_profile.name_honorific || '';
+        const base = this.t('conciergeBaseGreeting') || 'いらっしゃいませ。グルメコンシェルジュです。今日はどのようなシーンでお店をお探しでしょうか?';
+        initialMessage = `お帰りなさいませ、${name}${honorific}。${base}`;
+      } else if (this.currentMode === 'concierge') {
+        // コンシェルジュモード：初回訪問
+        initialMessage = this.t('initialGreetingConcierge') || 'いらっしゃいませ。グルメコンシェルジュです。';
+      } else {
+        // チャットモード：固定挨拶
+        initialMessage = this.t('initialGreeting') || 'こんにちは!お店探しをお手伝いします。';
+      }
+
+      this.addMessage('assistant', initialMessage, null, true);
       
       const ackTexts = [
         this.t('ackConfirm'), this.t('ackSearch'), this.t('ackUnderstood'), 
@@ -245,7 +270,7 @@ export class CoreController {
       });
 
       await Promise.all([
-        this.speakTextGCP(this.t('initialGreeting')), 
+        this.speakTextGCP(initialMessage),
         ...ackPromises
       ]);
       
@@ -955,16 +980,19 @@ protected async toggleRecording() {
 
   protected updateUILanguage() {
     console.log('[Core] Updating UI language to:', this.currentLanguage);
-    
+    console.log('[Core] Current mode:', this.currentMode);
+    console.log('[Core] Setting title for mode:', this.currentMode);
+
     this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
     this.els.userInput.placeholder = this.t('inputPlaceholder');
     this.els.micBtn.title = this.t('btnVoiceInput');
     this.els.speakerBtn.title = this.isTTSEnabled ? this.t('btnTTSOn') : this.t('btnTTSOff');
     this.els.sendBtn.textContent = this.t('btnSend');
     this.els.reservationBtn.innerHTML = this.t('btnReservation');
-    
+
     const pageTitle = document.getElementById('pageTitle');
-    if (pageTitle) pageTitle.innerHTML = `<img src="/pwa-152x152.png" alt="Logo" class="app-logo" /> ${this.t('pageTitle')}`;
+    const titleKey = this.currentMode === 'concierge' ? 'pageTitleConcierge' : 'pageTitle';
+    if (pageTitle) pageTitle.innerHTML = `<img src="/pwa-152x152.png" alt="Logo" class="app-logo" /> ${this.t(titleKey)}`;
     const pageSubtitle = document.getElementById('pageSubtitle');
     if (pageSubtitle) pageSubtitle.textContent = this.t('pageSubtitle');
     const shopListTitle = document.getElementById('shopListTitle');
@@ -974,10 +1002,9 @@ protected async toggleRecording() {
     const pageFooter = document.getElementById('pageFooter');
     if (pageFooter) pageFooter.innerHTML = `${this.t('footerMessage')} ✨`;
 
-    const initialMessage = this.els.chatArea.querySelector('.message.assistant[data-initial="true"] .message-text');
-    if (initialMessage) {
-      initialMessage.textContent = this.t('initialGreeting');
-    }
+    // ❌ 初期メッセージは更新しない
+    // initializeSession() で設定されたバックエンドの initial_message を保持
+    // 言語切り替え時はセッションを再初期化するため、ここでの更新は不要
     
     const waitText = document.querySelector('.wait-text');
     if (waitText) waitText.textContent = this.t('waitMessage');
