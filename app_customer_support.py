@@ -278,54 +278,23 @@ def chat():
             logger.info(f"[Chat] 深掘り質問への回答: {response_text[:100]}...")
 
         # ========================================
-        # 長期記憶: 好み抽出 & LLMからのaction処理
+        # 長期記憶: LLMからのaction処理
         # ========================================
         if LONG_TERM_MEMORY_ENABLED:
             try:
                 ltm = LongTermMemory()
-
-                # user_id を取得（デバッグログ追加）
                 user_info = session_data.get('user_info', {})
-                logger.info(f"[LTM] user_info = {user_info}")
+                user_id = user_info.get('user_id') if user_info else session_id
 
-                user_id = user_info.get('user_id') if user_info else None
-                logger.info(f"[LTM] user_id = {user_id}, session_id = {session_id}")
-
-                # user_idが取得できない場合はエラーログ
-                if not user_id:
-                    logger.error(f"[LTM] user_idが取得できません! user_info={user_info}")
-                    # session_idをフォールバックとして使用（後方互換性のため）
-                    user_id = session_id
-                    logger.warning(f"[LTM] フォールバック: session_idを使用します ({user_id})")
-
-                # ========================================
-                # LLMからのaction指示を処理
-                # ========================================
                 action = result.get('action')
-                logger.info(f"[LTM] LLM応答にactionフィールドが含まれているか: {action is not None}")
-
-                if action:
-                    logger.info(f"[LTM] action内容: {action}")
-
-                    if action.get('type') == 'update_user_profile':
-                        updates = action.get('updates', {})
-                        logger.info(f"[LTM] プロファイル更新を実行: updates={updates}, user_id={user_id}")
-
-                        if updates:
-                            success = ltm.update_profile(user_id, updates)
-                            if success:
-                                logger.info(f"[LTM] ✅ プロファイル更新成功: {updates} (user_id: {user_id})")
-                            else:
-                                logger.error(f"[LTM] ❌ プロファイル更新失敗: {updates} (user_id: {user_id})")
-                        else:
-                            logger.warning(f"[LTM] updatesが空です")
-                    else:
-                        logger.info(f"[LTM] actionのtypeが'update_user_profile'ではありません: {action.get('type')}")
-                else:
-                    logger.info(f"[LTM] LLM応答にactionフィールドが含まれていません")
+                if action and action.get('type') == 'update_user_profile':
+                    updates = action.get('updates', {})
+                    if updates:
+                        ltm.update_profile(user_id, updates)
+                        logger.info(f"[LTM] プロファイル更新: {updates}")
 
             except Exception as e:
-                logger.error(f"[LTM] 処理エラー: {e}", exc_info=True)
+                logger.error(f"[LTM] 処理エラー: {e}")
 
         # 【デバッグ】最終的なshopsの内容を確認
         logger.info(f"[Chat] 最終shops配列: {len(shops)}件")

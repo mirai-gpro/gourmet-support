@@ -1,13 +1,15 @@
 -- ========================================
--- 長期記憶システム データベーススキーマ
--- Supabase (PostgreSQL)
+-- 長期記憶システム マイグレーション
+-- session_id → user_id への移行
 -- ========================================
 
--- ========================================
--- user_profiles テーブル
--- ユーザーの基本プロファイルと会話サマリー
--- ========================================
-CREATE TABLE IF NOT EXISTS user_profiles (
+-- 既存テーブルを削除
+DROP TABLE IF EXISTS user_interaction_history CASCADE;
+DROP TABLE IF EXISTS user_preferences CASCADE;
+DROP TABLE IF EXISTS user_profiles CASCADE;
+
+-- 新しいuser_profilesテーブルを作成
+CREATE TABLE user_profiles (
     user_id VARCHAR(255) PRIMARY KEY,
     preferred_name VARCHAR(100),
     name_honorific VARCHAR(20) DEFAULT '',
@@ -21,11 +23,9 @@ CREATE TABLE IF NOT EXISTS user_profiles (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX IF NOT EXISTS idx_user_profiles_last_visit ON user_profiles(last_visit_at);
+CREATE INDEX idx_user_profiles_last_visit ON user_profiles(last_visit_at);
 
--- ========================================
--- 自動更新トリガー (updated_at)
--- ========================================
+-- 自動更新トリガー
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
