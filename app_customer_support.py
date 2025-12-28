@@ -288,12 +288,14 @@ def chat():
             try:
                 # user_id をセッションデータから取得
                 user_id = session_data.get('user_id')
+                logger.info(f"[LTM DEBUG] user_id from session_data: {user_id}")
 
                 # ========================================
                 # LLMからのaction指示を処理
                 # ========================================
                 # 初回訪問時の名前登録も、名前変更も、すべてLLMのactionで統一
                 action = result.get('action')
+                logger.info(f"[LTM DEBUG] action from LLM result: {action}")
                 if action and action.get('type') == 'update_user_profile':
                     updates = action.get('updates', {})
                     if updates and user_id:
