@@ -185,35 +185,51 @@ class SupportSession:
         self.session_id = session_id or str(uuid.uuid4())
 
     def initialize(self, user_info=None, language='ja', mode='chat'):
-        """新規セッション初期化 - モード対応 + 長期記憶統合"""
+        """
+        新規セッション初期化 - モード対応 + 長期記憶統合
+
+        【重要】新設計:
+        - user_id はフロントエンドから user_info.user_id で受け取る
+        - user_id をキーにしてDB操作を行う
+        - チャットモードはDB読み込みをスキップ（高速化）
+        """
+        # user_id を user_info から取得
+        user_id = user_info.get('user_id') if user_info else None
+
         # 長期記憶から既存プロファイルを取得
         long_term_profile = None
         is_first_visit = True
         user_context = ""
 
-        if LONG_TERM_MEMORY_ENABLED:
+        # チャットモードはDB読み込みをスキップ（高速化）
+        if mode == 'chat':
+            logger.info(f"[Session] チャットモード: DB読み込みスキップ")
+        elif LONG_TERM_MEMORY_ENABLED and user_id and mode == 'concierge':
             try:
                 ltm = LongTermMemory()
-                # プロファイル取得または作成
-                long_term_profile = ltm.get_or_create_profile(
-                    self.session_id,
-                    {'language': language, 'mode': mode}
-                )
 
-                # 初回訪問判定
-                is_first_visit = ltm.is_first_visit(self.session_id)
-                logger.info(f"[Session] is_first_visit={is_first_visit} for session {self.session_id}")
+                # 初回訪問判定（レコードの存在有無のみで判定）
+                is_first_visit = ltm.is_first_visit(user_id)
+                logger.info(f"[Session] is_first_visit={is_first_visit} for user_id={user_id}")
 
-                # システムプロンプトに注入するコンテキスト生成
                 if not is_first_visit:
-                    user_context = ltm.generate_system_prompt_context(self.session_id, language)
-                    logger.info(f"[Session] 長期記憶コンテキスト取得: {self.session_id}")
+                    # 2回目以降: プロファイル取得 + 訪問回数インクリメント
+                    long_term_profile = ltm.get_or_create_profile(
+                        user_id,
+                        {'language': language, 'mode': mode}
+                    )
+                    # システムプロンプトに注入するコンテキスト生成
+                    user_context = ltm.generate_system_prompt_context(user_id, language)
+                    logger.info(f"[Session] 長期記憶コンテキスト取得: user_id={user_id}")
+                # 初回訪問の場合はプロファイルを作成しない
+                # LLMがactionで名前登録を指示した時に作成する
 
             except Exception as e:
                 logger.error(f"[Session] 長期記憶の読み込みエラー: {e}")
 
         data = {
             'session_id': self.session_id,
+            'user_id': user_id,  # ★ user_id を保存（DB操作に使用）
             'messages': [],  # SDKネイティブのリスト形式用
             'status': 'active',
             'user_info': user_info or {},

@@ -149,10 +149,24 @@ def start_session():
 
         logger.info(f"[API] セッション開始: {session.session_id}, 言語: {language}, モード: {mode}")
 
-        return jsonify({
+        # レスポンス作成
+        response_data = {
             'session_id': session.session_id,
             'initial_message': initial_message
-        })
+        }
+
+        # コンシェルジュモードのみ、名前情報を返す
+        if mode == 'concierge':
+            session_data = session.get_data()
+            profile = session_data.get('long_term_profile') if session_data else None
+            if profile:
+                response_data['user_profile'] = {
+                    'preferred_name': profile.get('preferred_name'),
+                    'name_honorific': profile.get('name_honorific')
+                }
+                logger.info(f"[API] user_profile を返却: {response_data['user_profile']}")
+
+        return jsonify(response_data)
 
     except Exception as e:
         logger.error(f"[API] セッション開始エラー: {e}")
@@ -268,15 +282,12 @@ def chat():
             logger.info(f"[Chat] 深掘り質問への回答: {response_text[:100]}...")
 
         # ========================================
-        # 長期記憶: 好み抽出 & LLMからのaction処理
+        # 長期記憶: LLMからのaction処理（新設計版）
         # ========================================
         if LONG_TERM_MEMORY_ENABLED:
             try:
-                ltm = LongTermMemory()
-
-                # 好みの自動抽出（会話全体から）
-                PreferenceExtractor.extract_and_save(session_id, user_message, language)
-                PreferenceExtractor.extract_and_save(session_id, response_text, language)
+                # user_id をセッションデータから取得
+                user_id = session_data.get('user_id')
 
                 # ========================================
                 # LLMからのaction指示を処理
@@ -285,12 +296,16 @@ def chat():
                 action = result.get('action')
                 if action and action.get('type') == 'update_user_profile':
                     updates = action.get('updates', {})
-                    if updates:
-                        # 名前が含まれている場合、user_idも設定
-                        if 'preferred_name' in updates:
-                            updates['user_id'] = session_id
-                        ltm.update_profile(session_id, updates)
-                        logger.info(f"[LTM] LLMからの指示でプロファイル更新: {updates} (user_id: {session_id})")
+                    if updates and user_id:
+                        ltm = LongTermMemory()
+                        # user_id をキーにしてプロファイルを更新（UPSERT動作）
+                        success = ltm.update_profile(user_id, updates)
+                        if success:
+                            logger.info(f"[LTM] LLMからの指示でプロファイル更新成功: updates={updates}, user_id={user_id}")
+                        else:
+                            logger.error(f"[LTM] LLMからの指示でプロファイル更新失敗: updates={updates}, user_id={user_id}")
+                    elif not user_id:
+                        logger.warning(f"[LTM] user_id が空のためプロファイル更新をスキップ: action={action}")
 
             except Exception as e:
                 logger.error(f"[LTM] 処理エラー: {e}")
@@ -335,28 +350,11 @@ def finalize_session():
         final_summary = assistant.generate_final_summary()
 
         # ========================================
-        # 長期記憶: セッション終了時の保存
+        # 長期記憶: セッション終了時の保存（新設計版）
         # ========================================
-        if LONG_TERM_MEMORY_ENABLED:
-            try:
-                ltm = LongTermMemory()
-
-                # 訪問履歴を保存
-                ltm.save_interaction_history(
-                    session_id=session_id,
-                    actual_session_id=session_id,
-                    language=session_data.get('language', 'ja'),
-                    mode=session_data.get('mode', 'chat'),
-                    conversation_summary=final_summary,
-                    searched_areas=None,  # TODO: エリア情報を抽出
-                    recommended_shops=session_data.get('current_shops', []),
-                    session_started_at=None,  # TODO: セッション開始時刻を記録
-                    session_ended_at=datetime.now()
-                )
-                logger.info(f"[LTM] 訪問履歴を保存: {session_id}")
-
-            except Exception as e:
-                logger.error(f"[LTM] 保存エラー: {e}")
+        # 注: save_interaction_history は新設計では廃止
+        # サマリーはショップカード提示時に非同期で保存される
+        logger.info(f"[LTM] セッション終了: {session_id}")
 
         return jsonify({
             'summary': final_summary,

@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-長期記憶管理モジュール
-- Supabaseとの接続・CRUD操作
-- ユーザープロファイル管理
-- 好み・傾向の自動抽出・保存
+長期記憶管理モジュール（新設計版）
+- user_id をPRIMARY KEYとして使用
+- サマリーベースの記憶管理
+- LLMによる会話サマリー生成
 """
 import os
-import re
 import json
 import logging
 from datetime import datetime
@@ -40,277 +39,180 @@ def get_supabase_client() -> Client:
 
 
 # ========================================
-# ユーザープロファイル管理
+# ユーザープロファイル管理（user_idベース）
 # ========================================
 
 class LongTermMemory:
-    """長期記憶管理クラス"""
+    """長期記憶管理クラス（新設計版）"""
 
     def __init__(self):
         self.client = get_supabase_client()
 
     # ----------------------------------------
-    # プロファイル操作
+    # プロファイル操作（user_idベース）
     # ----------------------------------------
 
-    def get_profile(self, session_id: str) -> Optional[Dict[str, Any]]:
-        """プロファイル取得"""
+    def get_profile(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """プロファイル取得（user_idで検索）"""
+        if not user_id:
+            logger.warning("[LTM] get_profile: user_id が空です")
+            return None
+
         try:
-            response = self.client.table('user_profiles').select('*').eq('session_id', session_id).execute()
+            response = self.client.table('user_profiles').select('*').eq('user_id', user_id).execute()
 
             if response.data and len(response.data) > 0:
-                logger.info(f"[LTM] プロファイル取得成功: {session_id}")
+                logger.info(f"[LTM] プロファイル取得成功: {user_id}")
                 return response.data[0]
             else:
-                logger.info(f"[LTM] プロファイル未登録: {session_id}")
+                logger.info(f"[LTM] プロファイル未登録: {user_id}")
                 return None
         except Exception as e:
             logger.error(f"[LTM] プロファイル取得エラー: {e}")
             return None
 
-    def create_profile(self, session_id: str, data: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+    def create_profile(self, user_id: str, data: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """新規プロファイル作成"""
+        if not user_id:
+            logger.error("[LTM] create_profile: user_id が空です")
+            return None
+
         try:
+            now = datetime.now().isoformat()
             profile_data = {
-                'session_id': session_id,
-                'user_id': None,  # 初回作成時は null、名前登録時に session_id を設定
+                'user_id': user_id,
                 'preferred_name': data.get('preferred_name') if data else None,
                 'name_honorific': data.get('name_honorific', '') if data else '',
+                'conversation_summary': data.get('conversation_summary') if data else None,
                 'default_language': data.get('language', 'ja') if data else 'ja',
                 'preferred_mode': data.get('mode', 'chat') if data else 'chat',
-                'first_visit_at': datetime.now().isoformat(),
-                'last_visit_at': datetime.now().isoformat(),
-                'visit_count': 1
+                'first_visit_at': now,
+                'last_visit_at': now,
+                'visit_count': 1,
+                'created_at': now,
+                'updated_at': now
             }
 
             response = self.client.table('user_profiles').insert(profile_data).execute()
 
             if response.data and len(response.data) > 0:
-                logger.info(f"[LTM] プロファイル作成成功: {session_id}")
+                logger.info(f"[LTM] プロファイル作成成功: {user_id}")
                 return response.data[0]
             else:
-                logger.error(f"[LTM] プロファイル作成失敗: {session_id}")
+                logger.error(f"[LTM] プロファイル作成失敗: {user_id}")
                 return None
         except Exception as e:
             logger.error(f"[LTM] プロファイル作成エラー: {e}")
             return None
 
-    def update_profile(self, session_id: str, updates: Dict[str, Any]) -> bool:
-        """プロファイル更新"""
+    def update_profile(self, user_id: str, updates: Dict[str, Any]) -> bool:
+        """
+        プロファイル更新（UPSERT動作）
+        - レコードが存在すれば更新
+        - レコードがなければ新規作成
+        """
+        if not user_id:
+            logger.error("[LTM] update_profile: user_id が空です")
+            return False
+
         try:
-            # last_visit_atは常に更新
-            updates['last_visit_at'] = datetime.now().isoformat()
+            # まず既存のプロファイルを確認
+            existing = self.get_profile(user_id)
 
-            response = self.client.table('user_profiles').update(updates).eq('session_id', session_id).execute()
+            if existing:
+                # 既存レコードを更新
+                updates['last_visit_at'] = datetime.now().isoformat()
+                updates['updated_at'] = datetime.now().isoformat()
 
-            if response.data:
-                logger.info(f"[LTM] プロファイル更新成功: {session_id}")
-                return True
+                response = self.client.table('user_profiles').update(updates).eq('user_id', user_id).execute()
+
+                if response.data:
+                    logger.info(f"[LTM] プロファイル更新成功: {user_id}, updates={list(updates.keys())}")
+                    return True
+                else:
+                    logger.error(f"[LTM] プロファイル更新失敗: {user_id}")
+                    return False
             else:
-                logger.error(f"[LTM] プロファイル更新失敗: {session_id}")
-                return False
+                # 新規レコードを作成（UPSERT動作）
+                logger.info(f"[LTM] レコードが存在しないため新規作成: {user_id}")
+                result = self.create_profile(user_id, updates)
+                return result is not None
+
         except Exception as e:
             logger.error(f"[LTM] プロファイル更新エラー: {e}")
             return False
 
-    def increment_visit_count(self, session_id: str) -> bool:
+    def increment_visit_count(self, user_id: str) -> bool:
         """訪問回数をインクリメント"""
+        if not user_id:
+            return False
+
         try:
-            profile = self.get_profile(session_id)
+            profile = self.get_profile(user_id)
             if not profile:
                 return False
 
             new_count = profile.get('visit_count', 0) + 1
-            return self.update_profile(session_id, {'visit_count': new_count})
+            return self.update_profile(user_id, {'visit_count': new_count})
         except Exception as e:
             logger.error(f"[LTM] 訪問回数更新エラー: {e}")
             return False
 
-    def get_or_create_profile(self, session_id: str, initial_data: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
+    def get_or_create_profile(self, user_id: str, initial_data: Dict[str, Any] = None) -> Optional[Dict[str, Any]]:
         """プロファイル取得または作成"""
-        profile = self.get_profile(session_id)
+        if not user_id:
+            logger.warning("[LTM] get_or_create_profile: user_id が空です")
+            return None
+
+        profile = self.get_profile(user_id)
 
         if profile:
             # 既存プロファイルの場合、訪問回数を更新
-            self.increment_visit_count(session_id)
+            self.increment_visit_count(user_id)
             # 最新情報を再取得
-            return self.get_profile(session_id)
+            return self.get_profile(user_id)
         else:
             # 新規作成
-            return self.create_profile(session_id, initial_data)
+            return self.create_profile(user_id, initial_data)
 
-    def is_first_visit(self, session_id: str) -> bool:
-        """初回訪問かどうか判定（user_idベース）"""
-        profile = self.get_profile(session_id)
-        if profile is None:
+    def is_first_visit(self, user_id: str) -> bool:
+        """
+        初回訪問かどうか判定
+        - DBにレコードがなければ初回
+        - レコードがあれば2回目以降
+        """
+        if not user_id:
             return True
-        # user_id がセットされていれば2回目以降
-        user_id = profile.get('user_id')
-        return user_id is None or user_id == ''
+
+        profile = self.get_profile(user_id)
+        return profile is None
 
     # ----------------------------------------
-    # 好み・傾向の管理
+    # システムプロンプト用コンテキスト生成
     # ----------------------------------------
 
-    def get_all_preferences(self, session_id: str) -> List[Dict[str, Any]]:
-        """全ての好みを取得"""
-        try:
-            response = self.client.table('user_preferences').select('*').eq('session_id', session_id).execute()
-
-            if response.data:
-                logger.info(f"[LTM] 好み取得成功: {session_id}, {len(response.data)}件")
-                return response.data
-            else:
-                logger.info(f"[LTM] 好みデータなし: {session_id}")
-                return []
-        except Exception as e:
-            logger.error(f"[LTM] 好み取得エラー: {e}")
-            return []
-
-    def upsert_preference(
-        self,
-        session_id: str,
-        category: str,
-        preference_key: str,
-        preference_value: str,
-        confidence_score: float = 1.0,
-        importance_level: str = 'medium'
-    ) -> bool:
-        """好みを追加または更新（UPSERT）"""
-        try:
-            # 既存のデータを確認
-            existing = self.client.table('user_preferences').select('*').eq(
-                'session_id', session_id
-            ).eq('category', category).eq('preference_key', preference_key).execute()
-
-            if existing.data and len(existing.data) > 0:
-                # 既存データがある場合は更新
-                old_data = existing.data[0]
-                new_mention_count = old_data.get('mention_count', 1) + 1
-
-                # confidence_scoreは平均を取る
-                old_confidence = old_data.get('confidence_score', 1.0)
-                new_confidence = (old_confidence + confidence_score) / 2
-
-                update_data = {
-                    'preference_value': preference_value,
-                    'confidence_score': new_confidence,
-                    'importance_level': importance_level,
-                    'last_mentioned_at': datetime.now().isoformat(),
-                    'mention_count': new_mention_count
-                }
-
-                response = self.client.table('user_preferences').update(update_data).eq(
-                    'session_id', session_id
-                ).eq('category', category).eq('preference_key', preference_key).execute()
-
-                logger.info(f"[LTM] 好み更新: {session_id}, {category}/{preference_key}, 言及{new_mention_count}回")
-            else:
-                # 新規追加
-                insert_data = {
-                    'session_id': session_id,
-                    'category': category,
-                    'preference_key': preference_key,
-                    'preference_value': preference_value,
-                    'confidence_score': confidence_score,
-                    'importance_level': importance_level,
-                    'detected_at': datetime.now().isoformat(),
-                    'last_mentioned_at': datetime.now().isoformat(),
-                    'mention_count': 1
-                }
-
-                response = self.client.table('user_preferences').insert(insert_data).execute()
-                logger.info(f"[LTM] 好み追加: {session_id}, {category}/{preference_key}")
-
-            return True
-        except Exception as e:
-            logger.error(f"[LTM] 好みUPSERTエラー: {e}")
-            return False
-
-    def get_critical_preferences(self, session_id: str) -> List[Dict[str, Any]]:
-        """重要度がcriticalの好みのみ取得（アレルギー等）"""
-        try:
-            response = self.client.table('user_preferences').select('*').eq(
-                'session_id', session_id
-            ).eq('importance_level', 'critical').execute()
-
-            return response.data if response.data else []
-        except Exception as e:
-            logger.error(f"[LTM] 重要な好み取得エラー: {e}")
-            return []
-
-    # ----------------------------------------
-    # 訪問履歴の管理
-    # ----------------------------------------
-
-    def save_interaction_history(
-        self,
-        session_id: str,
-        actual_session_id: str,
-        language: str,
-        mode: str,
-        conversation_summary: str = None,
-        searched_areas: List[str] = None,
-        recommended_shops: List[Dict] = None,
-        session_started_at: datetime = None,
-        session_ended_at: datetime = None
-    ) -> bool:
-        """訪問履歴を保存"""
-        try:
-            duration = None
-            if session_started_at and session_ended_at:
-                duration = int((session_ended_at - session_started_at).total_seconds())
-
-            history_data = {
-                'session_id': session_id,
-                'actual_session_id': actual_session_id,
-                'language': language,
-                'mode': mode,
-                'conversation_summary': conversation_summary,
-                'searched_areas': json.dumps(searched_areas) if searched_areas else None,
-                'recommended_shops': json.dumps(recommended_shops) if recommended_shops else None,
-                'session_started_at': session_started_at.isoformat() if session_started_at else None,
-                'session_ended_at': session_ended_at.isoformat() if session_ended_at else None,
-                'duration_seconds': duration
-            }
-
-            response = self.client.table('user_interaction_history').insert(history_data).execute()
-
-            if response.data:
-                logger.info(f"[LTM] 訪問履歴保存成功: {session_id}")
-                return True
-            else:
-                logger.error(f"[LTM] 訪問履歴保存失敗: {session_id}")
-                return False
-        except Exception as e:
-            logger.error(f"[LTM] 訪問履歴保存エラー: {e}")
-            return False
-
-    # ----------------------------------------
-    # システムプロンプト生成
-    # ----------------------------------------
-
-    def generate_system_prompt_context(self, session_id: str, language: str = 'ja') -> str:
+    def generate_system_prompt_context(self, user_id: str, language: str = 'ja') -> str:
         """システムプロンプトに注入するコンテキストを生成"""
-        profile = self.get_profile(session_id)
+        if not user_id:
+            return ""
+
+        profile = self.get_profile(user_id)
         if not profile:
             return ""
 
-        preferences = self.get_all_preferences(session_id)
-
         # 言語別のテンプレート
         if language == 'ja':
-            return self._generate_context_ja(profile, preferences)
+            return self._generate_context_ja(profile)
         elif language == 'en':
-            return self._generate_context_en(profile, preferences)
+            return self._generate_context_en(profile)
         elif language == 'zh':
-            return self._generate_context_zh(profile, preferences)
+            return self._generate_context_zh(profile)
         elif language == 'ko':
-            return self._generate_context_ko(profile, preferences)
+            return self._generate_context_ko(profile)
         else:
-            return self._generate_context_ja(profile, preferences)
+            return self._generate_context_ja(profile)
 
-    def _generate_context_ja(self, profile: Dict, preferences: List[Dict]) -> str:
+    def _generate_context_ja(self, profile: Dict) -> str:
         """日本語コンテキスト生成"""
         context_parts = []
 
@@ -322,41 +224,15 @@ class LongTermMemory:
             context_parts.append(f"- 呼び方: {preferred_name}{name_honorific}")
         context_parts.append(f"- 訪問回数: {profile.get('visit_count', 1)}回目")
 
-        # アレルギー・重要な制約
-        critical_prefs = [p for p in preferences if p.get('importance_level') == 'critical']
-        if critical_prefs:
-            context_parts.append("\n【重要な制約・アレルギー】")
-            for pref in critical_prefs:
-                context_parts.append(f"⚠️ {pref.get('preference_value', '')}（必ず回避すること）")
-
-        # 食の好み
-        food_prefs = [p for p in preferences if p.get('category') == 'food_type']
-        if food_prefs:
-            context_parts.append("\n【食の好み】")
-            for pref in sorted(food_prefs, key=lambda x: x.get('mention_count', 0), reverse=True)[:5]:
-                mention = pref.get('mention_count', 1)
-                value = pref.get('preference_value', '')
-                context_parts.append(f"✓ {value}（言及回数: {mention}回）")
-
-        # よく使うエリア
-        area_prefs = [p for p in preferences if p.get('category') == 'area']
-        if area_prefs:
-            context_parts.append("\n【よく使うエリア】")
-            for pref in sorted(area_prefs, key=lambda x: x.get('mention_count', 0), reverse=True)[:3]:
-                mention = pref.get('mention_count', 1)
-                value = pref.get('preference_value', '')
-                context_parts.append(f"- {value}（{mention}回）")
-
-        # その他の傾向
-        other_prefs = [p for p in preferences if p.get('category') in ['budget', 'atmosphere', 'other']]
-        if other_prefs:
-            context_parts.append("\n【その他の傾向】")
-            for pref in other_prefs[:3]:
-                context_parts.append(f"- {pref.get('preference_value', '')}")
+        # 会話サマリー（存在する場合）
+        conversation_summary = profile.get('conversation_summary', '')
+        if conversation_summary:
+            context_parts.append("\n【過去の会話記録】")
+            context_parts.append(conversation_summary)
 
         return "\n".join(context_parts)
 
-    def _generate_context_en(self, profile: Dict, preferences: List[Dict]) -> str:
+    def _generate_context_en(self, profile: Dict) -> str:
         """英語コンテキスト生成"""
         context_parts = []
 
@@ -367,25 +243,15 @@ class LongTermMemory:
             context_parts.append(f"- Address as: {preferred_name}{name_honorific}")
         context_parts.append(f"- Visit count: {profile.get('visit_count', 1)} visit(s)")
 
-        critical_prefs = [p for p in preferences if p.get('importance_level') == 'critical']
-        if critical_prefs:
-            context_parts.append("\n【Critical Constraints & Allergies】")
-            for pref in critical_prefs:
-                context_parts.append(f"⚠️ {pref.get('preference_value', '')} (MUST avoid)")
-
-        food_prefs = [p for p in preferences if p.get('category') == 'food_type']
-        if food_prefs:
-            context_parts.append("\n【Food Preferences】")
-            for pref in sorted(food_prefs, key=lambda x: x.get('mention_count', 0), reverse=True)[:5]:
-                mention = pref.get('mention_count', 1)
-                value = pref.get('preference_value', '')
-                context_parts.append(f"✓ {value} (mentioned {mention} time(s))")
+        conversation_summary = profile.get('conversation_summary', '')
+        if conversation_summary:
+            context_parts.append("\n【Past Conversation Records】")
+            context_parts.append(conversation_summary)
 
         return "\n".join(context_parts)
 
-    def _generate_context_zh(self, profile: Dict, preferences: List[Dict]) -> str:
+    def _generate_context_zh(self, profile: Dict) -> str:
         """中国語コンテキスト生成"""
-        # 簡体字中国語向け
         context_parts = []
         context_parts.append("【用户信息】")
         preferred_name = profile.get('preferred_name', '')
@@ -394,15 +260,14 @@ class LongTermMemory:
             context_parts.append(f"- 称呼: {preferred_name}{name_honorific}")
         context_parts.append(f"- 访问次数: 第{profile.get('visit_count', 1)}次")
 
-        critical_prefs = [p for p in preferences if p.get('importance_level') == 'critical']
-        if critical_prefs:
-            context_parts.append("\n【重要限制・过敏】")
-            for pref in critical_prefs:
-                context_parts.append(f"⚠️ {pref.get('preference_value', '')}（必须避免）")
+        conversation_summary = profile.get('conversation_summary', '')
+        if conversation_summary:
+            context_parts.append("\n【过去的对话记录】")
+            context_parts.append(conversation_summary)
 
         return "\n".join(context_parts)
 
-    def _generate_context_ko(self, profile: Dict, preferences: List[Dict]) -> str:
+    def _generate_context_ko(self, profile: Dict) -> str:
         """韓国語コンテキスト生成"""
         context_parts = []
         context_parts.append("【사용자 정보】")
@@ -412,113 +277,42 @@ class LongTermMemory:
             context_parts.append(f"- 호칭: {preferred_name}{name_honorific}")
         context_parts.append(f"- 방문 횟수: {profile.get('visit_count', 1)}회")
 
-        critical_prefs = [p for p in preferences if p.get('importance_level') == 'critical']
-        if critical_prefs:
-            context_parts.append("\n【중요 제약・알레르기】")
-            for pref in critical_prefs:
-                context_parts.append(f"⚠️ {pref.get('preference_value', '')} (반드시 회피)")
+        conversation_summary = profile.get('conversation_summary', '')
+        if conversation_summary:
+            context_parts.append("\n【과거 대화 기록】")
+            context_parts.append(conversation_summary)
 
         return "\n".join(context_parts)
 
 
 # ========================================
-# 好み自動抽出ロジック
+# 後方互換性のためのダミークラス・関数
 # ========================================
 
 class PreferenceExtractor:
-    """会話から好み・傾向を自動抽出"""
-
-    # 正規表現パターン（日本語）
-    PATTERNS_JA = {
-        'food_like': r'([\w]+)(?:が|は)(好き|大好き|気に入って|お気に入り)',
-        'food_dislike': r'([\w]+)(?:が|は)(苦手|嫌い|ダメ|食べられない)',
-        'allergy': r'([\w]+)(?:の)?アレルギー',
-        'area': r'([\w]+)(?:に|で|の)(住んで|よく行く|いつも|通って)',
-    }
+    """
+    後方互換性のためのダミークラス
+    新設計ではLLMがサマリーを生成するため、正規表現ベースの抽出は廃止
+    """
 
     @staticmethod
     def extract_from_text(text: str, language: str = 'ja') -> List[Dict[str, Any]]:
-        """テキストから好みを抽出（正規表現ベース）"""
-        results = []
-
-        if language == 'ja':
-            # 好きな食べ物
-            for match in re.finditer(PreferenceExtractor.PATTERNS_JA['food_like'], text):
-                food_item = match.group(1)
-                results.append({
-                    'category': 'food_type',
-                    'preference_key': f'{food_item}_like',
-                    'preference_value': f'{food_item}が好き',
-                    'confidence_score': 0.8,
-                    'importance_level': 'medium'
-                })
-
-            # 苦手な食べ物
-            for match in re.finditer(PreferenceExtractor.PATTERNS_JA['food_dislike'], text):
-                food_item = match.group(1)
-                results.append({
-                    'category': 'food_type',
-                    'preference_key': f'{food_item}_dislike',
-                    'preference_value': f'{food_item}が苦手',
-                    'confidence_score': 0.8,
-                    'importance_level': 'medium'
-                })
-
-            # アレルギー
-            for match in re.finditer(PreferenceExtractor.PATTERNS_JA['allergy'], text):
-                allergen = match.group(1)
-                results.append({
-                    'category': 'allergy',
-                    'preference_key': f'{allergen}_allergy',
-                    'preference_value': f'{allergen}アレルギー',
-                    'confidence_score': 1.0,
-                    'importance_level': 'critical'
-                })
-
-            # エリア
-            for match in re.finditer(PreferenceExtractor.PATTERNS_JA['area'], text):
-                area = match.group(1)
-                results.append({
-                    'category': 'area',
-                    'preference_key': f'{area}_area',
-                    'preference_value': f'{area}エリアをよく利用',
-                    'confidence_score': 0.7,
-                    'importance_level': 'medium'
-                })
-
-        return results
+        """ダミー: 常に空リストを返す"""
+        return []
 
     @staticmethod
     def extract_and_save(session_id: str, text: str, language: str = 'ja') -> int:
-        """抽出して自動保存"""
-        ltm = LongTermMemory()
-        preferences = PreferenceExtractor.extract_from_text(text, language)
+        """ダミー: 何もしない（0を返す）"""
+        return 0
 
-        saved_count = 0
-        for pref in preferences:
-            success = ltm.upsert_preference(
-                session_id=session_id,
-                category=pref['category'],
-                preference_key=pref['preference_key'],
-                preference_value=pref['preference_value'],
-                confidence_score=pref['confidence_score'],
-                importance_level=pref['importance_level']
-            )
-            if success:
-                saved_count += 1
-
-        if saved_count > 0:
-            logger.info(f"[Extractor] {saved_count}件の好みを自動保存: {session_id}")
-
-        return saved_count
-
-
-# ========================================
-# ユーティリティ関数
-# ========================================
 
 def extract_name_from_text(text: str) -> Optional[str]:
-    """テキストから名前を抽出"""
+    """
+    テキストから名前を抽出（後方互換性のため残す）
+    新設計ではLLMが名前を抽出してactionで返すため、この関数は使用されない
+    """
+    import re
+
     # パターン1: 「〜と呼んで」
     match = re.search(r'([^\s、。]+)(?:と|って)(?:呼んで|呼ばれ)', text)
     if match:
