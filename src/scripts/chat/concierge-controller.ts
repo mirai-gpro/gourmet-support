@@ -51,21 +51,14 @@ export class ConciergeController extends CoreController {
         } catch (e) {}
       }
 
-      // ★ user_id を取得または生成（localStorage に永続化）
-      let userId = localStorage.getItem('gourmet_support_user_id');
-      if (!userId) {
-        userId = 'user_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-        localStorage.setItem('gourmet_support_user_id', userId);
-        console.log('[Concierge] 新規 user_id を生成:', userId);
-      } else {
-        console.log('[Concierge] 既存 user_id を使用:', userId);
-      }
+      // ★ user_id を取得（親クラスのメソッドを使用）
+      const userId = this.getUserId();
 
       const res = await fetch(`${this.apiBase}/api/session/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          user_info: { user_id: userId },  // ★ user_id を送信
+          user_info: { user_id: userId },
           language: this.currentLanguage,
           mode: 'concierge'
         })
