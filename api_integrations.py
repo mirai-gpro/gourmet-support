@@ -417,13 +417,33 @@ def search_place(shop_name: str, area: str = '', geo_info: dict = None, language
             logger.info(f"[Places API] 結果なし: {query}")
             return None
 
-        place = data['results'][0]
         results_count = len(data.get('results', []))
         logger.info(f"[Places API] 📊 検索結果: {results_count}件ヒット")
 
+        # ✅ business_status でフィルタリング（廃業・閉店を除外）
+        place = None
+        for candidate in data['results']:
+            business_status = candidate.get('business_status', 'OPERATIONAL')
+            candidate_name = candidate.get('name', '不明')
+
+            if business_status == 'OPERATIONAL':
+                place = candidate
+                logger.info(f"[Places API] ✅ 営業中: {candidate_name}")
+                break
+            elif business_status == 'CLOSED_PERMANENTLY':
+                logger.warning(f"[Places API] ❌ 閉店・廃業のためスキップ: {candidate_name}")
+            elif business_status == 'CLOSED_TEMPORARILY':
+                logger.warning(f"[Places API] ⏸️ 一時休業のためスキップ: {candidate_name}")
+            else:
+                logger.warning(f"[Places API] ❓ 不明なステータス({business_status})のためスキップ: {candidate_name}")
+
+        if not place:
+            logger.warning(f"[Places API] 営業中の店舗が見つかりません: {query}")
+            return None
+
         place_id = place['place_id']
 
-        logger.info(f"[Places API] 🏆 1番目の結果: name='{place.get('name')}', address='{place.get('formatted_address', '')[:50]}...'")
+        logger.info(f"[Places API] 🏆 選択した店舗: name='{place.get('name')}', address='{place.get('formatted_address', '')[:50]}...'")
         maps_url = f"https://www.google.com/maps/place/?q=place_id:{place_id}"
 
         # 座標を取得

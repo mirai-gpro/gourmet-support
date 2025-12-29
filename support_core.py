@@ -441,29 +441,38 @@ class SupportAssistant:
             }
             return first_visit_greetings.get(self.language, first_visit_greetings['ja'])
 
-        # 2回目以降は、名前を呼びかけてから通常の挨拶
+        # 2回目以降は、名前を呼びかけてから質問
         profile = session_data.get('long_term_profile', {}) if session_data else {}
         preferred_name = profile.get('preferred_name', '') if profile else ''
         name_honorific = profile.get('name_honorific', '') if profile else ''
 
+        # 質問部分（共通）
+        question_part = {
+            'ja': '今日はどのようなシーンでお店をお探しでしょうか？接待、デート、女子会など、お気軽にお聞かせください。',
+            'en': 'What kind of dining experience are you looking for today? Business dinner, date, gathering with friends?',
+            'zh': '今天您想寻找什么样的用餐场景？商务宴请、约会、朋友聚会？',
+            'ko': '오늘은 어떤 식사 장면을 찾으시나요? 접대, 데이트, 모임 등?'
+        }
+        question = question_part.get(self.language, question_part['ja'])
+
         # 名前がある場合、個別挨拶に変更
         if preferred_name:
             personalized_greetings = {
-                'ja': f'お帰りなさいませ、{preferred_name}{name_honorific}。\n{base_greeting}',
-                'en': f'Welcome back, {preferred_name}{name_honorific}!\n{base_greeting}',
-                'zh': f'欢迎回来，{preferred_name}{name_honorific}！\n{base_greeting}',
-                'ko': f'다시 오신 것을 환영합니다, {preferred_name}{name_honorific}!\n{base_greeting}'
+                'ja': f'お帰りなさいませ、{preferred_name}{name_honorific}。\n{question}',
+                'en': f'Welcome back, {preferred_name}{name_honorific}!\n{question}',
+                'zh': f'欢迎回来，{preferred_name}{name_honorific}！\n{question}',
+                'ko': f'다시 오신 것을 환영합니다, {preferred_name}{name_honorific}!\n{question}'
             }
-            return personalized_greetings.get(self.language, base_greeting)
+            return personalized_greetings.get(self.language, personalized_greetings['ja'])
 
         # 名前未登録のリピーター: シンプルな挨拶（名前呼びなし）
         nameless_greetings = {
-            'ja': f'いらっしゃいませ。\n{base_greeting}',
-            'en': f'Welcome!\n{base_greeting}',
-            'zh': f'欢迎光临！\n{base_greeting}',
-            'ko': f'어서오세요!\n{base_greeting}'
+            'ja': f'いらっしゃいませ。\n{question}',
+            'en': f'Welcome!\n{question}',
+            'zh': f'欢迎光临！\n{question}',
+            'ko': f'어서오세요!\n{question}'
         }
-        return nameless_greetings.get(self.language, base_greeting)
+        return nameless_greetings.get(self.language, nameless_greetings['ja'])
 
     def is_followup_question(self, user_message, current_shops):
         """深掘り質問かどうかを判定"""
