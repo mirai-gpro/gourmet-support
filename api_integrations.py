@@ -556,10 +556,9 @@ def enrich_shops_with_photos(shops: list, area: str = '', language: str = 'ja') 
         place_data = search_place(shop_name, shop_area, geo_info, language)
         
         if not place_data:
-            logger.warning(f"[Enrich] Places APIで見つからない。LLMデータをそのまま使用: {shop_name}")
+            logger.warning(f"[Enrich] Places APIで見つからない。除外します: {shop_name}")
             validation_failed_count += 1
-            enriched_shops.append(shop)  # LLMデータを保持
-            continue
+            continue  # ★append()せずにスキップ★
 
         place_id = place_data.get('place_id')
         place_name = place_data.get('name')
