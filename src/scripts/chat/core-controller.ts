@@ -145,6 +145,11 @@ export class CoreController {
 
     await new Promise(resolve => setTimeout(resolve, 300));
     await this.initializeSession();
+
+    // ★追加: スクロール位置をリセット（ヘッダーが隠れないように）
+    this.container.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+
     console.log('[Reset] Completed');
   }
 
@@ -192,22 +197,24 @@ export class CoreController {
         console.log('[Foreground] Resuming from background...');
 
         // 1. Socket.IO再接続（状態に関わらず試行）
-        if (this.socket) {
-          if (!this.socket.connected) {
-            console.log('[Foreground] Reconnecting socket...');
-            this.socket.connect();
-          }
+        if (this.socket && !this.socket.connected) {
+          console.log('[Foreground] Reconnecting socket...');
+          this.socket.connect();
         }
 
         // 2. UI状態をリセット（操作可能にする）
         this.isProcessing = false;
         this.isAISpeaking = false;
         this.hideWaitOverlay();
-        this.els.sendBtn.disabled = false;
-        this.els.micBtn.disabled = false;
-        this.els.userInput.disabled = false;
-        this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
-        this.els.voiceStatus.className = 'voice-status stopped';
+
+        // 3. 要素が存在する場合のみ更新
+        if (this.els.sendBtn) this.els.sendBtn.disabled = false;
+        if (this.els.micBtn) this.els.micBtn.disabled = false;
+        if (this.els.userInput) this.els.userInput.disabled = false;
+        if (this.els.voiceStatus) {
+          this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+          this.els.voiceStatus.className = 'voice-status stopped';
+        }
       }
     });
   }
