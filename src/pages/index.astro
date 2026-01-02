@@ -1,3 +1,4 @@
+
 ---
 // index.astro - グルメサポートメインページ
 import GourmetChat from '../components/GourmetChat.astro';
@@ -91,8 +92,7 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
     }
 
     .gourmet-chat-container {
-      /* ★修正: スマホで高さを調整 */
-      max-height: none; /* 600px → none */
+      max-height: none;
       height: auto;
       min-height: 400px;
     }
@@ -176,6 +176,16 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
 
     /* モバイルでのスタック表示 */
     @media (max-width: 1023px) {
+      /* ★追加: モバイルで初期状態のショップヘッダーを非表示 */
+      .shop-list-header {
+        display: none;
+      }
+      
+      /* ★追加: ショップが表示されたら表示 */
+      .shop-list-section.has-shops .shop-list-header {
+        display: block;
+      }
+
       .shop-list-section {
         order: 1;
       }
@@ -226,7 +236,6 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
           console.log('[index.astro] ===== PAGE TITLE CLICKED =====');
           console.log('[index.astro] Triggering soft reset...');
           
-          // ★修正: documentのみにイベント発火（windowは削除）
           const resetEvent = new CustomEvent('gourmet-app:reset', { 
             bubbles: true, 
             cancelable: true 
@@ -286,7 +295,6 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
           box-shadow: 0 8px 32px rgba(0,0,0,0.3);
           position: relative;
         ">
-          <!-- 閉じるボタン（大きく目立つ） -->
           <button id="ios-install-close" style="
             position: sticky;
             top: 0;
@@ -316,7 +324,6 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
             アプリのように快適に使えます
           </div>
           
-          <!-- 操作デモ動画（80%サイズで表示） -->
           <div id="demo-video-container" style="
             background: #000;
             border-radius: 8px;
@@ -381,13 +388,11 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
       document.head.appendChild(style);
       document.body.appendChild(modal);
       
-      // 閉じるボタン
       const closeBtn = document.getElementById('ios-install-close');
       closeBtn?.addEventListener('click', () => {
         modal.remove();
       });
       
-      // 背景クリックで閉じる
       modal.addEventListener('click', (e) => {
         if (e.target === modal) {
           modal.remove();
@@ -403,13 +408,11 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
     });
 
     function showInstallPrompt() {
-      // 既存のバナーを削除
       const existingBanner = document.getElementById('install-banner');
       if (existingBanner) {
         existingBanner.remove();
       }
       
-      // インストール案内バナーを作成
       const banner = document.createElement('div');
       banner.id = 'install-banner';
       banner.style.cssText = `
@@ -458,7 +461,6 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
         ">×</button>
       `;
       
-      // アニメーション用CSS
       const style = document.createElement('style');
       style.textContent = `
         @keyframes slideUp {
@@ -475,7 +477,6 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
       document.head.appendChild(style);
       document.body.appendChild(banner);
       
-      // インストールボタン
       const installBtn = document.getElementById('install-btn');
       installBtn?.addEventListener('click', async () => {
         if (deferredPrompt) {
@@ -487,14 +488,12 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
         }
       });
       
-      // 閉じるボタン
       const closeBtn = document.getElementById('install-close');
       closeBtn?.addEventListener('click', () => {
         banner.remove();
       });
     }
 
-    // インストール完了時
     window.addEventListener('appinstalled', () => {
       console.log('PWAがインストールされました');
       deferredPrompt = null;
@@ -502,9 +501,71 @@ const apiBaseUrl = import.meta.env.PUBLIC_API_URL || '';
       if (banner) banner.remove();
     });
 
-    // Service Worker登録
+    // ========================================
+    // ★★★ Service Worker 適切な設定（修正版）★★★
+    // ========================================
     import { registerSW } from 'virtual:pwa-register';
-    registerSW({ immediate: true });
+
+    const updateSW = registerSW({
+      immediate: false,
+      
+      onNeedRefresh() {
+        console.log('[PWA] New content available');
+        updateSW(true);
+      },
+      
+      onOfflineReady() {
+        console.log('[PWA] App ready to work offline');
+      },
+      
+      onRegisterError(error) {
+        console.error('[PWA] SW registration error:', error);
+      },
+      
+      onRegistered(registration) {
+        console.log('[PWA] SW registered:', registration);
+        
+        if (registration) {
+          setInterval(() => {
+            registration.update();
+          }, 60 * 60 * 1000);
+        }
+      }
+    });
+
+    window.addEventListener('beforeunload', () => {
+      console.log('[PWA] Page unloading - cleanup');
+    });
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(registrations => {
+        registrations.forEach(registration => {
+          if (registration.active) {
+            console.log('[PWA] Active SW found');
+          }
+        });
+      });
+      
+      if ('caches' in window) {
+        caches.keys().then(cacheNames => {
+          cacheNames.forEach(cacheName => {
+            if (cacheName.includes('socket.io') || cacheName.includes('api')) {
+              console.log('[PWA] Removing invalid cache:', cacheName);
+              caches.delete(cacheName);
+            }
+          });
+        });
+      }
+    }
+
+    window.addEventListener('pagehide', () => {
+      if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+        navigator.serviceWorker.controller.postMessage({
+          type: 'CLEANUP',
+          timestamp: Date.now()
+        });
+      }
+    });
   </script>
 </body>
 </html>
