@@ -29,7 +29,9 @@ export class CoreController {
   
   // ★追加: バックグラウンド状態の追跡
   protected isInBackground = false;
-  
+  protected backgroundStartTime = 0;
+  protected readonly BACKGROUND_RESET_THRESHOLD = 120000; // 120秒
+
   protected isIOS = /iPhone|iPad|iPod/i.test(navigator.userAgent);
   protected isAndroid = /Android/i.test(navigator.userAgent);
 
@@ -189,12 +191,21 @@ export class CoreController {
     document.addEventListener('gourmet-app:reset', resetWrapper, { once: true });
 
     // ★追加: バックグラウンド復帰時の復旧処理
-    document.addEventListener('visibilitychange', () => {
+    document.addEventListener('visibilitychange', async () => {
       if (document.hidden) {
         this.isInBackground = true;
+        this.backgroundStartTime = Date.now();
       } else if (this.isInBackground) {
         this.isInBackground = false;
-        console.log('[Foreground] Resuming from background...');
+        const backgroundDuration = Date.now() - this.backgroundStartTime;
+        console.log(`[Foreground] Resuming from background (${Math.round(backgroundDuration / 1000)}s)`);
+
+        // ★120秒以上バックグラウンドにいた場合はソフトリセット
+        if (backgroundDuration > this.BACKGROUND_RESET_THRESHOLD) {
+          console.log('[Foreground] Long background duration - triggering soft reset...');
+          await this.resetAppContent();
+          return;
+        }
 
         // 1. Socket.IO再接続（状態に関わらず試行）
         if (this.socket && !this.socket.connected) {
