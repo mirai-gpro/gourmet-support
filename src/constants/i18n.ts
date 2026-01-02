@@ -4,6 +4,7 @@ export const i18n = {
   ja: {
     // --- UIテキスト ---
     pageTitle: 'グルメサポートAI',
+    pageTitleConcierge: 'AIコンシェルジュ',
     pageSubtitle: 'AIがあなたにぴったりのお店をご提案します',
     shopListTitle: 'おすすめのお店',
     shopListEmpty: 'チャットで検索すると、ここにお店が表示されます',
@@ -120,6 +121,7 @@ export const i18n = {
   },
   en: {
     pageTitle: 'Gourmet Support AI',
+    pageTitleConcierge: 'AI Concierge',
     pageSubtitle: 'AI will suggest the perfect restaurant for you',
     shopListTitle: 'Recommended Restaurants',
     shopListEmpty: 'Search in the chat to see restaurants here',
@@ -223,6 +225,7 @@ export const i18n = {
   },
   zh: {
     pageTitle: '美食支持AI',
+    pageTitleConcierge: 'AI礼宾服务',
     pageSubtitle: 'AI为您推荐完美的餐厅',
     shopListTitle: '推荐餐厅',
     shopListEmpty: '在聊天中搜索后，餐厅将显示在这里',
@@ -326,6 +329,7 @@ export const i18n = {
   },
   ko: {
     pageTitle: '미식 지원 AI',
+    pageTitleConcierge: 'AI 컨시어지',
     pageSubtitle: 'AI가 완벽한 레스토랑을 추천해 드립니다',
     shopListTitle: '추천 레스토랑',
     shopListEmpty: '채팅에서 검색하면 여기에 레스토랑이 표시됩니다',

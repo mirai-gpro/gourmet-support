@@ -169,13 +169,22 @@ export class ConciergeController extends CoreController {
   // 🎯 UI言語更新をオーバーライド(挨拶文をコンシェルジュ用に)
   // ========================================
   protected updateUILanguage() {
-    // 親クラスのupdateUILanguageを実行
-    super.updateUILanguage();
-    
-    // ✅ 初期メッセージをコンシェルジュ用に再設定
+    // ✅ バックエンドからの長期記憶対応済み挨拶を保持
     const initialMessage = this.els.chatArea.querySelector('.message.assistant[data-initial="true"] .message-text');
-    if (initialMessage) {
-      initialMessage.textContent = this.t('initialGreetingConcierge');
+    const savedGreeting = initialMessage?.textContent;
+
+    // 親クラスのupdateUILanguageを実行（UIラベル等を更新）
+    super.updateUILanguage();
+
+    // ✅ 長期記憶対応済み挨拶を復元（親が上書きしたものを戻す）
+    if (initialMessage && savedGreeting) {
+      initialMessage.textContent = savedGreeting;
+    }
+
+    // ✅ ページタイトルをコンシェルジュ用に設定
+    const pageTitle = document.getElementById('pageTitle');
+    if (pageTitle) {
+      pageTitle.innerHTML = `<img src="/pwa-152x152.png" alt="Logo" class="app-logo" /> ${this.t('pageTitleConcierge')}`;
     }
   }
 
