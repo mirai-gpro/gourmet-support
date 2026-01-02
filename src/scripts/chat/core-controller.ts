@@ -183,16 +183,31 @@ export class CoreController {
     };
     document.addEventListener('gourmet-app:reset', resetWrapper, { once: true });
 
-    // ★追加: バックグラウンド復帰時のSocket再接続のみ
+    // ★追加: バックグラウンド復帰時の復旧処理
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         this.isInBackground = true;
       } else if (this.isInBackground) {
         this.isInBackground = false;
-        if (this.socket && !this.socket.connected) {
-          console.log('[Foreground] Reconnecting socket...');
-          this.socket.connect();
+        console.log('[Foreground] Resuming from background...');
+
+        // 1. Socket.IO再接続（状態に関わらず試行）
+        if (this.socket) {
+          if (!this.socket.connected) {
+            console.log('[Foreground] Reconnecting socket...');
+            this.socket.connect();
+          }
         }
+
+        // 2. UI状態をリセット（操作可能にする）
+        this.isProcessing = false;
+        this.isAISpeaking = false;
+        this.hideWaitOverlay();
+        this.els.sendBtn.disabled = false;
+        this.els.micBtn.disabled = false;
+        this.els.userInput.disabled = false;
+        this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
+        this.els.voiceStatus.className = 'voice-status stopped';
       }
     });
   }
