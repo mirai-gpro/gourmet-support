@@ -955,9 +955,10 @@ export class CoreController {
     this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
     this.els.voiceStatus.className = 'voice-status stopped';
     this.els.userInput.value = '';
-    
+
+    // ★修正: containerにスクロール（chat-header-controlsが隠れないように）
     if (window.innerWidth < 1024) {
-      setTimeout(() => { this.els.chatArea.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 100);
+      setTimeout(() => { this.container.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 100);
     }
   }
 
