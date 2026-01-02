@@ -1,3 +1,5 @@
+
+
 // src/scripts/chat/concierge-controller.ts
 import { CoreController } from './core-controller';
 import { AudioManager } from './audio-manager';
@@ -9,7 +11,7 @@ export class ConciergeController extends CoreController {
   constructor(container: HTMLElement, apiBase: string) {
     super(container, apiBase);
     
-    // ★コンシェルジュモード用のAudioManagerを6.5秒設定で再初期化
+    // ★コンシェルジュモード用のAudioManagerを6.5秒設定で再初期化２
     this.audioManager = new AudioManager(8000);
     
     // コンシェルジュモードに設定
@@ -164,19 +166,16 @@ export class ConciergeController extends CoreController {
   }
 
   // ========================================
-  // 🎯 UI言語更新をオーバーライド
+  // 🎯 UI言語更新をオーバーライド(挨拶文をコンシェルジュ用に)
   // ========================================
   protected updateUILanguage() {
-    // ✅ バックエンドからの長期記憶対応済み挨拶を保持
-    const initialMessage = this.els.chatArea.querySelector('.message.assistant[data-initial="true"] .message-text');
-    const savedGreeting = initialMessage?.textContent;
-
-    // 親クラスのupdateUILanguageを実行（UIラベル等を更新）
+    // 親クラスのupdateUILanguageを実行
     super.updateUILanguage();
-
-    // ✅ 長期記憶対応済み挨拶を復元（親が上書きしたものを戻す）
-    if (initialMessage && savedGreeting) {
-      initialMessage.textContent = savedGreeting;
+    
+    // ✅ 初期メッセージをコンシェルジュ用に再設定
+    const initialMessage = this.els.chatArea.querySelector('.message.assistant[data-initial="true"] .message-text');
+    if (initialMessage) {
+      initialMessage.textContent = this.t('initialGreetingConcierge');
     }
   }
 
@@ -385,7 +384,7 @@ export class ConciergeController extends CoreController {
     
     // 短すぎる入力チェック
     const textLength = transcript.trim().replace(/\s+/g, '').length;
-    if (textLength < 4) {
+    if (textLength < 2) {
         const msg = this.t('shortMsgWarning');
         this.addMessage('assistant', msg);
         if (this.isTTSEnabled && this.isUserInteracted) {
@@ -461,7 +460,7 @@ export class ConciergeController extends CoreController {
     if (!this.isFromVoiceInput) {
       this.addMessage('user', message);
       const textLength = message.trim().replace(/\s+/g, '').length;
-      if (textLength < 4) {
+      if (textLength < 2) {
            const msg = this.t('shortMsgWarning');
            this.addMessage('assistant', msg);
            if (this.isTTSEnabled && this.isUserInteracted) await this.speakTextGCP(msg, true);
@@ -706,4 +705,5 @@ export class ConciergeController extends CoreController {
       this.els.userInput.blur();
     }
   }
+
 }
