@@ -254,6 +254,11 @@ export class ConciergeController extends CoreController {
         return;
       }
 
+      // ★アバターアニメーションを開始（複数センテンス処理時）
+      if (this.els.avatarContainer) {
+        this.els.avatarContainer.classList.add('speaking');
+      }
+
       // 最初のセンテンスと残りのセンテンスに分割
       const firstSentence = sentences[0];
       const remainingSentences = sentences.slice(1).join('');
@@ -348,9 +353,13 @@ export class ConciergeController extends CoreController {
         }
       }
 
+      // ★アバターアニメーションを停止（並行処理完了時）
+      this.stopAvatarAnimation();
       this.isAISpeaking = false;
     } catch (error) {
       console.error('[TTS並行処理エラー]', error);
+      // ★エラー時もアバターアニメーションを停止
+      this.stopAvatarAnimation();
       this.isAISpeaking = false;
       // エラー時はフォールバック
       await this.speakTextGCP(response, true, false, isTextInput);
