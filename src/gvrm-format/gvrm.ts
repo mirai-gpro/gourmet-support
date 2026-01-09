@@ -5,7 +5,7 @@ import { GSViewer } from './gs';
 import { VRMManager } from './vrm';
 import { NeuralRefiner } from './neural-refiner';
 import { TemplateDecoder } from './template-decoder';
-import { ImageEncoder } from './image-encoder';
+import { ImageEncoder, CameraParams } from './image-encoder';
 import { WebGLDisplay } from './webgl-display';
 
 export class GVRM {
@@ -19,8 +19,8 @@ export class GVRM {
     private vrm = new VRMManager();
     public viewer: GSViewer | null = null;
     private webglDisplay: WebGLDisplay;
-    
-    private idEmbedding = new Float32Array(256).fill(0.5);
+
+    private idEmbedding: Float32Array = new Float32Array(256).fill(0.5);
     private isReady = false;
 
     constructor(container: HTMLElement) {
@@ -80,11 +80,38 @@ export class GVRM {
             });
             
             console.log('[GVRM] Extracting features from source image...');
-            const projectionFeature = await this.imageEncoder.extractFeatures(
-                '/assets/source.png',
-                TEMPLATE_VERTEX_COUNT
+
+            // テンプレート頂点を取得（ポーズ空間）
+            const geometryDataForEncoder = this.templateDecoder.getGeometryData();
+            if (!geometryDataForEncoder) {
+                throw new Error('Failed to get geometry data for Image Encoder');
+            }
+            const templateVertices = geometryDataForEncoder.vTemplate;
+
+            // カメラ行列を更新（投影用）
+            this.camera.updateMatrixWorld();
+            this.camera.updateProjectionMatrix();
+
+            // GUAVA論文に基づくProjection Sampling
+            // カメラパラメータをImageEncoderに渡す
+            const cameraParams: CameraParams = this.imageEncoder.createCameraFromThree(
+                this.camera,
+                512,  // source.pngの想定サイズ
+                512
             );
-            
+
+            // 新しいAPI: 頂点とカメラ行列を使ってProjection Sampling
+            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeatures(
+                '/assets/source.png',
+                templateVertices,
+                TEMPLATE_VERTEX_COUNT,
+                cameraParams,
+                128  // feature dimension
+            );
+
+            // DINOv2から抽出したID embeddingを使用
+            this.idEmbedding = idEmbedding;
+
             const templateOutput = await this.templateDecoder.generate(
                 projectionFeature,
                 this.idEmbedding
