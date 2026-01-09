@@ -5,7 +5,8 @@ import { GSViewer } from './gs';
 import { VRMManager } from './vrm';
 import { NeuralRefiner } from './neural-refiner';
 import { TemplateDecoder } from './template-decoder';
-import { ImageEncoder, CameraParams } from './image-encoder';
+import { ImageEncoder } from './image-encoder';
+import type { CameraParams } from './image-encoder';
 import { WebGLDisplay } from './webgl-display';
 
 export class GVRM {
