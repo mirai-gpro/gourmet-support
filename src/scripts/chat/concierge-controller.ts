@@ -1,17 +1,24 @@
-
-
 // src/scripts/chat/concierge-controller.ts
 import { CoreController } from './core-controller';
 import { AudioManager } from './audio-manager';
+// ★追加: 3Dアバターレンダラーのインポート
+import { GVRM } from '../../gvrm-format/gvrm';
 
 declare const io: any;
 
 export class ConciergeController extends CoreController {
   
+  // ★追加: GUAVA関連のプロパティ
+  private guavaRenderer: GVRM | null = null;
+  private analysisContext: AudioContext | null = null;
+  private audioAnalyser: AnalyserNode | null = null;
+  private analysisSource: MediaElementAudioSourceNode | null = null;
+  private animationFrameId: number | null = null;
+
   constructor(container: HTMLElement, apiBase: string) {
     super(container, apiBase);
     
-    // ★コンシェルジュモード用のAudioManagerを6.5秒設定で再初期化２
+    // ★コンシェルジュモード用のAudioManagerを再初期化 (沈黙検知時間を長めに設定)
     this.audioManager = new AudioManager(8000);
     
     // コンシェルジュモードに設定
@@ -26,10 +33,35 @@ export class ConciergeController extends CoreController {
     
     // コンシェルジュ固有の要素とイベントを追加
     const query = (sel: string) => this.container.querySelector(sel) as HTMLElement;
-    this.els.avatarContainer = query('.avatar-container');
-    this.els.avatarImage = query('#avatarImage') as HTMLImageElement;
+    
+    // ★修正: アバターコンテナの取得 (Concierge.astroの変更に対応)
+    this.els.avatarContainer = query('#avatar3DContainer'); 
     this.els.modeSwitch = query('#modeSwitch') as HTMLInputElement;
     
+    // ★追加: GUAVAレンダラーの初期化
+    if (this.els.avatarContainer) {
+      this.guavaRenderer = new GVRM(this.els.avatarContainer);
+      
+      try {
+        // ★修正: 画像パスも正しく指定
+        const success = await this.guavaRenderer.loadAssets('/assets/avatar_24p.ply', '/assets/source.png');
+        
+        if (success) {
+          // 読み込み成功時: フォールバック画像を非表示に
+          this.els.avatarContainer.classList.add('loaded');
+          const fallback = document.getElementById('avatarFallback');
+          if (fallback) fallback.style.display = 'none';
+        } else {
+          // 読み込み失敗時: フォールバック画像を表示
+          console.warn('[GVRM] Asset loading failed, using fallback image');
+          this.els.avatarContainer.classList.add('fallback');
+        }
+      } catch (error) {
+        console.error('[GVRM] Initialization error:', error);
+        this.els.avatarContainer.classList.add('fallback');
+      }
+    }
+
     // モードスイッチのイベントリスナー追加
     if (this.els.modeSwitch) {
       this.els.modeSwitch.addEventListener('change', () => {
@@ -39,7 +71,7 @@ export class ConciergeController extends CoreController {
   }
 
   // ========================================
-  // 🎯 セッション初期化をオーバーライド(挨拶文を変更)
+  // 🎯 セッション初期化をオーバーライド
   // ========================================
   protected async initializeSession() {
     try {
@@ -53,7 +85,7 @@ export class ConciergeController extends CoreController {
         } catch (e) {}
       }
 
-      // ★ user_id を取得（親クラスのメソッドを使用）
+      // 親クラスのgetUserIdを使用
       const userId = this.getUserId();
 
       const res = await fetch(`${this.apiBase}/api/session/start`, {
@@ -68,7 +100,6 @@ export class ConciergeController extends CoreController {
       const data = await res.json();
       this.sessionId = data.session_id;
 
-      // ✅ バックエンドからの初回メッセージを使用（長期記憶対応）
       const greetingText = data.initial_message || this.t('initialGreetingConcierge');
       this.addMessage('assistant', greetingText, null, true);
       
@@ -120,12 +151,11 @@ export class ConciergeController extends CoreController {
     
     this.socket.on('connect', () => { });
     
-    // ✅ コンシェルジュ版のhandleStreamingSTTCompleteを呼ぶように再登録
     this.socket.on('transcript', (data: any) => {
       const { text, is_final } = data;
       if (this.isAISpeaking) return;
       if (is_final) {
-        this.handleStreamingSTTComplete(text); // ← オーバーライド版が呼ばれる
+        this.handleStreamingSTTComplete(text);
         this.currentAISpeech = "";
       } else {
         this.els.userInput.value = text;
@@ -138,24 +168,108 @@ export class ConciergeController extends CoreController {
     });
   }
 
-  // コンシェルジュモード固有: アバターアニメーション制御
+  // ========================================
+  // 👄 GUAVA連携: 音声再生とリップシンク
+  // ========================================
+  
+  // ★オーバーライド: 音声再生時にリップシンク解析を仕込む
   protected async speakTextGCP(text: string, stopPrevious: boolean = true, autoRestartMic: boolean = false, skipAudio: boolean = false) {
     if (skipAudio || !this.isTTSEnabled || !text) return Promise.resolve();
 
     if (stopPrevious) {
-      this.ttsPlayer.pause();
+      this.stopCurrentAudio();
     }
     
-    // アバターアニメーションを開始
+    // ★GUAVA: リップシンク用のオーディオ解析をセットアップ
+    this.setupAudioAnalysis();
+
+    // ★GUAVA: 待機アニメーションなどを制御
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.add('speaking');
     }
     
-    // 親クラスのTTS処理を実行
+    // 親クラスのTTS処理を実行 (this.ttsPlayer.play() が呼ばれる)
     await super.speakTextGCP(text, stopPrevious, autoRestartMic, skipAudio);
     
-    // アバターアニメーションを停止
+    // 再生終了後
     this.stopAvatarAnimation();
+  }
+
+  // ★追加: 音声解析のセットアップ
+  private setupAudioAnalysis() {
+    if (!this.guavaRenderer) return;
+
+    // AudioContextの作成（初回のみ）
+    if (!this.analysisContext) {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      this.analysisContext = new AudioContextClass();
+    }
+
+    // ユーザー操作後なのでresumeを試みる
+    if (this.analysisContext.state === 'suspended') {
+      this.analysisContext.resume().catch(e => console.log('AudioContext resume failed:', e));
+    }
+
+    // AnalyserNodeの作成
+    if (!this.audioAnalyser) {
+      this.audioAnalyser = this.analysisContext.createAnalyser();
+      this.audioAnalyser.fftSize = 256; // サイズは調整可能
+    }
+
+    // MediaElementSourceの接続（初回のみ）
+    if (!this.analysisSource && this.ttsPlayer) {
+      try {
+        
+        this.analysisSource = this.analysisContext.createMediaElementSource(this.ttsPlayer);
+        this.analysisSource.connect(this.audioAnalyser);
+        this.audioAnalyser.connect(this.analysisContext.destination);
+      } catch (e) {
+        console.warn('MediaElementSource connection error:', e);
+        // エラー時はリップシンク無効で再生だけ続ける
+      }
+    }
+
+    // リップシンクループ開始
+    this.startLipSyncLoop();
+  }
+
+  // ★追加: リップシンクループ
+  private startLipSyncLoop() {
+    if (this.animationFrameId) cancelAnimationFrame(this.animationFrameId);
+
+    const update = () => {
+      // 再生停止中または終了時は口を閉じる
+      if (this.ttsPlayer.paused || this.ttsPlayer.ended) {
+        this.guavaRenderer?.updateLipSync(0);
+        
+        if (this.ttsPlayer.ended) {
+           this.animationFrameId = null;
+           return; 
+        }
+      }
+
+      if (this.audioAnalyser && this.guavaRenderer && !this.ttsPlayer.paused) {
+        const dataArray = new Uint8Array(this.audioAnalyser.frequencyBinCount);
+        this.audioAnalyser.getByteFrequencyData(dataArray);
+        
+        // 音量（振幅）の平均を計算
+        let sum = 0;
+        const range = dataArray.length; 
+        for (let i = 0; i < range; i++) {
+          sum += dataArray[i];
+        }
+        const average = sum / range;
+        
+        // 0.0 ~ 1.0 に正規化し、感度を調整
+        const normalizedLevel = Math.min(1.0, (average / 255.0) * 2.5);
+
+        this.guavaRenderer.updateLipSync(normalizedLevel);
+      }
+      
+      this.animationFrameId = requestAnimationFrame(update);
+    };
+
+    this.animationFrameId = requestAnimationFrame(update);
   }
 
   // アバターアニメーション停止
@@ -163,19 +277,30 @@ export class ConciergeController extends CoreController {
     if (this.els.avatarContainer) {
       this.els.avatarContainer.classList.remove('speaking');
     }
+    // 口を閉じる
+    this.guavaRenderer?.updateLipSync(0);
+    if (this.animationFrameId) {
+      cancelAnimationFrame(this.animationFrameId);
+      this.animationFrameId = null;
+    }
   }
 
   // ========================================
-  // 🎯 UI言語更新をオーバーライド(挨拶文をコンシェルジュ用に)
+  // 🎯 UI言語更新をオーバーライド
   // ========================================
   protected updateUILanguage() {
-    // 親クラスのupdateUILanguageを実行
-    super.updateUILanguage();
-    
-    // ✅ 初期メッセージをコンシェルジュ用に再設定
     const initialMessage = this.els.chatArea.querySelector('.message.assistant[data-initial="true"] .message-text');
-    if (initialMessage) {
-      initialMessage.textContent = this.t('initialGreetingConcierge');
+    const savedGreeting = initialMessage?.textContent;
+
+    super.updateUILanguage();
+
+    if (initialMessage && savedGreeting) {
+      initialMessage.textContent = savedGreeting;
+    }
+
+    const pageTitle = document.getElementById('pageTitle');
+    if (pageTitle) {
+      pageTitle.innerHTML = `<img src="/pwa-152x152.png" alt="Logo" class="app-logo" /> ${this.t('pageTitleConcierge')}`;
     }
   }
 
@@ -183,14 +308,12 @@ export class ConciergeController extends CoreController {
   private toggleMode() {
     const isChecked = this.els.modeSwitch?.checked;
     if (!isChecked) {
-      // チャットモードへページ遷移
       console.log('[ConciergeController] Switching to Chat mode...');
       window.location.href = '/';
     }
-    // コンシェルジュモードは既に現在のページなので何もしない
   }
 
-  // すべての活動を停止(アバターアニメーションも含む)
+  // すべての活動を停止
   protected stopAllActivities() {
     super.stopAllActivities();
     this.stopAvatarAnimation();
@@ -199,27 +322,17 @@ export class ConciergeController extends CoreController {
   // ========================================
   // 🎯 並行処理フロー: 応答を分割してTTS処理
   // ========================================
-
-  /**
-   * センテンス単位でテキストを分割
-   * 日本語: 。で分割
-   * 英語・韓国語: . で分割
-   * 中国語: 。で分割
-   */
   private splitIntoSentences(text: string, language: string): string[] {
     let separator: RegExp;
 
     if (language === 'ja' || language === 'zh') {
-      // 日本語・中国語: 。で分割
       separator = /。/;
     } else {
-      // 英語・韓国語: . で分割
       separator = /\.\s+/;
     }
 
     const sentences = text.split(separator).filter(s => s.trim().length > 0);
 
-    // 分割したセンテンスに句点を戻す
     return sentences.map((s, idx) => {
       if (idx < sentences.length - 1 || text.endsWith('。') || text.endsWith('. ')) {
         return language === 'ja' || language === 'zh' ? s + '。' : s + '. ';
@@ -228,12 +341,7 @@ export class ConciergeController extends CoreController {
     });
   }
 
-  /**
-   * 応答を分割して並行処理でTTS生成・再生
-   * チャットモードのお店紹介フローを参考に実装
-   */
   private async speakResponseInChunks(response: string, isTextInput: boolean = false) {
-    // テキスト入力またはTTS無効の場合は従来通り
     if (isTextInput || !this.isTTSEnabled) {
       return this.speakTextGCP(response, true, false, isTextInput);
     }
@@ -243,29 +351,26 @@ export class ConciergeController extends CoreController {
       if (this.isRecording) {
         this.stopStreamingSTT();
       }
+      
+      // ★GUAVA: リップシンク準備
+      this.setupAudioAnalysis();
 
-      // センテンス分割
       const sentences = this.splitIntoSentences(response, this.currentLanguage);
 
-      // 1センテンスしかない場合は従来通り
       if (sentences.length <= 1) {
         await this.speakTextGCP(response, true, false, isTextInput);
         this.isAISpeaking = false;
         return;
       }
 
-      // 最初のセンテンスと残りのセンテンスに分割
       const firstSentence = sentences[0];
       const remainingSentences = sentences.slice(1).join('');
-
       const langConfig = this.LANGUAGE_CODE_MAP[this.currentLanguage];
 
-      // ★並行処理開始: 最初のセンテンスと残りのセンテンスを同時にTTS生成
       let firstSentenceAudioPromise: Promise<string | null> | null = null;
       let remainingAudioPromise: Promise<string | null> | null = null;
 
       if (this.isUserInteracted) {
-        // 最初のセンテンスのTTS生成（並行開始）
         firstSentenceAudioPromise = (async () => {
           const cleanText = this.stripMarkdown(firstSentence);
           const response = await fetch(`${this.apiBase}/api/tts/synthesize`, {
@@ -281,7 +386,6 @@ export class ConciergeController extends CoreController {
           return result.success ? `data:audio/mp3;base64,${result.audio}` : null;
         })();
 
-        // 残りのセンテンスのTTS生成（並行開始）
         if (remainingSentences.trim().length > 0) {
           remainingAudioPromise = (async () => {
             const cleanText = this.stripMarkdown(remainingSentences);
@@ -299,7 +403,6 @@ export class ConciergeController extends CoreController {
           })();
         }
 
-        // ★最初のセンテンスの音声が完成したらすぐに再生
         if (firstSentenceAudioPromise) {
           const firstSentenceAudio = await firstSentenceAudioPromise;
           if (firstSentenceAudio) {
@@ -308,6 +411,9 @@ export class ConciergeController extends CoreController {
 
             this.stopCurrentAudio();
             this.ttsPlayer.src = firstSentenceAudio;
+            
+            // ★GUAVA: 待機状態解除してリップシンク開始
+            this.startLipSyncLoop();
 
             await new Promise<void>((resolve) => {
               this.ttsPlayer.onended = () => {
@@ -320,17 +426,19 @@ export class ConciergeController extends CoreController {
               this.ttsPlayer.play();
             });
 
-            // ★残りのセンテンスの音声が完成したら続けて再生
             if (remainingAudioPromise) {
               const remainingAudio = await remainingAudioPromise;
               if (remainingAudio) {
                 const remainingText = this.stripMarkdown(remainingSentences);
                 this.lastAISpeech = this.normalizeText(remainingText);
 
-                await new Promise(r => setTimeout(r, 300)); // 短い間隔
+                await new Promise(r => setTimeout(r, 300));
 
                 this.stopCurrentAudio();
                 this.ttsPlayer.src = remainingAudio;
+                
+                // ★GUAVA: リップシンク継続
+                this.startLipSyncLoop();
 
                 await new Promise<void>((resolve) => {
                   this.ttsPlayer.onended = () => {
@@ -347,12 +455,12 @@ export class ConciergeController extends CoreController {
           }
         }
       }
-
+      
+      this.stopAvatarAnimation();
       this.isAISpeaking = false;
     } catch (error) {
       console.error('[TTS並行処理エラー]', error);
       this.isAISpeaking = false;
-      // エラー時はフォールバック
       await this.speakTextGCP(response, true, false, isTextInput);
     }
   }
@@ -370,7 +478,6 @@ export class ConciergeController extends CoreController {
     this.els.voiceStatus.innerHTML = this.t('voiceStatusComplete');
     this.els.voiceStatus.className = 'voice-status';
 
-    // オウム返し判定(エコーバック防止)
     const normTranscript = this.normalizeText(transcript);
     if (this.isSemanticEcho(normTranscript, this.lastAISpeech)) {
         this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped');
@@ -382,7 +489,6 @@ export class ConciergeController extends CoreController {
     this.els.userInput.value = transcript;
     this.addMessage('user', transcript);
     
-    // 短すぎる入力チェック
     const textLength = transcript.trim().replace(/\s+/g, '').length;
     if (textLength < 2) {
         const msg = this.t('shortMsgWarning');
@@ -398,14 +504,15 @@ export class ConciergeController extends CoreController {
         return;
     }
 
-    // ✅ 修正: 即答を「はい」だけに簡略化
-    const ackText = this.t('ackYes'); // 「はい」のみ
+    const ackText = this.t('ackYes');
     const preGeneratedAudio = this.preGeneratedAcks.get(ackText);
     
-    // 即答を再生
     let firstAckPromise: Promise<void> | null = null;
     if (preGeneratedAudio && this.isTTSEnabled && this.isUserInteracted) {
       firstAckPromise = new Promise<void>((resolve) => {
+        // ★GUAVA: リップシンク準備
+        this.setupAudioAnalysis();
+        
         this.lastAISpeech = this.normalizeText(ackText);
         this.ttsPlayer.src = `data:audio/mp3;base64,${preGeneratedAudio}`;
         this.ttsPlayer.onended = () => resolve();
@@ -417,12 +524,9 @@ export class ConciergeController extends CoreController {
     
     this.addMessage('assistant', ackText);
     
-    // ✅ 修正: オウム返しパターンを削除し、すぐにLLMへ送信
     (async () => {
       try {
         if (firstAckPromise) await firstAckPromise;
-        
-        // すぐにsendMessage()を実行
         if (this.els.userInput.value.trim()) {
           this.isFromVoiceInput = true;
           this.sendMessage();
@@ -456,7 +560,6 @@ export class ConciergeController extends CoreController {
     this.els.micBtn.disabled = true; 
     this.els.userInput.disabled = true;
 
-    // ✅ テキスト入力時も「はい」だけに簡略化
     if (!this.isFromVoiceInput) {
       this.addMessage('user', message);
       const textLength = message.trim().replace(/\s+/g, '').length;
@@ -470,7 +573,6 @@ export class ConciergeController extends CoreController {
       
       this.els.userInput.value = '';
       
-      // ✅ 修正: 即答を「はい」だけに
       const ackText = this.t('ackYes');
       this.currentAISpeech = ackText;
       this.addMessage('assistant', ackText);
@@ -480,6 +582,9 @@ export class ConciergeController extends CoreController {
           const preGeneratedAudio = this.preGeneratedAcks.get(ackText);
           if (preGeneratedAudio && this.isUserInteracted) {
             firstAckPromise = new Promise<void>((resolve) => {
+              // ★GUAVA: リップシンク準備
+              this.setupAudioAnalysis();
+              
               this.lastAISpeech = this.normalizeText(ackText);
               this.ttsPlayer.src = `data:audio/mp3;base64,${preGeneratedAudio}`;
               this.ttsPlayer.onended = () => resolve();
@@ -491,18 +596,13 @@ export class ConciergeController extends CoreController {
         } catch (_e) {}
       }   
       if (firstAckPromise) await firstAckPromise;
-      
-      // ✅ 修正: オウム返しパターンを削除
-      // (generateFallbackResponse, additionalResponse の呼び出しを削除)
     }
 
     this.isFromVoiceInput = false;
     
-    // ✅ 待機アニメーションは6.5秒後に表示(LLM送信直前にタイマースタート)
     if (this.waitOverlayTimer) clearTimeout(this.waitOverlayTimer);
     let responseReceived = false;
     
-    // タイマーセットをtry直前に移動(即答処理の後)
     this.waitOverlayTimer = window.setTimeout(() => { 
       if (!responseReceived) {
         this.showWaitOverlay(); 
@@ -522,13 +622,10 @@ export class ConciergeController extends CoreController {
         }) 
       });
       const data = await response.json();
-      
-      // ✅ レスポンス到着フラグを立てる
       responseReceived = true;
       
       if (this.sessionId !== currentSessionId) return;
       
-      // ✅ タイマーをクリアしてアニメーションを非表示
       if (this.waitOverlayTimer) {
         clearTimeout(this.waitOverlayTimer);
         this.waitOverlayTimer = null;
@@ -578,6 +675,7 @@ export class ConciergeController extends CoreController {
                 const preGeneratedIntro = this.preGeneratedAcks.get(introText);
               if (preGeneratedIntro) {
                 introPart2Promise = new Promise<void>((resolve) => {
+                  this.setupAudioAnalysis();
                   this.lastAISpeech = this.normalizeText(introText);
                   this.ttsPlayer.src = `data:audio/mp3;base64,${preGeneratedIntro}`;
                   this.ttsPlayer.onended = () => resolve();
@@ -636,7 +734,8 @@ export class ConciergeController extends CoreController {
                   this.stopCurrentAudio();
                 }
                 
-                this.ttsPlayer.src = firstShopAudio;                
+                this.ttsPlayer.src = firstShopAudio;     
+                this.setupAudioAnalysis();           
                 await new Promise<void>((resolve) => { 
                   this.ttsPlayer.onended = () => { 
                     this.els.voiceStatus.innerHTML = this.t('voiceStatusStopped'); 
@@ -659,7 +758,8 @@ export class ConciergeController extends CoreController {
                       this.stopCurrentAudio();
                     }
                     
-                    this.ttsPlayer.src = remainingAudio;                    
+                    this.ttsPlayer.src = remainingAudio;    
+                    this.setupAudioAnalysis();                
                     await new Promise<void>((resolve) => { 
                       this.ttsPlayer.onended = () => { 
                         this.els.voiceStatus.innerHTML = '🎤 音声認識: 停止中'; 
@@ -675,7 +775,11 @@ export class ConciergeController extends CoreController {
               }
             }
             this.isAISpeaking = false;
-          } catch (_e) { this.isAISpeaking = false; }
+            this.stopAvatarAnimation(); // 終了時に確実に止める
+          } catch (_e) { 
+            this.isAISpeaking = false; 
+            this.stopAvatarAnimation();
+          }
         })();
       } else {
         if (data.response) {
@@ -688,10 +792,8 @@ export class ConciergeController extends CoreController {
             }));
             const section = document.getElementById('shopListSection');
             if (section) section.classList.add('has-shops');
-            // ★並行処理フローを適用
             this.speakResponseInChunks(data.response, isTextInput);
           } else {
-            // ★並行処理フローを適用
             this.speakResponseInChunks(data.response, isTextInput);
           }
         }
