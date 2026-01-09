@@ -119,23 +119,23 @@ export class WebGLDisplay {
     const width = 512;
     const height = 512;
     const expectedLength = width * height * 3;
-    
+
     if (data.length !== expectedLength) {
       console.error(`[WebGLDisplay] Invalid data length: ${data.length}, expected: ${expectedLength}`);
       return;
     }
-    
+
     // データレイアウト変換
+    // Neural Refinerの出力はHWC形式（Height, Width, Channel）
     const pixels = new Float32Array(width * height * 4);
-    const rOffset = 0;
-    const gOffset = width * height;
-    const bOffset = width * height * 2;
-    
+
+    // HWC形式の場合: data[y * width * 3 + x * 3 + c]
     for (let i = 0; i < width * height; i++) {
-      pixels[i * 4 + 0] = data[rOffset + i];
-      pixels[i * 4 + 1] = data[gOffset + i];
-      pixels[i * 4 + 2] = data[bOffset + i];
-      pixels[i * 4 + 3] = 1.0;
+      const srcIdx = i * 3;
+      pixels[i * 4 + 0] = data[srcIdx + 0]; // R
+      pixels[i * 4 + 1] = data[srcIdx + 1]; // G
+      pixels[i * 4 + 2] = data[srcIdx + 2]; // B
+      pixels[i * 4 + 3] = 1.0;              // A
     }
     
     if (frameCount === 1) {
