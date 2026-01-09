@@ -55,9 +55,9 @@ export class ImageEncoder {
    */
   private async loadConvWeights(basePath: string): Promise<void> {
     try {
-      const response = await fetch(`${basePath}/encoder_conv.bin`);
+      const response = await fetch(`${basePath}/vertex_base_feature.bin`);
       if (!response.ok) {
-        console.warn('[ImageEncoder] encoder_conv.bin not found, using bilinear upsampling');
+        console.warn('[ImageEncoder] vertex_base_feature.bin not found, using bilinear upsampling');
         return;
       }
       const buffer = await response.arrayBuffer();
