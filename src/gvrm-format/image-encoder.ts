@@ -168,6 +168,7 @@ export class ImageEncoder {
   /**
    * 3D頂点を2Dスクリーン座標に投影
    * GUAVA Eq.2: P(v^i, RT_s)
+   * @returns [screenX, screenY, depth, clipW] - clipW > 0 means vertex is in front of camera
    */
   private projectVertex(
     vx: number, vy: number, vz: number,
@@ -175,7 +176,7 @@ export class ImageEncoder {
     projMatrix: Float32Array,
     screenWidth: number,
     screenHeight: number
-  ): [number, number, number] {
+  ): [number, number, number, number] {
     // View transform (column-major)
     const viewX = viewMatrix[0] * vx + viewMatrix[4] * vy + viewMatrix[8] * vz + viewMatrix[12];
     const viewY = viewMatrix[1] * vx + viewMatrix[5] * vy + viewMatrix[9] * vz + viewMatrix[13];
@@ -189,15 +190,17 @@ export class ImageEncoder {
     const clipW = projMatrix[3] * viewX + projMatrix[7] * viewY + projMatrix[11] * viewZ + projMatrix[15] * viewW;
 
     // Perspective division → NDC
-    const ndcX = clipX / clipW;
-    const ndcY = clipY / clipW;
-    const depth = clipZ / clipW;
+    // Note: clipW can be <= 0 for vertices behind the camera
+    const safeW = Math.abs(clipW) > 1e-6 ? clipW : 1e-6;
+    const ndcX = clipX / safeW;
+    const ndcY = clipY / safeW;
+    const depth = clipZ / safeW;
 
     // NDC → スクリーン座標
     const screenX = (ndcX * 0.5 + 0.5) * screenWidth;
     const screenY = (1.0 - (ndcY * 0.5 + 0.5)) * screenHeight; // Y軸反転
 
-    return [screenX, screenY, depth];
+    return [screenX, screenY, depth, clipW];
   }
 
   /**
@@ -265,6 +268,8 @@ export class ImageEncoder {
     const projectionFeatures = new Float32Array(vertexCount * featureDim);
 
     let visibleCount = 0;
+    let behindCamera = 0;
+    let outsideScreen = 0;
 
     for (let i = 0; i < vertexCount; i++) {
       const vx = vertices[i * 3];
@@ -272,7 +277,7 @@ export class ImageEncoder {
       const vz = vertices[i * 3 + 2];
 
       // 頂点をスクリーン座標に投影
-      const [screenX, screenY, depth] = this.projectVertex(
+      const [screenX, screenY, depth, clipW] = this.projectVertex(
         vx, vy, vz,
         camera.viewMatrix,
         camera.projMatrix,
@@ -280,17 +285,25 @@ export class ImageEncoder {
         mapHeight
       );
 
-      // 可視性チェック（画面内かつ前面）
-      const isVisible =
-        screenX >= 0 && screenX < mapWidth &&
-        screenY >= 0 && screenY < mapHeight &&
-        depth > 0 && depth < 1;
+      // 可視性チェック:
+      // 1. clipW > 0: 頂点がカメラの前にある（Three.js/OpenGLでは-Zが前方向、clipW = -viewZ）
+      // 2. NDC depth in [-1, 1]: OpenGLの標準NDC範囲
+      // 3. スクリーン座標が画面内
+      const isInFront = clipW > 0;
+      const isInNDCRange = depth >= -1 && depth <= 1;
+      const isInScreen = screenX >= 0 && screenX < mapWidth &&
+                         screenY >= 0 && screenY < mapHeight;
+
+      const isVisible = isInFront && isInNDCRange && isInScreen;
 
       if (isVisible) {
         visibleCount++;
+      } else {
+        if (!isInFront) behindCamera++;
+        else if (!isInScreen) outsideScreen++;
       }
 
-      // Feature mapからサンプリング
+      // Feature mapからサンプリング（可視でなくてもサンプリングは行う）
       this.sampleFeatureMapAt(
         featureMap,
         mapWidth,
@@ -304,6 +317,10 @@ export class ImageEncoder {
     }
 
     console.log('[ImageEncoder] Visible vertices:', visibleCount, '/', vertexCount);
+    if (visibleCount === 0) {
+      console.warn('[ImageEncoder] ⚠️ No visible vertices! Check camera parameters.');
+      console.warn('[ImageEncoder] Behind camera:', behindCamera, ', Outside screen:', outsideScreen);
+    }
 
     return projectionFeatures;
   }
@@ -378,20 +395,22 @@ export class ImageEncoder {
       });
 
       // 4. Appearance Feature Map Fa を生成（DINOv2 → Conv → Fa）
+      // GUAVA論文は512x512を使用。メモリ効率のため固定サイズを使用
+      const FEATURE_MAP_SIZE = 256; // 256x256で十分な解像度
       const featureMap = this.createAppearanceFeatureMap(
         patchData,
         numPatches,
         patchDim,
-        image.width,
-        image.height,
+        FEATURE_MAP_SIZE,
+        FEATURE_MAP_SIZE,
         featureDim
       );
 
       // 5. Projection Sampling: f_p^i = S(F_a, P(v^i, RT_s))
       const projectionFeature = this.projectionSampling(
         featureMap,
-        image.width,
-        image.height,
+        FEATURE_MAP_SIZE,
+        FEATURE_MAP_SIZE,
         featureDim,
         vertices,
         vertexCount,
