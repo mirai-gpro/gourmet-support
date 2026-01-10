@@ -90,6 +90,9 @@ export class GVRM {
             const templateVertices = geometryDataForEncoder.vTemplate;
 
             // カメラ行列を更新（投影用）
+            // ImageEncoder用に1:1アスペクト比で射影行列を再計算
+            const originalAspect = this.camera.aspect;
+            this.camera.aspect = 1.0;  // 1:1 aspect for feature map
             this.camera.updateMatrixWorld();
             this.camera.updateProjectionMatrix();
 
@@ -97,9 +100,13 @@ export class GVRM {
             // カメラパラメータをImageEncoderに渡す
             const cameraParams: CameraParams = this.imageEncoder.createCameraFromThree(
                 this.camera,
-                512,  // source.pngの想定サイズ
-                512
+                256,  // feature map size
+                256
             );
+
+            // アスペクト比を元に戻す
+            this.camera.aspect = originalAspect;
+            this.camera.updateProjectionMatrix();
 
             // 新しいAPI: 頂点とカメラ行列を使ってProjection Sampling
             const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeatures(
