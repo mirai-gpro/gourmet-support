@@ -265,6 +265,16 @@ export class ImageEncoder {
       mapSize: `${mapWidth}x${mapHeight}`
     });
 
+    // デバッグ: カメラ行列の情報
+    console.log('[ImageEncoder] View matrix diagonal:',
+      camera.viewMatrix[0].toFixed(3), camera.viewMatrix[5].toFixed(3),
+      camera.viewMatrix[10].toFixed(3), camera.viewMatrix[15].toFixed(3));
+    console.log('[ImageEncoder] View matrix translation:',
+      camera.viewMatrix[12].toFixed(3), camera.viewMatrix[13].toFixed(3),
+      camera.viewMatrix[14].toFixed(3));
+    console.log('[ImageEncoder] Proj matrix [0,0], [1,1]:',
+      camera.projMatrix[0].toFixed(3), camera.projMatrix[5].toFixed(3));
+
     // デバッグ: 頂点座標の範囲を確認
     let minVx = Infinity, maxVx = -Infinity;
     let minVy = Infinity, maxVy = -Infinity;
@@ -277,11 +287,9 @@ export class ImageEncoder {
       minVy = Math.min(minVy, vy); maxVy = Math.max(maxVy, vy);
       minVz = Math.min(minVz, vz); maxVz = Math.max(maxVz, vz);
     }
-    console.log('[ImageEncoder] Vertex bounds:', {
-      x: [minVx.toFixed(3), maxVx.toFixed(3)],
-      y: [minVy.toFixed(3), maxVy.toFixed(3)],
-      z: [minVz.toFixed(3), maxVz.toFixed(3)]
-    });
+    console.log('[ImageEncoder] Vertex bounds: X=[' + minVx.toFixed(3) + ', ' + maxVx.toFixed(3) +
+      '], Y=[' + minVy.toFixed(3) + ', ' + maxVy.toFixed(3) +
+      '], Z=[' + minVz.toFixed(3) + ', ' + maxVz.toFixed(3) + ']');
 
     const projectionFeatures = new Float32Array(vertexCount * featureDim);
 
@@ -289,10 +297,12 @@ export class ImageEncoder {
     let behindCamera = 0;
     let outsideScreen = 0;
 
-    // デバッグ: スクリーン座標の範囲を追跡
+    // デバッグ: スクリーン座標とNDCの範囲を追跡
     let minSx = Infinity, maxSx = -Infinity;
     let minSy = Infinity, maxSy = -Infinity;
     let minDepth = Infinity, maxDepth = -Infinity;
+    let minNdcX = Infinity, maxNdcX = -Infinity;
+    let minNdcY = Infinity, maxNdcY = -Infinity;
 
     for (let i = 0; i < vertexCount; i++) {
       const vx = vertices[i * 3];
@@ -313,6 +323,11 @@ export class ImageEncoder {
         minSx = Math.min(minSx, screenX); maxSx = Math.max(maxSx, screenX);
         minSy = Math.min(minSy, screenY); maxSy = Math.max(maxSy, screenY);
         minDepth = Math.min(minDepth, depth); maxDepth = Math.max(maxDepth, depth);
+        // NDCを逆算
+        const ndcX = (screenX / mapWidth - 0.5) * 2;
+        const ndcY = ((1 - screenY / mapHeight) - 0.5) * 2;
+        minNdcX = Math.min(minNdcX, ndcX); maxNdcX = Math.max(maxNdcX, ndcX);
+        minNdcY = Math.min(minNdcY, ndcY); maxNdcY = Math.max(maxNdcY, ndcY);
       }
 
       // 可視性チェック:
@@ -346,11 +361,11 @@ export class ImageEncoder {
       );
     }
 
-    console.log('[ImageEncoder] Screen coord bounds:', {
-      x: [minSx.toFixed(1), maxSx.toFixed(1)],
-      y: [minSy.toFixed(1), maxSy.toFixed(1)],
-      depth: [minDepth.toFixed(3), maxDepth.toFixed(3)]
-    });
+    console.log('[ImageEncoder] Screen coord bounds: X=[' + minSx.toFixed(1) + ', ' + maxSx.toFixed(1) +
+      '], Y=[' + minSy.toFixed(1) + ', ' + maxSy.toFixed(1) +
+      '], depth=[' + minDepth.toFixed(3) + ', ' + maxDepth.toFixed(3) + ']');
+    console.log('[ImageEncoder] NDC bounds: X=[' + minNdcX.toFixed(3) + ', ' + maxNdcX.toFixed(3) +
+      '], Y=[' + minNdcY.toFixed(3) + ', ' + maxNdcY.toFixed(3) + ']');
     console.log('[ImageEncoder] Visible vertices:', visibleCount, '/', vertexCount);
     if (visibleCount === 0) {
       console.warn('[ImageEncoder] ⚠️ No visible vertices! Check camera parameters.');
