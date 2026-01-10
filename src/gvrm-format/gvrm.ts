@@ -90,13 +90,23 @@ export class GVRM {
 
             console.log('[GVRM] Using source camera projection with', TEMPLATE_VERTEX_COUNT, 'vertices');
 
-            // ソースカメラ設定を使用した特徴抽出（GUAVA論文準拠）
-            // /assets/source_camera.json にカメラパラメータを設定
-            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeaturesWithSourceCamera(
+            // ソースカメラ設定をロード
+            const sourceCameraResponse = await fetch('/assets/source_camera.json');
+            const sourceCameraData = await sourceCameraResponse.json();
+
+            // CameraParamsオブジェクトを作成
+            const sourceCamera = {
+                viewMatrix: new Float32Array(sourceCameraData.viewMatrix),
+                projMatrix: new Float32Array(sourceCameraData.projMatrix),
+                screenWidth: sourceCameraData.screenWidth || 224,
+                screenHeight: sourceCameraData.screenHeight || 224
+            };
+
+            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeatures(
                 '/assets/source.png',
-                '/assets/source_camera.json',
                 templateVertices,
                 TEMPLATE_VERTEX_COUNT,
+                sourceCamera,
                 128  // feature dimension
             );
 
