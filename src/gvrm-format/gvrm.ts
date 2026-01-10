@@ -5,7 +5,7 @@ import { GSViewer } from './gs';
 import { VRMManager } from './vrm';
 import { NeuralRefiner } from './neural-refiner';
 import { TemplateDecoder } from './template-decoder';
-import { ImageEncoder } from './image-encoder';
+import { ImageEncoder, SourceCameraConfig } from './image-encoder';
 import { WebGLDisplay } from './webgl-display';
 
 export class GVRM {
@@ -90,23 +90,22 @@ export class GVRM {
 
             console.log('[GVRM] Using source camera projection with', TEMPLATE_VERTEX_COUNT, 'vertices');
 
-            // ソースカメラ設定をロード
+            // ソースカメラ設定をロード（position/target/fov形式）
             const sourceCameraResponse = await fetch('/assets/source_camera.json');
-            const sourceCameraData = await sourceCameraResponse.json();
+            const sourceCameraConfig: SourceCameraConfig = await sourceCameraResponse.json();
 
-            // CameraParamsオブジェクトを作成
-            const sourceCamera = {
-                viewMatrix: new Float32Array(sourceCameraData.viewMatrix),
-                projMatrix: new Float32Array(sourceCameraData.projMatrix),
-                screenWidth: sourceCameraData.screenWidth || 224,
-                screenHeight: sourceCameraData.screenHeight || 224
-            };
+            console.log('[GVRM] Source camera config loaded:', {
+                position: sourceCameraConfig.position,
+                target: sourceCameraConfig.target,
+                fov: sourceCameraConfig.fov
+            });
 
-            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeatures(
+            // extractFeaturesWithSourceCameraを使用（カメラ行列は内部で構築）
+            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeaturesWithSourceCamera(
                 '/assets/source.png',
+                sourceCameraConfig,
                 templateVertices,
                 TEMPLATE_VERTEX_COUNT,
-                sourceCamera,
                 128  // feature dimension
             );
 
@@ -117,60 +116,115 @@ export class GVRM {
                 projectionFeature,
                 this.idEmbedding
             );
-            
+
             console.log('[GVRM] Template Decoder output:', {
                 latent32ch: templateOutput.latent32ch.length,
-                expectedLength: TEMPLATE_VERTEX_COUNT * 32
+                opacity: templateOutput.opacity.length,
+                scale: templateOutput.scale.length,
+                rotation: templateOutput.rotation.length,
+                expectedLatentLength: TEMPLATE_VERTEX_COUNT * 32
             });
-            
+
+            // PLY頂点用の配列を作成
             const latents = new Float32Array(plyVertexCount * 32);
-            
-            const geometryData = this.templateDecoder.getGeometryData();
-            if (!geometryData) {
-                throw new Error('Failed to get geometry data from Template Decoder');
-            }
-            
-            const templatePositions = geometryData.vTemplate;
-            
-            for (let i = 0; i < plyVertexCount; i++) {
-                const px = data.positions[i * 3];
-                const py = data.positions[i * 3 + 1];
-                const pz = data.positions[i * 3 + 2];
-                
-                let minDist = Infinity;
-                let nearestIdx = 0;
-                
-                for (let j = 0; j < TEMPLATE_VERTEX_COUNT; j++) {
-                    const tx = templatePositions[j * 3];
-                    const ty = templatePositions[j * 3 + 1];
-                    const tz = templatePositions[j * 3 + 2];
-                    
-                    const dist = (px - tx) ** 2 + (py - ty) ** 2 + (pz - tz) ** 2;
-                    
-                    if (dist < minDist) {
-                        minDist = dist;
-                        nearestIdx = j;
-                    }
+            const opacity = new Float32Array(plyVertexCount);
+            const scale = new Float32Array(plyVertexCount * 3);
+            const rotation = new Float32Array(plyVertexCount * 4);
+
+            // 事前計算された頂点マッピングを読み込み（O(N²) → O(N)に最適化）
+            console.log('[GVRM] Loading pre-computed vertex mapping...');
+            const mappingStartTime = performance.now();
+
+            let vertexMapping: number[];
+            try {
+                const mappingResponse = await fetch('/assets/vertex_mapping.json');
+                if (mappingResponse.ok) {
+                    const mappingData = await mappingResponse.json();
+                    vertexMapping = mappingData.mapping;
+                    console.log('[GVRM] ✅ Pre-computed mapping loaded:', {
+                        plyVertexCount: mappingData.plyVertexCount,
+                        templateVertexCount: mappingData.templateVertexCount
+                    });
+                } else {
+                    throw new Error('Mapping file not found');
                 }
-                
+            } catch (e) {
+                // フォールバック: ランタイムで計算（遅い）
+                console.warn('[GVRM] ⚠️ Pre-computed mapping not found, computing at runtime (slow)...');
+                const geometryData = this.templateDecoder.getGeometryData();
+                if (!geometryData) {
+                    throw new Error('Failed to get geometry data from Template Decoder');
+                }
+                const templatePositions = geometryData.vTemplate;
+
+                vertexMapping = new Array(plyVertexCount);
+                for (let i = 0; i < plyVertexCount; i++) {
+                    const px = data.positions[i * 3];
+                    const py = data.positions[i * 3 + 1];
+                    const pz = data.positions[i * 3 + 2];
+
+                    let minDist = Infinity;
+                    let nearestIdx = 0;
+
+                    for (let j = 0; j < TEMPLATE_VERTEX_COUNT; j++) {
+                        const tx = templatePositions[j * 3];
+                        const ty = templatePositions[j * 3 + 1];
+                        const tz = templatePositions[j * 3 + 2];
+
+                        const dist = (px - tx) ** 2 + (py - ty) ** 2 + (pz - tz) ** 2;
+
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearestIdx = j;
+                        }
+                    }
+                    vertexMapping[i] = nearestIdx;
+                }
+            }
+
+            const mappingElapsed = performance.now() - mappingStartTime;
+            console.log(`[GVRM] Vertex mapping ready in ${mappingElapsed.toFixed(2)}ms`);
+
+            // マッピングを使用してTemplate Decoder出力をPLY頂点に転写（O(N)）
+            for (let i = 0; i < plyVertexCount; i++) {
+                const nearestIdx = vertexMapping[i];
+
+                // latent32ch [32 per vertex]
                 for (let ch = 0; ch < 32; ch++) {
                     latents[i * 32 + ch] = templateOutput.latent32ch[nearestIdx * 32 + ch];
                 }
+
+                // opacity [1 per vertex]
+                opacity[i] = templateOutput.opacity[nearestIdx];
+
+                // scale [3 per vertex]
+                for (let s = 0; s < 3; s++) {
+                    scale[i * 3 + s] = templateOutput.scale[nearestIdx * 3 + s];
+                }
+
+                // rotation [4 per vertex]
+                for (let r = 0; r < 4; r++) {
+                    rotation[i * 4 + r] = templateOutput.rotation[nearestIdx * 4 + r];
+                }
             }
-            
+
             console.log('[GVRM] Mapped template features to PLY vertices:', {
                 plyVertexCount,
                 latentsLength: latents.length,
-                expectedLength: plyVertexCount * 32
+                opacityLength: opacity.length,
+                scaleLength: scale.length
             });
-            
+
+            // GSViewer作成（Gaussian属性付き）
             this.viewer = new GSViewer({
                 positions: data.positions,
-                colors: data.colors,
+                latents,
+                opacity,
+                scale,
+                rotation,
                 boneIndices: data.boneIndices,
                 boneWeights: data.boneWeights,
-                vertexCount: plyVertexCount,
-                latents
+                vertexCount: plyVertexCount
             });
             this.scene.add(this.viewer.mesh);
             
