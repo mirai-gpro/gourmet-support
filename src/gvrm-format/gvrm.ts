@@ -5,7 +5,7 @@ import { GSViewer } from './gs';
 import { VRMManager } from './vrm';
 import { NeuralRefiner } from './neural-refiner';
 import { TemplateDecoder } from './template-decoder';
-import { ImageEncoder, CameraParams } from './image-encoder';
+import { ImageEncoder } from './image-encoder';
 import { WebGLDisplay } from './webgl-display';
 
 export class GVRM {
@@ -81,31 +81,22 @@ export class GVRM {
             
             console.log('[GVRM] Extracting features from source image...');
 
-            // テンプレート頂点を取得（ポーズ空間）
+            // テンプレートジオメトリデータを取得
             const geometryDataForEncoder = this.templateDecoder.getGeometryData();
             if (!geometryDataForEncoder) {
                 throw new Error('Failed to get geometry data for Image Encoder');
             }
             const templateVertices = geometryDataForEncoder.vTemplate;
 
-            // カメラ行列を更新（投影用）
-            this.camera.updateMatrixWorld();
-            this.camera.updateProjectionMatrix();
+            console.log('[GVRM] Using source camera projection with', TEMPLATE_VERTEX_COUNT, 'vertices');
 
-            // GUAVA論文に基づくProjection Sampling
-            // カメラパラメータをImageEncoderに渡す
-            const cameraParams: CameraParams = this.imageEncoder.createCameraFromThree(
-                this.camera,
-                512,  // source.pngの想定サイズ
-                512
-            );
-
-            // 新しいAPI: 頂点とカメラ行列を使ってProjection Sampling
-            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeatures(
+            // ソースカメラ設定を使用した特徴抽出（GUAVA論文準拠）
+            // /assets/source_camera.json にカメラパラメータを設定
+            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeaturesWithSourceCamera(
                 '/assets/source.png',
+                '/assets/source_camera.json',
                 templateVertices,
                 TEMPLATE_VERTEX_COUNT,
-                cameraParams,
                 128  // feature dimension
             );
 

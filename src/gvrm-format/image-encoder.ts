@@ -14,6 +14,14 @@ export interface CameraParams {
   screenHeight: number;
 }
 
+export interface SourceCameraConfig {
+  position: { x: number; y: number; z: number };
+  target: { x: number; y: number; z: number };
+  fov: number;
+  imageWidth: number;
+  imageHeight: number;
+}
+
 export class ImageEncoder {
   private model: any = null;
   private processor: any = null;
@@ -55,9 +63,9 @@ export class ImageEncoder {
    */
   private async loadConvWeights(basePath: string): Promise<void> {
     try {
-      const response = await fetch(`${basePath}/encoder_conv.bin`);
+      const response = await fetch(`${basePath}/vertex_base_feature.bin`);
       if (!response.ok) {
-        console.warn('[ImageEncoder] encoder_conv.bin not found, using bilinear upsampling');
+        console.warn('[ImageEncoder] vertex_base_feature.bin not found, using bilinear upsampling');
         return;
       }
       const buffer = await response.arrayBuffer();
@@ -168,6 +176,7 @@ export class ImageEncoder {
   /**
    * 3D頂点を2Dスクリーン座標に投影
    * GUAVA Eq.2: P(v^i, RT_s)
+   * @returns [screenX, screenY, depth, clipW] - clipW > 0 means vertex is in front of camera
    */
   private projectVertex(
     vx: number, vy: number, vz: number,
@@ -175,7 +184,7 @@ export class ImageEncoder {
     projMatrix: Float32Array,
     screenWidth: number,
     screenHeight: number
-  ): [number, number, number] {
+  ): [number, number, number, number] {
     // View transform (column-major)
     const viewX = viewMatrix[0] * vx + viewMatrix[4] * vy + viewMatrix[8] * vz + viewMatrix[12];
     const viewY = viewMatrix[1] * vx + viewMatrix[5] * vy + viewMatrix[9] * vz + viewMatrix[13];
@@ -189,15 +198,17 @@ export class ImageEncoder {
     const clipW = projMatrix[3] * viewX + projMatrix[7] * viewY + projMatrix[11] * viewZ + projMatrix[15] * viewW;
 
     // Perspective division → NDC
-    const ndcX = clipX / clipW;
-    const ndcY = clipY / clipW;
-    const depth = clipZ / clipW;
+    // Note: clipW can be <= 0 for vertices behind the camera
+    const safeW = Math.abs(clipW) > 1e-6 ? clipW : 1e-6;
+    const ndcX = clipX / safeW;
+    const ndcY = clipY / safeW;
+    const depth = clipZ / safeW;
 
     // NDC → スクリーン座標
     const screenX = (ndcX * 0.5 + 0.5) * screenWidth;
     const screenY = (1.0 - (ndcY * 0.5 + 0.5)) * screenHeight; // Y軸反転
 
-    return [screenX, screenY, depth];
+    return [screenX, screenY, depth, clipW];
   }
 
   /**
@@ -262,9 +273,44 @@ export class ImageEncoder {
       mapSize: `${mapWidth}x${mapHeight}`
     });
 
+    // デバッグ: カメラ行列の情報
+    console.log('[ImageEncoder] View matrix diagonal:',
+      camera.viewMatrix[0].toFixed(3), camera.viewMatrix[5].toFixed(3),
+      camera.viewMatrix[10].toFixed(3), camera.viewMatrix[15].toFixed(3));
+    console.log('[ImageEncoder] View matrix translation:',
+      camera.viewMatrix[12].toFixed(3), camera.viewMatrix[13].toFixed(3),
+      camera.viewMatrix[14].toFixed(3));
+    console.log('[ImageEncoder] Proj matrix [0,0], [1,1]:',
+      camera.projMatrix[0].toFixed(3), camera.projMatrix[5].toFixed(3));
+
+    // デバッグ: 頂点座標の範囲を確認
+    let minVx = Infinity, maxVx = -Infinity;
+    let minVy = Infinity, maxVy = -Infinity;
+    let minVz = Infinity, maxVz = -Infinity;
+    for (let i = 0; i < vertexCount; i++) {
+      const vx = vertices[i * 3];
+      const vy = vertices[i * 3 + 1];
+      const vz = vertices[i * 3 + 2];
+      minVx = Math.min(minVx, vx); maxVx = Math.max(maxVx, vx);
+      minVy = Math.min(minVy, vy); maxVy = Math.max(maxVy, vy);
+      minVz = Math.min(minVz, vz); maxVz = Math.max(maxVz, vz);
+    }
+    console.log('[ImageEncoder] Vertex bounds: X=[' + minVx.toFixed(3) + ', ' + maxVx.toFixed(3) +
+      '], Y=[' + minVy.toFixed(3) + ', ' + maxVy.toFixed(3) +
+      '], Z=[' + minVz.toFixed(3) + ', ' + maxVz.toFixed(3) + ']');
+
     const projectionFeatures = new Float32Array(vertexCount * featureDim);
 
     let visibleCount = 0;
+    let behindCamera = 0;
+    let outsideScreen = 0;
+
+    // デバッグ: スクリーン座標とNDCの範囲を追跡
+    let minSx = Infinity, maxSx = -Infinity;
+    let minSy = Infinity, maxSy = -Infinity;
+    let minDepth = Infinity, maxDepth = -Infinity;
+    let minNdcX = Infinity, maxNdcX = -Infinity;
+    let minNdcY = Infinity, maxNdcY = -Infinity;
 
     for (let i = 0; i < vertexCount; i++) {
       const vx = vertices[i * 3];
@@ -272,7 +318,7 @@ export class ImageEncoder {
       const vz = vertices[i * 3 + 2];
 
       // 頂点をスクリーン座標に投影
-      const [screenX, screenY, depth] = this.projectVertex(
+      const [screenX, screenY, depth, clipW] = this.projectVertex(
         vx, vy, vz,
         camera.viewMatrix,
         camera.projMatrix,
@@ -280,17 +326,37 @@ export class ImageEncoder {
         mapHeight
       );
 
-      // 可視性チェック（画面内かつ前面）
-      const isVisible =
-        screenX >= 0 && screenX < mapWidth &&
-        screenY >= 0 && screenY < mapHeight &&
-        depth > 0 && depth < 1;
+      // デバッグ: 座標範囲を追跡
+      if (clipW > 0) {
+        minSx = Math.min(minSx, screenX); maxSx = Math.max(maxSx, screenX);
+        minSy = Math.min(minSy, screenY); maxSy = Math.max(maxSy, screenY);
+        minDepth = Math.min(minDepth, depth); maxDepth = Math.max(maxDepth, depth);
+        // NDCを逆算
+        const ndcX = (screenX / mapWidth - 0.5) * 2;
+        const ndcY = ((1 - screenY / mapHeight) - 0.5) * 2;
+        minNdcX = Math.min(minNdcX, ndcX); maxNdcX = Math.max(maxNdcX, ndcX);
+        minNdcY = Math.min(minNdcY, ndcY); maxNdcY = Math.max(maxNdcY, ndcY);
+      }
+
+      // 可視性チェック:
+      // 1. clipW > 0: 頂点がカメラの前にある（Three.js/OpenGLでは-Zが前方向、clipW = -viewZ）
+      // 2. NDC depth in [-1, 1]: OpenGLの標準NDC範囲
+      // 3. スクリーン座標が画面内
+      const isInFront = clipW > 0;
+      const isInNDCRange = depth >= -1 && depth <= 1;
+      const isInScreen = screenX >= 0 && screenX < mapWidth &&
+                         screenY >= 0 && screenY < mapHeight;
+
+      const isVisible = isInFront && isInNDCRange && isInScreen;
 
       if (isVisible) {
         visibleCount++;
+      } else {
+        if (!isInFront) behindCamera++;
+        else if (!isInScreen) outsideScreen++;
       }
 
-      // Feature mapからサンプリング
+      // Feature mapからサンプリング（可視でなくてもサンプリングは行う）
       this.sampleFeatureMapAt(
         featureMap,
         mapWidth,
@@ -303,7 +369,16 @@ export class ImageEncoder {
       );
     }
 
+    console.log('[ImageEncoder] Screen coord bounds: X=[' + minSx.toFixed(1) + ', ' + maxSx.toFixed(1) +
+      '], Y=[' + minSy.toFixed(1) + ', ' + maxSy.toFixed(1) +
+      '], depth=[' + minDepth.toFixed(3) + ', ' + maxDepth.toFixed(3) + ']');
+    console.log('[ImageEncoder] NDC bounds: X=[' + minNdcX.toFixed(3) + ', ' + maxNdcX.toFixed(3) +
+      '], Y=[' + minNdcY.toFixed(3) + ', ' + maxNdcY.toFixed(3) + ']');
     console.log('[ImageEncoder] Visible vertices:', visibleCount, '/', vertexCount);
+    if (visibleCount === 0) {
+      console.warn('[ImageEncoder] ⚠️ No visible vertices! Check camera parameters.');
+      console.warn('[ImageEncoder] Behind camera:', behindCamera, ', Outside screen:', outsideScreen);
+    }
 
     return projectionFeatures;
   }
@@ -378,20 +453,22 @@ export class ImageEncoder {
       });
 
       // 4. Appearance Feature Map Fa を生成（DINOv2 → Conv → Fa）
+      // GUAVA論文は512x512を使用。メモリ効率のため固定サイズを使用
+      const FEATURE_MAP_SIZE = 256; // 256x256で十分な解像度
       const featureMap = this.createAppearanceFeatureMap(
         patchData,
         numPatches,
         patchDim,
-        image.width,
-        image.height,
+        FEATURE_MAP_SIZE,
+        FEATURE_MAP_SIZE,
         featureDim
       );
 
       // 5. Projection Sampling: f_p^i = S(F_a, P(v^i, RT_s))
       const projectionFeature = this.projectionSampling(
         featureMap,
-        image.width,
-        image.height,
+        FEATURE_MAP_SIZE,
+        FEATURE_MAP_SIZE,
         featureDim,
         vertices,
         vertexCount,
@@ -543,6 +620,250 @@ export class ImageEncoder {
         features[v * featureDim + d] = (features[v * featureDim + d] - mean) / std;
       }
     }
+  }
+
+  /**
+   * UV座標を使用して特徴抽出（3D投影の代替）
+   * UV座標を直接feature mapにマッピング
+   *
+   * @param imageUrl ソース画像URL
+   * @param uvCoords UV座標 [u,v, u,v, ...] 範囲[0,1]
+   * @param vertexCount 頂点数
+   * @param featureDim 出力特徴次元
+   */
+  async extractFeaturesWithUV(
+    imageUrl: string,
+    uvCoords: Float32Array,
+    vertexCount: number,
+    featureDim: number = 128
+  ): Promise<{ projectionFeature: Float32Array; idEmbedding: Float32Array }> {
+    if (!this.model || !this.processor) {
+      throw new Error('[ImageEncoder] Not initialized. Call init() first.');
+    }
+
+    console.log('[ImageEncoder] Processing image with UV sampling:', imageUrl);
+
+    try {
+      const startTime = performance.now();
+
+      // 1. 画像を読み込み
+      const image = await RawImage.fromURL(imageUrl);
+      console.log('[ImageEncoder] Image loaded:', {
+        width: image.width,
+        height: image.height
+      });
+
+      // 2. DINOv2前処理 & 特徴抽出
+      const inputs = await this.processor(image);
+      const { last_hidden_state } = await this.model(inputs);
+
+      // 3. CLSトークン（ID embedding用）と パッチトークンを分離
+      const clsToken = last_hidden_state.slice(null, [0, 1], null);
+      const patchTokens = last_hidden_state.slice(null, [1, null], null);
+
+      const clsData = clsToken.data as Float32Array;
+      const patchData = patchTokens.data as Float32Array;
+      const numPatches = patchTokens.dims[1];
+      const patchDim = patchTokens.dims[2]; // 768
+
+      console.log('[ImageEncoder] DINOv2 output:', {
+        numPatches,
+        patchDim,
+        patchGrid: `${Math.sqrt(numPatches)}x${Math.sqrt(numPatches)}`
+      });
+
+      // 4. Appearance Feature Map Fa を生成
+      const FEATURE_MAP_SIZE = 256;
+      const featureMap = this.createAppearanceFeatureMap(
+        patchData,
+        numPatches,
+        patchDim,
+        FEATURE_MAP_SIZE,
+        FEATURE_MAP_SIZE,
+        featureDim
+      );
+
+      // 5. UV座標を使ってFeature mapからサンプリング
+      console.log('[ImageEncoder] UV-based sampling:', {
+        vertexCount,
+        featureDim,
+        mapSize: `${FEATURE_MAP_SIZE}x${FEATURE_MAP_SIZE}`
+      });
+
+      // UV座標の範囲を確認
+      let minU = Infinity, maxU = -Infinity;
+      let minV = Infinity, maxV = -Infinity;
+      for (let i = 0; i < vertexCount; i++) {
+        const u = uvCoords[i * 2];
+        const v = uvCoords[i * 2 + 1];
+        minU = Math.min(minU, u); maxU = Math.max(maxU, u);
+        minV = Math.min(minV, v); maxV = Math.max(maxV, v);
+      }
+      console.log('[ImageEncoder] UV bounds: U=[' + minU.toFixed(3) + ', ' + maxU.toFixed(3) +
+        '], V=[' + minV.toFixed(3) + ', ' + maxV.toFixed(3) + ']');
+
+      const projectionFeature = new Float32Array(vertexCount * featureDim);
+
+      for (let i = 0; i < vertexCount; i++) {
+        const u = uvCoords[i * 2];
+        const v = uvCoords[i * 2 + 1];
+
+        // UV座標をfeature map座標に変換
+        // UV座標は[0,1]範囲、V軸は通常上向き
+        const screenX = u * FEATURE_MAP_SIZE;
+        const screenY = (1 - v) * FEATURE_MAP_SIZE; // V軸反転
+
+        // Feature mapからサンプリング
+        this.sampleFeatureMapAt(
+          featureMap,
+          FEATURE_MAP_SIZE,
+          FEATURE_MAP_SIZE,
+          featureDim,
+          screenX,
+          screenY,
+          projectionFeature,
+          i * featureDim
+        );
+      }
+
+      // 6. ID Embedding生成
+      const idEmbedding = this.createIdEmbedding(clsData, patchDim, 256);
+
+      // 7. 特徴量の正規化
+      this.normalizeFeatures(projectionFeature, vertexCount, featureDim);
+
+      const elapsed = performance.now() - startTime;
+      console.log(`[ImageEncoder] ✅ UV-based feature extraction completed in ${elapsed.toFixed(2)}ms`);
+
+      // 統計情報
+      const sampleSize = Math.min(1000, projectionFeature.length);
+      const sample = Array.from(projectionFeature.slice(0, sampleSize));
+      const mean = sample.reduce((a, b) => a + b, 0) / sample.length;
+      const std = Math.sqrt(sample.reduce((sum, v) => sum + (v - mean) ** 2, 0) / sample.length);
+
+      console.log('[ImageEncoder] UV projection feature statistics:', {
+        min: Math.min(...sample).toFixed(4),
+        max: Math.max(...sample).toFixed(4),
+        mean: mean.toFixed(4),
+        std: std.toFixed(4),
+        nonZeroRatio: (sample.filter(v => Math.abs(v) > 0.001).length / sample.length).toFixed(3)
+      });
+
+      return { projectionFeature, idEmbedding };
+
+    } catch (error) {
+      console.error('[ImageEncoder] ❌ UV feature extraction failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ソースカメラ設定をJSONファイルから読み込む
+   */
+  async loadSourceCameraConfig(jsonUrl: string): Promise<SourceCameraConfig> {
+    const response = await fetch(jsonUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load camera config: ${response.status}`);
+    }
+    const config = await response.json();
+    console.log('[ImageEncoder] Loaded source camera config:', config);
+    return config;
+  }
+
+  /**
+   * ソースカメラ設定からカメラパラメータを構築
+   * GUAVA論文: ソース画像撮影時のカメラパラメータを使用
+   */
+  buildCameraParamsFromConfig(config: SourceCameraConfig, featureMapSize: number): CameraParams {
+    const { position, target, fov, imageWidth, imageHeight } = config;
+
+    // カメラ方向ベクトルを計算
+    const dx = target.x - position.x;
+    const dy = target.y - position.y;
+    const dz = target.z - position.z;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    // 前方向ベクトル (カメラが見る方向)
+    const fx = dx / len;
+    const fy = dy / len;
+    const fz = dz / len;
+
+    // 上方向ベクトル (仮定: Y軸が上)
+    let ux = 0, uy = 1, uz = 0;
+
+    // 右方向ベクトル = forward × up
+    let rx = fy * uz - fz * uy;
+    let ry = fz * ux - fx * uz;
+    let rz = fx * uy - fy * ux;
+    const rlen = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    rx /= rlen; ry /= rlen; rz /= rlen;
+
+    // 真の上方向ベクトル = right × forward
+    ux = ry * fz - rz * fy;
+    uy = rz * fx - rx * fz;
+    uz = rx * fy - ry * fx;
+
+    // View Matrix (column-major): 世界座標からカメラ座標へ
+    const viewMatrix = new Float32Array([
+      rx, ux, -fx, 0,
+      ry, uy, -fy, 0,
+      rz, uz, -fz, 0,
+      -(rx * position.x + ry * position.y + rz * position.z),
+      -(ux * position.x + uy * position.y + uz * position.z),
+      -(-fx * position.x + -fy * position.y + -fz * position.z),
+      1
+    ]);
+
+    // Projection Matrix: FOVと画像アスペクト比を使用
+    // ただし、feature mapは正方形なので、画像のアスペクト比を考慮して調整
+    const fovRad = fov * Math.PI / 180;
+    const imageAspect = imageWidth / imageHeight;
+    const f = 1 / Math.tan(fovRad / 2);
+    const near = 0.01;
+    const far = 100;
+
+    // 画像アスペクト比を使用（feature mapは正方形だが、投影は元画像のアスペクトで）
+    const projMatrix = new Float32Array([
+      f / imageAspect, 0, 0, 0,
+      0, f, 0, 0,
+      0, 0, (far + near) / (near - far), -1,
+      0, 0, (2 * far * near) / (near - far), 0
+    ]);
+
+    console.log('[ImageEncoder] Built camera params from config:', {
+      position: [position.x, position.y, position.z],
+      target: [target.x, target.y, target.z],
+      fov,
+      imageAspect: imageAspect.toFixed(3)
+    });
+
+    return {
+      viewMatrix,
+      projMatrix,
+      screenWidth: featureMapSize,
+      screenHeight: featureMapSize
+    };
+  }
+
+  /**
+   * ソースカメラ設定を使用した特徴抽出（GUAVA論文準拠）
+   * カメラJSONファイルを自動読み込み
+   */
+  async extractFeaturesWithSourceCamera(
+    imageUrl: string,
+    cameraJsonUrl: string,
+    vertices: Float32Array,
+    vertexCount: number,
+    featureDim: number = 128
+  ): Promise<{ projectionFeature: Float32Array; idEmbedding: Float32Array }> {
+    // カメラ設定を読み込み
+    const cameraConfig = await this.loadSourceCameraConfig(cameraJsonUrl);
+
+    const FEATURE_MAP_SIZE = 256;
+    const camera = this.buildCameraParamsFromConfig(cameraConfig, FEATURE_MAP_SIZE);
+
+    // 既存のextractFeaturesを呼び出し
+    return this.extractFeatures(imageUrl, vertices, vertexCount, camera, featureDim);
   }
 
   /**
