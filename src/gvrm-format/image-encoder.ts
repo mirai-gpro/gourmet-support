@@ -615,6 +615,141 @@ export class ImageEncoder {
   }
 
   /**
+   * UV座標を使用して特徴抽出（3D投影の代替）
+   * UV座標を直接feature mapにマッピング
+   *
+   * @param imageUrl ソース画像URL
+   * @param uvCoords UV座標 [u,v, u,v, ...] 範囲[0,1]
+   * @param vertexCount 頂点数
+   * @param featureDim 出力特徴次元
+   */
+  async extractFeaturesWithUV(
+    imageUrl: string,
+    uvCoords: Float32Array,
+    vertexCount: number,
+    featureDim: number = 128
+  ): Promise<{ projectionFeature: Float32Array; idEmbedding: Float32Array }> {
+    if (!this.model || !this.processor) {
+      throw new Error('[ImageEncoder] Not initialized. Call init() first.');
+    }
+
+    console.log('[ImageEncoder] Processing image with UV sampling:', imageUrl);
+
+    try {
+      const startTime = performance.now();
+
+      // 1. 画像を読み込み
+      const image = await RawImage.fromURL(imageUrl);
+      console.log('[ImageEncoder] Image loaded:', {
+        width: image.width,
+        height: image.height
+      });
+
+      // 2. DINOv2前処理 & 特徴抽出
+      const inputs = await this.processor(image);
+      const { last_hidden_state } = await this.model(inputs);
+
+      // 3. CLSトークン（ID embedding用）と パッチトークンを分離
+      const clsToken = last_hidden_state.slice(null, [0, 1], null);
+      const patchTokens = last_hidden_state.slice(null, [1, null], null);
+
+      const clsData = clsToken.data as Float32Array;
+      const patchData = patchTokens.data as Float32Array;
+      const numPatches = patchTokens.dims[1];
+      const patchDim = patchTokens.dims[2]; // 768
+
+      console.log('[ImageEncoder] DINOv2 output:', {
+        numPatches,
+        patchDim,
+        patchGrid: `${Math.sqrt(numPatches)}x${Math.sqrt(numPatches)}`
+      });
+
+      // 4. Appearance Feature Map Fa を生成
+      const FEATURE_MAP_SIZE = 256;
+      const featureMap = this.createAppearanceFeatureMap(
+        patchData,
+        numPatches,
+        patchDim,
+        FEATURE_MAP_SIZE,
+        FEATURE_MAP_SIZE,
+        featureDim
+      );
+
+      // 5. UV座標を使ってFeature mapからサンプリング
+      console.log('[ImageEncoder] UV-based sampling:', {
+        vertexCount,
+        featureDim,
+        mapSize: `${FEATURE_MAP_SIZE}x${FEATURE_MAP_SIZE}`
+      });
+
+      // UV座標の範囲を確認
+      let minU = Infinity, maxU = -Infinity;
+      let minV = Infinity, maxV = -Infinity;
+      for (let i = 0; i < vertexCount; i++) {
+        const u = uvCoords[i * 2];
+        const v = uvCoords[i * 2 + 1];
+        minU = Math.min(minU, u); maxU = Math.max(maxU, u);
+        minV = Math.min(minV, v); maxV = Math.max(maxV, v);
+      }
+      console.log('[ImageEncoder] UV bounds: U=[' + minU.toFixed(3) + ', ' + maxU.toFixed(3) +
+        '], V=[' + minV.toFixed(3) + ', ' + maxV.toFixed(3) + ']');
+
+      const projectionFeature = new Float32Array(vertexCount * featureDim);
+
+      for (let i = 0; i < vertexCount; i++) {
+        const u = uvCoords[i * 2];
+        const v = uvCoords[i * 2 + 1];
+
+        // UV座標をfeature map座標に変換
+        // UV座標は[0,1]範囲、V軸は通常上向き
+        const screenX = u * FEATURE_MAP_SIZE;
+        const screenY = (1 - v) * FEATURE_MAP_SIZE; // V軸反転
+
+        // Feature mapからサンプリング
+        this.sampleFeatureMapAt(
+          featureMap,
+          FEATURE_MAP_SIZE,
+          FEATURE_MAP_SIZE,
+          featureDim,
+          screenX,
+          screenY,
+          projectionFeature,
+          i * featureDim
+        );
+      }
+
+      // 6. ID Embedding生成
+      const idEmbedding = this.createIdEmbedding(clsData, patchDim, 256);
+
+      // 7. 特徴量の正規化
+      this.normalizeFeatures(projectionFeature, vertexCount, featureDim);
+
+      const elapsed = performance.now() - startTime;
+      console.log(`[ImageEncoder] ✅ UV-based feature extraction completed in ${elapsed.toFixed(2)}ms`);
+
+      // 統計情報
+      const sampleSize = Math.min(1000, projectionFeature.length);
+      const sample = Array.from(projectionFeature.slice(0, sampleSize));
+      const mean = sample.reduce((a, b) => a + b, 0) / sample.length;
+      const std = Math.sqrt(sample.reduce((sum, v) => sum + (v - mean) ** 2, 0) / sample.length);
+
+      console.log('[ImageEncoder] UV projection feature statistics:', {
+        min: Math.min(...sample).toFixed(4),
+        max: Math.max(...sample).toFixed(4),
+        mean: mean.toFixed(4),
+        std: std.toFixed(4),
+        nonZeroRatio: (sample.filter(v => Math.abs(v) > 0.001).length / sample.length).toFixed(3)
+      });
+
+      return { projectionFeature, idEmbedding };
+
+    } catch (error) {
+      console.error('[ImageEncoder] ❌ UV feature extraction failed:', error);
+      throw error;
+    }
+  }
+
+  /**
    * リソースを解放
    */
   dispose(): void {

@@ -6,7 +6,6 @@ import { VRMManager } from './vrm';
 import { NeuralRefiner } from './neural-refiner';
 import { TemplateDecoder } from './template-decoder';
 import { ImageEncoder } from './image-encoder';
-import type { CameraParams } from './image-encoder';
 import { WebGLDisplay } from './webgl-display';
 
 export class GVRM {
@@ -82,62 +81,20 @@ export class GVRM {
             
             console.log('[GVRM] Extracting features from source image...');
 
-            // テンプレート頂点を取得（ポーズ空間）
+            // テンプレートジオメトリデータを取得
             const geometryDataForEncoder = this.templateDecoder.getGeometryData();
             if (!geometryDataForEncoder) {
                 throw new Error('Failed to get geometry data for Image Encoder');
             }
-            const templateVertices = geometryDataForEncoder.vTemplate;
+            const uvCoords = geometryDataForEncoder.uvCoord;
 
-            // テンプレート頂点の境界を計算してカメラを配置
-            let minY = Infinity, maxY = -Infinity;
-            let minZ = Infinity, maxZ = -Infinity;
-            for (let i = 0; i < TEMPLATE_VERTEX_COUNT; i++) {
-                const y = templateVertices[i * 3 + 1];
-                const z = templateVertices[i * 3 + 2];
-                minY = Math.min(minY, y); maxY = Math.max(maxY, y);
-                minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
-            }
-            const centerY = (minY + maxY) / 2;
-            const centerZ = (minZ + maxZ) / 2;
-            const height = maxY - minY;
-            // カメラ距離：頂点がFOV 45°に収まるように
-            const cameraDistance = (height / 2) / Math.tan(45 * Math.PI / 180 / 2) * 1.2;
+            console.log('[GVRM] Using UV-based sampling with', TEMPLATE_VERTEX_COUNT, 'vertices');
 
-            console.log('[GVRM] Template vertex center: Y=' + centerY.toFixed(3) + ', Z=' + centerZ.toFixed(3));
-            console.log('[GVRM] Camera distance for projection:', cameraDistance.toFixed(3));
-
-            // ImageEncoder用の一時カメラ設定
-            const originalPosition = this.camera.position.clone();
-            const originalAspect = this.camera.aspect;
-
-            this.camera.position.set(0, centerY, centerZ + cameraDistance);
-            this.camera.lookAt(0, centerY, centerZ);
-            this.camera.aspect = 1.0;  // 1:1 aspect for feature map
-            this.camera.updateMatrixWorld();
-            this.camera.updateProjectionMatrix();
-
-            // GUAVA論文に基づくProjection Sampling
-            // カメラパラメータをImageEncoderに渡す
-            const cameraParams: CameraParams = this.imageEncoder.createCameraFromThree(
-                this.camera,
-                256,  // feature map size
-                256
-            );
-
-            // カメラを元に戻す
-            this.camera.position.copy(originalPosition);
-            this.camera.lookAt(0, 1.4, 0);
-            this.camera.aspect = originalAspect;
-            this.camera.updateMatrixWorld();
-            this.camera.updateProjectionMatrix();
-
-            // 新しいAPI: 頂点とカメラ行列を使ってProjection Sampling
-            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeatures(
+            // UV座標を使用した特徴抽出（3D投影の代わり）
+            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeaturesWithUV(
                 '/assets/source.png',
-                templateVertices,
+                uvCoords,
                 TEMPLATE_VERTEX_COUNT,
-                cameraParams,
                 128  // feature dimension
             );
 
