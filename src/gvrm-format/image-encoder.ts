@@ -45,18 +45,28 @@ export class ImageEncoder {
       
       console.log('[ImageEncoder] ONNX Runtime v1.17.3 configured');
       
-      // 1. DINOv2モデルをロード
-      const modelId = 'onnx-community/dinov2-base';
-      console.log('[ImageEncoder] Loading DINOv2...');
-      
-      this.dinoProcessor = await AutoProcessor.from_pretrained(modelId);
+      // 1. DINOv2モデルをロード（518x518入力 → 37x37パッチ）
+      // 技術仕様書 Section 3.1: 入力解像度 518×518、パッチサイズ 14×14
+      const modelId = 'Xenova/dinov2-base';
+      console.log('[ImageEncoder] Loading DINOv2 (518x518 input)...');
+
+      // プロセッサを518x518入力用に設定
+      this.dinoProcessor = await AutoProcessor.from_pretrained(modelId, {
+        size: { width: 518, height: 518 },
+        crop_size: { width: 518, height: 518 }
+      });
       this.dinoModel = await AutoModel.from_pretrained(modelId, {
-        quantized: true
+        dtype: {
+          embed_tokens: 'fp32',
+          vision_model: 'fp32'
+        },
+        device: 'wasm'
       });
 
       // 2. DINO Encoder（ONNX）をロード
+      // 技術仕様書: 37x37 → 518x518にアップサンプリング、出力128ch
       console.log('[ImageEncoder] Loading DINO Encoder ONNX...');
-      this.encoderSession = await ort.InferenceSession.create('/assets/dino_encoder_simplified.onnx');
+      this.encoderSession = await ort.InferenceSession.create('/assets/dino_encoder.onnx');
 
       this.initialized = true;
       console.log('[ImageEncoder] ✅ Initialized');
@@ -68,13 +78,14 @@ export class ImageEncoder {
 
   /**
    * DINOv2のパッチ特徴を2D特徴マップに変換
+   * 技術仕様書 Section 3.1: 518x518入力 → 37x37パッチ（1369パッチ）
    */
   private reshapePatchesToFeatureMap(
     patchData: Float32Array,
     numPatches: number,
     patchDim: number
   ): { data: Float32Array; height: number; width: number } {
-    // DINOv2-base: 224x224入力 → 14x14パッチ（196パッチ）
+    // DINOv2-base: 518x518入力 → 37x37パッチ（1369パッチ）
     const gridSize = Math.sqrt(numPatches);
     
     if (!Number.isInteger(gridSize)) {
@@ -154,11 +165,12 @@ export class ImageEncoder {
       // 5. ONNX Encoderで128次元特徴マップを生成
       console.log('[ImageEncoder] Running DINO Encoder...');
 
+      // 技術仕様書: [1, 768, 37, 37] → ONNX Encoder → [1, 128, 518, 518]
       const dinov2Tensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
-      const feeds = { 'dinov2_features': dinov2Tensor };
+      const feeds = { 'dino_features': dinov2Tensor };
 
       const results = await this.encoderSession.run(feeds);
-      const appearanceTensor = results['appearance_features'];
+      const appearanceTensor = results['appearance_feature'];
 
       console.log('[ImageEncoder] Appearance features:', {
         shape: appearanceTensor.dims,
@@ -272,11 +284,12 @@ export class ImageEncoder {
       // 5. ONNX Encoderで128次元特徴マップを生成
       console.log('[ImageEncoder] Running DINO Encoder...');
 
+      // 技術仕様書: [1, 768, 37, 37] → ONNX Encoder → [1, 128, 518, 518]
       const dinov2Tensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
-      const feeds = { 'dinov2_features': dinov2Tensor };
+      const feeds = { 'dino_features': dinov2Tensor };
 
       const results = await this.encoderSession.run(feeds);
-      const appearanceTensor = results['appearance_features'];
+      const appearanceTensor = results['appearance_feature'];
 
       console.log('[ImageEncoder] Appearance features:', {
         shape: appearanceTensor.dims,
@@ -370,6 +383,8 @@ export class ImageEncoder {
 
   /**
    * Feature mapから2D位置でバイリニアサンプリング
+   * ONNX出力はCHW形式: [1, featureDim, height, width]
+   * インデックス計算: d * H * W + y * W + x
    */
   private sampleFeatureMapAt(
     featureMap: Float32Array,
@@ -392,16 +407,15 @@ export class ImageEncoder {
     const wx = x - x0;
     const wy = y - y0;
 
-    const idx00 = (y0 * mapWidth + x0) * featureDim;
-    const idx10 = (y0 * mapWidth + x1) * featureDim;
-    const idx01 = (y1 * mapWidth + x0) * featureDim;
-    const idx11 = (y1 * mapWidth + x1) * featureDim;
+    // CHW形式: index = channel * H * W + y * W + x
+    const spatialSize = mapHeight * mapWidth;
 
     for (let d = 0; d < featureDim; d++) {
-      const v00 = featureMap[idx00 + d] || 0;
-      const v10 = featureMap[idx10 + d] || 0;
-      const v01 = featureMap[idx01 + d] || 0;
-      const v11 = featureMap[idx11 + d] || 0;
+      const channelOffset = d * spatialSize;
+      const v00 = featureMap[channelOffset + y0 * mapWidth + x0] || 0;
+      const v10 = featureMap[channelOffset + y0 * mapWidth + x1] || 0;
+      const v01 = featureMap[channelOffset + y1 * mapWidth + x0] || 0;
+      const v11 = featureMap[channelOffset + y1 * mapWidth + x1] || 0;
 
       const top = v00 * (1 - wx) + v10 * wx;
       const bottom = v01 * (1 - wx) + v11 * wx;

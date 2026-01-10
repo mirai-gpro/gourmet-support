@@ -1,6 +1,6 @@
 {
-  "description": "Camera parameters for source.png (after center square crop: 1536x1536)",
-  "note": "Original image: 2816x1536, cropped to center 1536x1536. Camera looks at template vertex center (Y≈-0.44)",
+  "description": "Camera parameters for source.png - 技術仕様書準拠 (518x518)",
+  "note": "GUAVA論文 Section 3.1: 入力解像度518x518, Feature Map解像度518x518",
   "position": {
     "x": 0,
     "y": -0.4,
@@ -12,6 +12,6 @@
     "z": 0
   },
   "fov": 45,
-  "imageWidth": 1536,
-  "imageHeight": 1536
+  "imageWidth": 518,
+  "imageHeight": 518
 }
