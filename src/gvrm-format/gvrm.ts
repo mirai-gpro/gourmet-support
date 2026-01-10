@@ -116,60 +116,86 @@ export class GVRM {
                 projectionFeature,
                 this.idEmbedding
             );
-            
+
             console.log('[GVRM] Template Decoder output:', {
                 latent32ch: templateOutput.latent32ch.length,
-                expectedLength: TEMPLATE_VERTEX_COUNT * 32
+                opacity: templateOutput.opacity.length,
+                scale: templateOutput.scale.length,
+                rotation: templateOutput.rotation.length,
+                expectedLatentLength: TEMPLATE_VERTEX_COUNT * 32
             });
-            
+
+            // PLY頂点用の配列を作成
             const latents = new Float32Array(plyVertexCount * 32);
-            
+            const opacity = new Float32Array(plyVertexCount);
+            const scale = new Float32Array(plyVertexCount * 3);
+            const rotation = new Float32Array(plyVertexCount * 4);
+
             const geometryData = this.templateDecoder.getGeometryData();
             if (!geometryData) {
                 throw new Error('Failed to get geometry data from Template Decoder');
             }
-            
+
             const templatePositions = geometryData.vTemplate;
-            
+
+            // 最近傍頂点マッピングでTemplate Decoder出力をPLY頂点に転写
             for (let i = 0; i < plyVertexCount; i++) {
                 const px = data.positions[i * 3];
                 const py = data.positions[i * 3 + 1];
                 const pz = data.positions[i * 3 + 2];
-                
+
                 let minDist = Infinity;
                 let nearestIdx = 0;
-                
+
                 for (let j = 0; j < TEMPLATE_VERTEX_COUNT; j++) {
                     const tx = templatePositions[j * 3];
                     const ty = templatePositions[j * 3 + 1];
                     const tz = templatePositions[j * 3 + 2];
-                    
+
                     const dist = (px - tx) ** 2 + (py - ty) ** 2 + (pz - tz) ** 2;
-                    
+
                     if (dist < minDist) {
                         minDist = dist;
                         nearestIdx = j;
                     }
                 }
-                
+
+                // latent32ch [32 per vertex]
                 for (let ch = 0; ch < 32; ch++) {
                     latents[i * 32 + ch] = templateOutput.latent32ch[nearestIdx * 32 + ch];
                 }
+
+                // opacity [1 per vertex]
+                opacity[i] = templateOutput.opacity[nearestIdx];
+
+                // scale [3 per vertex]
+                for (let s = 0; s < 3; s++) {
+                    scale[i * 3 + s] = templateOutput.scale[nearestIdx * 3 + s];
+                }
+
+                // rotation [4 per vertex]
+                for (let r = 0; r < 4; r++) {
+                    rotation[i * 4 + r] = templateOutput.rotation[nearestIdx * 4 + r];
+                }
             }
-            
+
             console.log('[GVRM] Mapped template features to PLY vertices:', {
                 plyVertexCount,
                 latentsLength: latents.length,
-                expectedLength: plyVertexCount * 32
+                opacityLength: opacity.length,
+                scaleLength: scale.length
             });
-            
+
+            // GSViewer作成（Gaussian属性付き）
             this.viewer = new GSViewer({
                 positions: data.positions,
-                colors: data.colors,
+                latents,
+                opacity,
+                scale,
+                rotation,
                 boneIndices: data.boneIndices,
                 boneWeights: data.boneWeights,
-                vertexCount: plyVertexCount,
-                latents
+                vertexCount: plyVertexCount
             });
             this.scene.add(this.viewer.mesh);
             
