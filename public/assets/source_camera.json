@@ -1,0 +1,16 @@
+{
+  "description": "Camera parameters for source.png - adjust these to match how the avatar was photographed/rendered",
+  "position": {
+    "x": 0,
+    "y": 0,
+    "z": 2.5
+  },
+  "target": {
+    "x": 0,
+    "y": 0,
+    "z": 0
+  },
+  "fov": 45,
+  "imageWidth": 2816,
+  "imageHeight": 1536
+}

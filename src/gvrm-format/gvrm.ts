@@ -86,14 +86,16 @@ export class GVRM {
             if (!geometryDataForEncoder) {
                 throw new Error('Failed to get geometry data for Image Encoder');
             }
-            const uvCoords = geometryDataForEncoder.uvCoord;
+            const templateVertices = geometryDataForEncoder.vTemplate;
 
-            console.log('[GVRM] Using UV-based sampling with', TEMPLATE_VERTEX_COUNT, 'vertices');
+            console.log('[GVRM] Using source camera projection with', TEMPLATE_VERTEX_COUNT, 'vertices');
 
-            // UV座標を使用した特徴抽出（3D投影の代わり）
-            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeaturesWithUV(
+            // ソースカメラ設定を使用した特徴抽出（GUAVA論文準拠）
+            // /assets/source_camera.json にカメラパラメータを設定
+            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeaturesWithSourceCamera(
                 '/assets/source.png',
-                uvCoords,
+                '/assets/source_camera.json',
+                templateVertices,
                 TEMPLATE_VERTEX_COUNT,
                 128  // feature dimension
             );

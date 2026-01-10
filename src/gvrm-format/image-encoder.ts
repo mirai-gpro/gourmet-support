@@ -14,6 +14,14 @@ export interface CameraParams {
   screenHeight: number;
 }
 
+export interface SourceCameraConfig {
+  position: { x: number; y: number; z: number };
+  target: { x: number; y: number; z: number };
+  fov: number;
+  imageWidth: number;
+  imageHeight: number;
+}
+
 export class ImageEncoder {
   private model: any = null;
   private processor: any = null;
@@ -747,6 +755,115 @@ export class ImageEncoder {
       console.error('[ImageEncoder] ❌ UV feature extraction failed:', error);
       throw error;
     }
+  }
+
+  /**
+   * ソースカメラ設定をJSONファイルから読み込む
+   */
+  async loadSourceCameraConfig(jsonUrl: string): Promise<SourceCameraConfig> {
+    const response = await fetch(jsonUrl);
+    if (!response.ok) {
+      throw new Error(`Failed to load camera config: ${response.status}`);
+    }
+    const config = await response.json();
+    console.log('[ImageEncoder] Loaded source camera config:', config);
+    return config;
+  }
+
+  /**
+   * ソースカメラ設定からカメラパラメータを構築
+   * GUAVA論文: ソース画像撮影時のカメラパラメータを使用
+   */
+  buildCameraParamsFromConfig(config: SourceCameraConfig, featureMapSize: number): CameraParams {
+    const { position, target, fov, imageWidth, imageHeight } = config;
+
+    // カメラ方向ベクトルを計算
+    const dx = target.x - position.x;
+    const dy = target.y - position.y;
+    const dz = target.z - position.z;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    // 前方向ベクトル (カメラが見る方向)
+    const fx = dx / len;
+    const fy = dy / len;
+    const fz = dz / len;
+
+    // 上方向ベクトル (仮定: Y軸が上)
+    let ux = 0, uy = 1, uz = 0;
+
+    // 右方向ベクトル = forward × up
+    let rx = fy * uz - fz * uy;
+    let ry = fz * ux - fx * uz;
+    let rz = fx * uy - fy * ux;
+    const rlen = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    rx /= rlen; ry /= rlen; rz /= rlen;
+
+    // 真の上方向ベクトル = right × forward
+    ux = ry * fz - rz * fy;
+    uy = rz * fx - rx * fz;
+    uz = rx * fy - ry * fx;
+
+    // View Matrix (column-major): 世界座標からカメラ座標へ
+    const viewMatrix = new Float32Array([
+      rx, ux, -fx, 0,
+      ry, uy, -fy, 0,
+      rz, uz, -fz, 0,
+      -(rx * position.x + ry * position.y + rz * position.z),
+      -(ux * position.x + uy * position.y + uz * position.z),
+      -(-fx * position.x + -fy * position.y + -fz * position.z),
+      1
+    ]);
+
+    // Projection Matrix: FOVと画像アスペクト比を使用
+    // ただし、feature mapは正方形なので、画像のアスペクト比を考慮して調整
+    const fovRad = fov * Math.PI / 180;
+    const imageAspect = imageWidth / imageHeight;
+    const f = 1 / Math.tan(fovRad / 2);
+    const near = 0.01;
+    const far = 100;
+
+    // 画像アスペクト比を使用（feature mapは正方形だが、投影は元画像のアスペクトで）
+    const projMatrix = new Float32Array([
+      f / imageAspect, 0, 0, 0,
+      0, f, 0, 0,
+      0, 0, (far + near) / (near - far), -1,
+      0, 0, (2 * far * near) / (near - far), 0
+    ]);
+
+    console.log('[ImageEncoder] Built camera params from config:', {
+      position: [position.x, position.y, position.z],
+      target: [target.x, target.y, target.z],
+      fov,
+      imageAspect: imageAspect.toFixed(3)
+    });
+
+    return {
+      viewMatrix,
+      projMatrix,
+      screenWidth: featureMapSize,
+      screenHeight: featureMapSize
+    };
+  }
+
+  /**
+   * ソースカメラ設定を使用した特徴抽出（GUAVA論文準拠）
+   * カメラJSONファイルを自動読み込み
+   */
+  async extractFeaturesWithSourceCamera(
+    imageUrl: string,
+    cameraJsonUrl: string,
+    vertices: Float32Array,
+    vertexCount: number,
+    featureDim: number = 128
+  ): Promise<{ projectionFeature: Float32Array; idEmbedding: Float32Array }> {
+    // カメラ設定を読み込み
+    const cameraConfig = await this.loadSourceCameraConfig(cameraJsonUrl);
+
+    const FEATURE_MAP_SIZE = 256;
+    const camera = this.buildCameraParamsFromConfig(cameraConfig, FEATURE_MAP_SIZE);
+
+    // 既存のextractFeaturesを呼び出し
+    return this.extractFeatures(imageUrl, vertices, vertexCount, camera, featureDim);
   }
 
   /**
