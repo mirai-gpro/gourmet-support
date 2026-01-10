@@ -5,7 +5,7 @@ import { GSViewer } from './gs';
 import { VRMManager } from './vrm';
 import { NeuralRefiner } from './neural-refiner';
 import { TemplateDecoder } from './template-decoder';
-import { ImageEncoder } from './image-encoder';
+import { ImageEncoder, SourceCameraConfig } from './image-encoder';
 import { WebGLDisplay } from './webgl-display';
 
 export class GVRM {
@@ -90,23 +90,22 @@ export class GVRM {
 
             console.log('[GVRM] Using source camera projection with', TEMPLATE_VERTEX_COUNT, 'vertices');
 
-            // ソースカメラ設定をロード
+            // ソースカメラ設定をロード（position/target/fov形式）
             const sourceCameraResponse = await fetch('/assets/source_camera.json');
-            const sourceCameraData = await sourceCameraResponse.json();
+            const sourceCameraConfig: SourceCameraConfig = await sourceCameraResponse.json();
 
-            // CameraParamsオブジェクトを作成
-            const sourceCamera = {
-                viewMatrix: new Float32Array(sourceCameraData.viewMatrix),
-                projMatrix: new Float32Array(sourceCameraData.projMatrix),
-                screenWidth: sourceCameraData.screenWidth || 224,
-                screenHeight: sourceCameraData.screenHeight || 224
-            };
+            console.log('[GVRM] Source camera config loaded:', {
+                position: sourceCameraConfig.position,
+                target: sourceCameraConfig.target,
+                fov: sourceCameraConfig.fov
+            });
 
-            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeatures(
+            // extractFeaturesWithSourceCameraを使用（カメラ行列は内部で構築）
+            const { projectionFeature, idEmbedding } = await this.imageEncoder.extractFeaturesWithSourceCamera(
                 '/assets/source.png',
+                sourceCameraConfig,
                 templateVertices,
                 TEMPLATE_VERTEX_COUNT,
-                sourceCamera,
                 128  // feature dimension
             );
 

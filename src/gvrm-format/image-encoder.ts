@@ -11,6 +11,14 @@ export interface CameraParams {
   screenHeight: number;
 }
 
+export interface SourceCameraConfig {
+  position: { x: number; y: number; z: number };
+  target: { x: number; y: number; z: number };
+  fov: number;
+  imageWidth: number;
+  imageHeight: number;
+}
+
 // クラス名をImageEncoderに変更（互換性のため）
 export class ImageEncoder {
   private dinoModel: any = null;
@@ -95,7 +103,7 @@ export class ImageEncoder {
   }
 
   /**
-   * 画像から特徴抽出
+   * 画像から特徴抽出（CameraParams直接指定版）
    */
   async extractFeatures(
     imageUrl: string,
@@ -140,18 +148,18 @@ export class ImageEncoder {
       });
 
       // 4. パッチ特徴を2D特徴マップに変換
-      const { data: featureMapData, height: fmHeight, width: fmWidth } = 
+      const { data: featureMapData, height: fmHeight, width: fmWidth } =
         this.reshapePatchesToFeatureMap(patchData, numPatches, patchDim);
 
       // 5. ONNX Encoderで128次元特徴マップを生成
       console.log('[ImageEncoder] Running DINO Encoder...');
-      
+
       const dinov2Tensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
       const feeds = { 'dinov2_features': dinov2Tensor };
-      
+
       const results = await this.encoderSession.run(feeds);
       const appearanceTensor = results['appearance_features'];
-      
+
       console.log('[ImageEncoder] Appearance features:', {
         shape: appearanceTensor.dims,
         type: appearanceTensor.type
@@ -162,7 +170,128 @@ export class ImageEncoder {
       const appearanceHeight = appearanceTensor.dims[2] as number;
       const appearanceWidth = appearanceTensor.dims[3] as number;
 
-      // 7. Projection Sampling
+      // 7. カメラのスクリーンサイズを特徴マップサイズに調整
+      const adjustedCamera: CameraParams = {
+        ...camera,
+        screenWidth: appearanceWidth,
+        screenHeight: appearanceHeight
+      };
+
+      // 8. Projection Sampling
+      const projectionFeature = this.projectionSampling(
+        appearanceData,
+        appearanceWidth,
+        appearanceHeight,
+        featureDim,
+        vertices,
+        vertexCount,
+        adjustedCamera
+      );
+
+      // 9. ID Embedding生成
+      const idEmbedding = this.createIdEmbedding(clsData, patchDim, 256);
+
+      // 10. 特徴量の正規化
+      this.normalizeFeatures(projectionFeature, vertexCount, featureDim);
+
+      const elapsed = performance.now() - startTime;
+      console.log(`[ImageEncoder] ✅ Feature extraction completed in ${elapsed.toFixed(2)}ms`);
+
+      // 統計情報
+      const sampleSize = Math.min(1000, projectionFeature.length);
+      const sample = Array.from(projectionFeature.slice(0, sampleSize));
+      const mean = sample.reduce((a, b) => a + b, 0) / sample.length;
+      const std = Math.sqrt(sample.reduce((sum, v) => sum + (v - mean) ** 2, 0) / sample.length);
+
+      console.log('[ImageEncoder] Projection feature statistics:', {
+        min: Math.min(...sample).toFixed(4),
+        max: Math.max(...sample).toFixed(4),
+        mean: mean.toFixed(4),
+        std: std.toFixed(4),
+        nonZeroRatio: (sample.filter(v => Math.abs(v) > 0.001).length / sample.length).toFixed(3)
+      });
+
+      return { projectionFeature, idEmbedding };
+
+    } catch (error) {
+      console.error('[ImageEncoder] ❌ Feature extraction failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * ソースカメラ設定を使用した特徴抽出（GUAVA論文準拠）
+   * カメラ行列を内部で構築し、feature mapサイズに自動調整
+   */
+  async extractFeaturesWithSourceCamera(
+    imageUrl: string,
+    cameraConfig: SourceCameraConfig,
+    vertices: Float32Array,
+    vertexCount: number,
+    featureDim: number = 128
+  ): Promise<{ projectionFeature: Float32Array; idEmbedding: Float32Array }> {
+    if (!this.dinoModel || !this.encoderSession) {
+      throw new Error('[ImageEncoder] Not initialized. Call init() first.');
+    }
+
+    console.log('[ImageEncoder] Processing image with source camera:', imageUrl);
+
+    try {
+      const startTime = performance.now();
+
+      // 1. 画像読み込み
+      const image = await RawImage.fromURL(imageUrl);
+      console.log('[ImageEncoder] Image loaded:', {
+        width: image.width,
+        height: image.height
+      });
+
+      // 2. DINOv2で特徴抽出
+      const inputs = await this.dinoProcessor(image);
+      const { last_hidden_state } = await this.dinoModel(inputs);
+
+      // 3. CLSトークンとパッチトークンを分離
+      const clsToken = last_hidden_state.slice(null, [0, 1], null);
+      const patchTokens = last_hidden_state.slice(null, [1, null], null);
+
+      const clsData = clsToken.data as Float32Array;
+      const patchData = patchTokens.data as Float32Array;
+      const numPatches = patchTokens.dims[1];
+      const patchDim = patchTokens.dims[2]; // 768
+
+      console.log('[ImageEncoder] DINOv2 output:', {
+        numPatches,
+        patchDim,
+        patchGrid: `${Math.sqrt(numPatches)}x${Math.sqrt(numPatches)}`
+      });
+
+      // 4. パッチ特徴を2D特徴マップに変換
+      const { data: featureMapData, height: fmHeight, width: fmWidth } =
+        this.reshapePatchesToFeatureMap(patchData, numPatches, patchDim);
+
+      // 5. ONNX Encoderで128次元特徴マップを生成
+      console.log('[ImageEncoder] Running DINO Encoder...');
+
+      const dinov2Tensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
+      const feeds = { 'dinov2_features': dinov2Tensor };
+
+      const results = await this.encoderSession.run(feeds);
+      const appearanceTensor = results['appearance_features'];
+
+      console.log('[ImageEncoder] Appearance features:', {
+        shape: appearanceTensor.dims,
+        type: appearanceTensor.type
+      });
+
+      // 6. Appearance特徴マップを取得
+      const appearanceData = appearanceTensor.data as Float32Array;
+      const appearanceHeight = appearanceTensor.dims[2] as number;
+      const appearanceWidth = appearanceTensor.dims[3] as number;
+
+      // 7. 実際の特徴マップサイズでカメラパラメータを構築
+      const camera = this.buildCameraParamsFromConfig(cameraConfig, appearanceWidth, appearanceHeight);
+
+      // 8. Projection Sampling
       const projectionFeature = this.projectionSampling(
         appearanceData,
         appearanceWidth,
@@ -173,10 +302,10 @@ export class ImageEncoder {
         camera
       );
 
-      // 8. ID Embedding生成
+      // 9. ID Embedding生成
       const idEmbedding = this.createIdEmbedding(clsData, patchDim, 256);
 
-      // 9. 特徴量の正規化
+      // 10. 特徴量の正規化
       this.normalizeFeatures(projectionFeature, vertexCount, featureDim);
 
       const elapsed = performance.now() - startTime;
@@ -379,6 +508,79 @@ export class ImageEncoder {
         features[v * featureDim + d] = (features[v * featureDim + d] - mean) / std;
       }
     }
+  }
+
+  /**
+   * ソースカメラ設定からカメラパラメータを構築
+   * GUAVA論文: ソース画像撮影時のカメラパラメータを使用
+   */
+  buildCameraParamsFromConfig(config: SourceCameraConfig, featureMapWidth: number, featureMapHeight: number): CameraParams {
+    const { position, target, fov } = config;
+
+    // カメラ方向ベクトルを計算
+    const dx = target.x - position.x;
+    const dy = target.y - position.y;
+    const dz = target.z - position.z;
+    const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    // 前方向ベクトル (カメラが見る方向)
+    const fx = dx / len;
+    const fy = dy / len;
+    const fz = dz / len;
+
+    // 上方向ベクトル (仮定: Y軸が上)
+    let ux = 0, uy = 1, uz = 0;
+
+    // 右方向ベクトル = forward × up
+    let rx = fy * uz - fz * uy;
+    let ry = fz * ux - fx * uz;
+    let rz = fx * uy - fy * ux;
+    const rlen = Math.sqrt(rx * rx + ry * ry + rz * rz);
+    rx /= rlen; ry /= rlen; rz /= rlen;
+
+    // 真の上方向ベクトル = right × forward
+    ux = ry * fz - rz * fy;
+    uy = rz * fx - rx * fz;
+    uz = rx * fy - ry * fx;
+
+    // View Matrix (column-major): 世界座標からカメラ座標へ
+    const viewMatrix = new Float32Array([
+      rx, ux, -fx, 0,
+      ry, uy, -fy, 0,
+      rz, uz, -fz, 0,
+      -(rx * position.x + ry * position.y + rz * position.z),
+      -(ux * position.x + uy * position.y + uz * position.z),
+      -(-fx * position.x + -fy * position.y + -fz * position.z),
+      1
+    ]);
+
+    // Projection Matrix: FOVとアスペクト比を使用
+    const fovRad = fov * Math.PI / 180;
+    const aspect = featureMapWidth / featureMapHeight;
+    const f = 1 / Math.tan(fovRad / 2);
+    const near = 0.01;
+    const far = 100;
+
+    const projMatrix = new Float32Array([
+      f / aspect, 0, 0, 0,
+      0, f, 0, 0,
+      0, 0, (far + near) / (near - far), -1,
+      0, 0, (2 * far * near) / (near - far), 0
+    ]);
+
+    console.log('[ImageEncoder] Built camera params from config:', {
+      position: [position.x, position.y, position.z],
+      target: [target.x, target.y, target.z],
+      fov,
+      featureMapSize: `${featureMapWidth}x${featureMapHeight}`
+    });
+
+    return {
+      viewMatrix,
+      projMatrix,
+      screenWidth: featureMapWidth,
+      screenHeight: featureMapHeight
+    };
   }
 
   /**
