@@ -1,16 +1,17 @@
 {
-  "description": "Camera parameters for source.png - adjust these to match how the avatar was photographed/rendered",
+  "description": "Camera parameters for source.png (after center square crop: 1536x1536)",
+  "note": "Original image: 2816x1536, cropped to center 1536x1536. Camera looks at template vertex center (Y≈-0.44)",
   "position": {
     "x": 0,
-    "y": 0,
+    "y": -0.4,
     "z": 2.5
   },
   "target": {
     "x": 0,
-    "y": 0,
+    "y": -0.4,
     "z": 0
   },
   "fov": 45,
-  "imageWidth": 2816,
+  "imageWidth": 1536,
   "imageHeight": 1536
 }

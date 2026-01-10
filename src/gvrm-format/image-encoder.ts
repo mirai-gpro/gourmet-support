@@ -26,7 +26,8 @@ export class ImageEncoder {
   private model: any = null;
   private processor: any = null;
   private initialized = false;
-  private convWeights: Float32Array | null = null;
+  // 注: GUAVA論文ではConv層で特徴をアップサンプルするが、
+  // 学習済みConv重みがない場合はバイリニア補間で代替
 
   /**
    * 初期化：DINOv2モデルをロード
@@ -47,11 +48,8 @@ export class ImageEncoder {
         quantized: true
       });
 
-      // Conv重み（学習済み）をロード試行
-      await this.loadConvWeights('/assets');
-
       this.initialized = true;
-      console.log('[ImageEncoder] ✅ DINOv2 initialized');
+      console.log('[ImageEncoder] ✅ DINOv2 initialized (bilinear upsampling mode)');
     } catch (error) {
       console.error('[ImageEncoder] ❌ Failed to initialize:', error);
       throw new Error(`Image Encoder initialization failed: ${error}`);
@@ -59,26 +57,11 @@ export class ImageEncoder {
   }
 
   /**
-   * 学習済みConv重みをロード
-   */
-  private async loadConvWeights(basePath: string): Promise<void> {
-    try {
-      const response = await fetch(`${basePath}/vertex_base_feature.bin`);
-      if (!response.ok) {
-        console.warn('[ImageEncoder] vertex_base_feature.bin not found, using bilinear upsampling');
-        return;
-      }
-      const buffer = await response.arrayBuffer();
-      this.convWeights = new Float32Array(buffer);
-      console.log('[ImageEncoder] ✅ Conv weights loaded:', this.convWeights.length);
-    } catch (error) {
-      console.warn('[ImageEncoder] Failed to load conv weights:', error);
-    }
-  }
-
-  /**
    * DINOv2パッチ特徴から appearance feature map Fa を生成
    * GUAVA: DINOv2 → Conv → Fa (入力画像と同解像度)
+   *
+   * 注: 学習済みConv重みがないため、バイリニア補間 + 次元削減で代替
+   * 768次元 → outputDim次元への変換は、分散の大きい次元を選択
    */
   private createAppearanceFeatureMap(
     patchFeatures: Float32Array,
@@ -88,7 +71,7 @@ export class ImageEncoder {
     targetHeight: number,
     outputDim: number
   ): Float32Array {
-    // DINOv2-base: 14x14 patches for 224x224 input
+    // DINOv2-base: 16x16 patches for 224x224 input (196 patches)
     const patchGridSize = Math.round(Math.sqrt(numPatches));
 
     console.log('[ImageEncoder] Creating appearance feature map:', {
@@ -98,9 +81,34 @@ export class ImageEncoder {
       outputDim
     });
 
+    // Step 1: 各次元の分散を計算して、情報量の多い次元を選択
+    const variances = new Float32Array(patchDim);
+    for (let d = 0; d < patchDim; d++) {
+      let sum = 0;
+      for (let p = 0; p < numPatches; p++) {
+        sum += patchFeatures[p * patchDim + d];
+      }
+      const mean = sum / numPatches;
+
+      let variance = 0;
+      for (let p = 0; p < numPatches; p++) {
+        const diff = patchFeatures[p * patchDim + d] - mean;
+        variance += diff * diff;
+      }
+      variances[d] = variance / numPatches;
+    }
+
+    // 分散の大きい順にソートして上位outputDim次元を選択
+    const dimIndices = Array.from({ length: patchDim }, (_, i) => i);
+    dimIndices.sort((a, b) => variances[b] - variances[a]);
+    const selectedDims = dimIndices.slice(0, outputDim);
+
+    console.log('[ImageEncoder] Selected top dimensions by variance:',
+      selectedDims.slice(0, 5).map(i => `${i}(var=${variances[i].toFixed(4)})`).join(', '));
+
     const featureMap = new Float32Array(targetWidth * targetHeight * outputDim);
 
-    // 学習済みConv重みがある場合は使用、なければバイリニア補間 + 次元マッピング
+    // Step 2: バイリニア補間でアップサンプル
     for (let y = 0; y < targetHeight; y++) {
       for (let x = 0; x < targetWidth; x++) {
         // パッチ座標へマッピング
@@ -123,54 +131,77 @@ export class ImageEncoder {
 
         const dstIdx = (y * targetWidth + x) * outputDim;
 
-        // 各出力次元について計算
+        // 選択された次元のみを使用
         for (let d = 0; d < outputDim; d++) {
-          let value = 0;
+          const srcDim = selectedDims[d];
 
-          if (this.convWeights) {
-            // 学習済み重みを使った変換
-            const weightOffset = d * patchDim;
-            for (let sd = 0; sd < patchDim; sd++) {
-              const w = this.convWeights[weightOffset + sd];
-              const v00 = patchFeatures[p00 * patchDim + sd];
-              const v10 = patchFeatures[p10 * patchDim + sd];
-              const v01 = patchFeatures[p01 * patchDim + sd];
-              const v11 = patchFeatures[p11 * patchDim + sd];
+          const v00 = patchFeatures[p00 * patchDim + srcDim];
+          const v10 = patchFeatures[p10 * patchDim + srcDim];
+          const v01 = patchFeatures[p01 * patchDim + srcDim];
+          const v11 = patchFeatures[p11 * patchDim + srcDim];
 
-              const top = v00 * (1 - wx) + v10 * wx;
-              const bottom = v01 * (1 - wx) + v11 * wx;
-              value += w * (top * (1 - wy) + bottom * wy);
-            }
-          } else {
-            // 重みがない場合: 次元をストライドでマッピング + バイリニア補間
-            // 768次元 → outputDim次元へのシンプルな縮約
-            const srcDimStart = Math.floor((d / outputDim) * patchDim);
-            const srcDimEnd = Math.min(srcDimStart + Math.ceil(patchDim / outputDim), patchDim);
-
-            let sum = 0;
-            let count = 0;
-
-            for (let sd = srcDimStart; sd < srcDimEnd; sd++) {
-              const v00 = patchFeatures[p00 * patchDim + sd];
-              const v10 = patchFeatures[p10 * patchDim + sd];
-              const v01 = patchFeatures[p01 * patchDim + sd];
-              const v11 = patchFeatures[p11 * patchDim + sd];
-
-              const top = v00 * (1 - wx) + v10 * wx;
-              const bottom = v01 * (1 - wx) + v11 * wx;
-              sum += top * (1 - wy) + bottom * wy;
-              count++;
-            }
-
-            value = count > 0 ? sum / count : 0;
-          }
-
-          featureMap[dstIdx + d] = value;
+          const top = v00 * (1 - wx) + v10 * wx;
+          const bottom = v01 * (1 - wx) + v11 * wx;
+          featureMap[dstIdx + d] = top * (1 - wy) + bottom * wy;
         }
       }
     }
 
     return featureMap;
+  }
+
+  /**
+   * 画像を中央から正方形にクロップ
+   * DINOv2は正方形入力を期待するため、横長/縦長画像を正方形に変換
+   */
+  private cropToSquare(image: any): any {
+    const { width, height } = image;
+
+    // 既に正方形の場合はそのまま返す
+    if (width === height) {
+      return image;
+    }
+
+    const size = Math.min(width, height);
+    const offsetX = Math.floor((width - size) / 2);
+    const offsetY = Math.floor((height - size) / 2);
+
+    console.log('[ImageEncoder] Cropping image:', {
+      original: `${width}x${height}`,
+      cropSize: size,
+      offset: `(${offsetX}, ${offsetY})`
+    });
+
+    // RawImage.crop() メソッドがある場合は使用
+    // ない場合は手動でクロップ
+    if (typeof image.crop === 'function') {
+      return image.crop([offsetX, offsetY, offsetX + size, offsetY + size]);
+    }
+
+    // 手動クロップ（RawImageの内部構造に依存）
+    // channels, data, width, height プロパティを持つことを想定
+    const channels = image.channels || 3;
+    const srcData = image.data;
+    const dstData = new Uint8Array(size * size * channels);
+
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const srcIdx = ((y + offsetY) * width + (x + offsetX)) * channels;
+        const dstIdx = (y * size + x) * channels;
+        for (let c = 0; c < channels; c++) {
+          dstData[dstIdx + c] = srcData[srcIdx + c];
+        }
+      }
+    }
+
+    // RawImageと同じ形式のオブジェクトを作成
+    // @huggingface/transformers の RawImage 形式に合わせる
+    return {
+      data: dstData,
+      width: size,
+      height: size,
+      channels: channels
+    };
   }
 
   /**
@@ -432,11 +463,19 @@ export class ImageEncoder {
         height: image.height
       });
 
-      // 2. DINOv2前処理 & 特徴抽出
-      const inputs = await this.processor(image);
+      // 2. 画像を中央正方形クロップ（アスペクト比問題を解決）
+      // DINOv2は224x224正方形入力を期待するため、事前にクロップ
+      const croppedImage = this.cropToSquare(image);
+      console.log('[ImageEncoder] Cropped to square:', {
+        width: croppedImage.width,
+        height: croppedImage.height
+      });
+
+      // 3. DINOv2前処理 & 特徴抽出
+      const inputs = await this.processor(croppedImage);
       const { last_hidden_state } = await this.model(inputs);
 
-      // 3. CLSトークン（ID embedding用）と パッチトークンを分離
+      // 4. CLSトークン（ID embedding用）と パッチトークンを分離
       // last_hidden_state shape: [1, 1+num_patches, 768]
       const clsToken = last_hidden_state.slice(null, [0, 1], null);
       const patchTokens = last_hidden_state.slice(null, [1, null], null);
@@ -452,7 +491,7 @@ export class ImageEncoder {
         patchGrid: `${Math.sqrt(numPatches)}x${Math.sqrt(numPatches)}`
       });
 
-      // 4. Appearance Feature Map Fa を生成（DINOv2 → Conv → Fa）
+      // 5. Appearance Feature Map Fa を生成（DINOv2 → Conv → Fa）
       // GUAVA論文は512x512を使用。メモリ効率のため固定サイズを使用
       const FEATURE_MAP_SIZE = 256; // 256x256で十分な解像度
       const featureMap = this.createAppearanceFeatureMap(
@@ -464,7 +503,7 @@ export class ImageEncoder {
         featureDim
       );
 
-      // 5. Projection Sampling: f_p^i = S(F_a, P(v^i, RT_s))
+      // 6. Projection Sampling: f_p^i = S(F_a, P(v^i, RT_s))
       const projectionFeature = this.projectionSampling(
         featureMap,
         FEATURE_MAP_SIZE,
@@ -475,10 +514,10 @@ export class ImageEncoder {
         camera
       );
 
-      // 6. ID Embedding生成（CLSトークンから）
+      // 7. ID Embedding生成（CLSトークンから）
       const idEmbedding = this.createIdEmbedding(clsData, patchDim, 256);
 
-      // 7. 特徴量の正規化
+      // 8. 特徴量の正規化
       this.normalizeFeatures(projectionFeature, vertexCount, featureDim);
 
       const elapsed = performance.now() - startTime;
@@ -874,7 +913,6 @@ export class ImageEncoder {
       this.model.dispose?.();
       this.model = null;
       this.processor = null;
-      this.convWeights = null;
       this.initialized = false;
       console.log('[ImageEncoder] Disposed');
     }
