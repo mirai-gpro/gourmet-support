@@ -265,11 +265,34 @@ export class ImageEncoder {
       mapSize: `${mapWidth}x${mapHeight}`
     });
 
+    // デバッグ: 頂点座標の範囲を確認
+    let minVx = Infinity, maxVx = -Infinity;
+    let minVy = Infinity, maxVy = -Infinity;
+    let minVz = Infinity, maxVz = -Infinity;
+    for (let i = 0; i < vertexCount; i++) {
+      const vx = vertices[i * 3];
+      const vy = vertices[i * 3 + 1];
+      const vz = vertices[i * 3 + 2];
+      minVx = Math.min(minVx, vx); maxVx = Math.max(maxVx, vx);
+      minVy = Math.min(minVy, vy); maxVy = Math.max(maxVy, vy);
+      minVz = Math.min(minVz, vz); maxVz = Math.max(maxVz, vz);
+    }
+    console.log('[ImageEncoder] Vertex bounds:', {
+      x: [minVx.toFixed(3), maxVx.toFixed(3)],
+      y: [minVy.toFixed(3), maxVy.toFixed(3)],
+      z: [minVz.toFixed(3), maxVz.toFixed(3)]
+    });
+
     const projectionFeatures = new Float32Array(vertexCount * featureDim);
 
     let visibleCount = 0;
     let behindCamera = 0;
     let outsideScreen = 0;
+
+    // デバッグ: スクリーン座標の範囲を追跡
+    let minSx = Infinity, maxSx = -Infinity;
+    let minSy = Infinity, maxSy = -Infinity;
+    let minDepth = Infinity, maxDepth = -Infinity;
 
     for (let i = 0; i < vertexCount; i++) {
       const vx = vertices[i * 3];
@@ -284,6 +307,13 @@ export class ImageEncoder {
         mapWidth,
         mapHeight
       );
+
+      // デバッグ: 座標範囲を追跡
+      if (clipW > 0) {
+        minSx = Math.min(minSx, screenX); maxSx = Math.max(maxSx, screenX);
+        minSy = Math.min(minSy, screenY); maxSy = Math.max(maxSy, screenY);
+        minDepth = Math.min(minDepth, depth); maxDepth = Math.max(maxDepth, depth);
+      }
 
       // 可視性チェック:
       // 1. clipW > 0: 頂点がカメラの前にある（Three.js/OpenGLでは-Zが前方向、clipW = -viewZ）
@@ -316,6 +346,11 @@ export class ImageEncoder {
       );
     }
 
+    console.log('[ImageEncoder] Screen coord bounds:', {
+      x: [minSx.toFixed(1), maxSx.toFixed(1)],
+      y: [minSy.toFixed(1), maxSy.toFixed(1)],
+      depth: [minDepth.toFixed(3), maxDepth.toFixed(3)]
+    });
     console.log('[ImageEncoder] Visible vertices:', visibleCount, '/', vertexCount);
     if (visibleCount === 0) {
       console.warn('[ImageEncoder] ⚠️ No visible vertices! Check camera parameters.');
