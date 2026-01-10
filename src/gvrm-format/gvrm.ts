@@ -131,34 +131,63 @@ export class GVRM {
             const scale = new Float32Array(plyVertexCount * 3);
             const rotation = new Float32Array(plyVertexCount * 4);
 
-            const geometryData = this.templateDecoder.getGeometryData();
-            if (!geometryData) {
-                throw new Error('Failed to get geometry data from Template Decoder');
+            // 事前計算された頂点マッピングを読み込み（O(N²) → O(N)に最適化）
+            console.log('[GVRM] Loading pre-computed vertex mapping...');
+            const mappingStartTime = performance.now();
+
+            let vertexMapping: number[];
+            try {
+                const mappingResponse = await fetch('/assets/vertex_mapping.json');
+                if (mappingResponse.ok) {
+                    const mappingData = await mappingResponse.json();
+                    vertexMapping = mappingData.mapping;
+                    console.log('[GVRM] ✅ Pre-computed mapping loaded:', {
+                        plyVertexCount: mappingData.plyVertexCount,
+                        templateVertexCount: mappingData.templateVertexCount
+                    });
+                } else {
+                    throw new Error('Mapping file not found');
+                }
+            } catch (e) {
+                // フォールバック: ランタイムで計算（遅い）
+                console.warn('[GVRM] ⚠️ Pre-computed mapping not found, computing at runtime (slow)...');
+                const geometryData = this.templateDecoder.getGeometryData();
+                if (!geometryData) {
+                    throw new Error('Failed to get geometry data from Template Decoder');
+                }
+                const templatePositions = geometryData.vTemplate;
+
+                vertexMapping = new Array(plyVertexCount);
+                for (let i = 0; i < plyVertexCount; i++) {
+                    const px = data.positions[i * 3];
+                    const py = data.positions[i * 3 + 1];
+                    const pz = data.positions[i * 3 + 2];
+
+                    let minDist = Infinity;
+                    let nearestIdx = 0;
+
+                    for (let j = 0; j < TEMPLATE_VERTEX_COUNT; j++) {
+                        const tx = templatePositions[j * 3];
+                        const ty = templatePositions[j * 3 + 1];
+                        const tz = templatePositions[j * 3 + 2];
+
+                        const dist = (px - tx) ** 2 + (py - ty) ** 2 + (pz - tz) ** 2;
+
+                        if (dist < minDist) {
+                            minDist = dist;
+                            nearestIdx = j;
+                        }
+                    }
+                    vertexMapping[i] = nearestIdx;
+                }
             }
 
-            const templatePositions = geometryData.vTemplate;
+            const mappingElapsed = performance.now() - mappingStartTime;
+            console.log(`[GVRM] Vertex mapping ready in ${mappingElapsed.toFixed(2)}ms`);
 
-            // 最近傍頂点マッピングでTemplate Decoder出力をPLY頂点に転写
+            // マッピングを使用してTemplate Decoder出力をPLY頂点に転写（O(N)）
             for (let i = 0; i < plyVertexCount; i++) {
-                const px = data.positions[i * 3];
-                const py = data.positions[i * 3 + 1];
-                const pz = data.positions[i * 3 + 2];
-
-                let minDist = Infinity;
-                let nearestIdx = 0;
-
-                for (let j = 0; j < TEMPLATE_VERTEX_COUNT; j++) {
-                    const tx = templatePositions[j * 3];
-                    const ty = templatePositions[j * 3 + 1];
-                    const tz = templatePositions[j * 3 + 2];
-
-                    const dist = (px - tx) ** 2 + (py - ty) ** 2 + (pz - tz) ** 2;
-
-                    if (dist < minDist) {
-                        minDist = dist;
-                        nearestIdx = j;
-                    }
-                }
+                const nearestIdx = vertexMapping[i];
 
                 // latent32ch [32 per vertex]
                 for (let ch = 0; ch < 32; ch++) {
