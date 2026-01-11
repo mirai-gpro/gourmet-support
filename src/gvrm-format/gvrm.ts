@@ -27,13 +27,20 @@ export class GVRM {
     private isDisabled = false;
 
     constructor(container: HTMLElement) {
-        // containerがない場合は無効化モードで動作（フォールバック画像を使用）
+        // containerがない場合は直接DOMから検索
         if (!container) {
-            console.warn('[GVRM] Container is undefined - running in disabled mode (fallback image will be used)');
-            this.isDisabled = true;
-            return;
+            console.warn('[GVRM] Container parameter is undefined - searching DOM directly...');
+            const found = document.getElementById('avatar3DContainer');
+            if (found) {
+                console.log('[GVRM] Found #avatar3DContainer via direct DOM search');
+                container = found as HTMLElement;
+            } else {
+                console.error('[GVRM] #avatar3DContainer not found in DOM!');
+                this.isDisabled = true;
+                return;
+            }
         }
-        console.log('[GVRM] Container found:', container.id, container.tagName);
+        console.log('[GVRM] Container ready:', container.id, container.tagName);
         this.container = container;
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
