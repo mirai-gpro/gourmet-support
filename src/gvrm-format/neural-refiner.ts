@@ -7,9 +7,9 @@ export class NeuralRefiner {
   private session: ort.InferenceSession | null = null;
   private initialized = false;
 
-  private readonly MODEL_PATH = '/assets/refiner_websafe_v1_fixed.onnx';
+  private readonly MODEL_PATH = '/assets/refiner_512_websafe.onnx';
   private readonly FM_CHANNELS = 32;
-  private readonly FM_SIZE = 256;
+  private readonly FM_SIZE = 512;
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -76,8 +76,8 @@ export class NeuralRefiner {
       );
     }
 
-    // Tensor作成
-    const fmTensor = new ort.Tensor('float32', coarseFM, [1, 32, 256, 256]);
+    // Tensor作成（512×512 モデル用）
+    const fmTensor = new ort.Tensor('float32', coarseFM, [1, 32, this.FM_SIZE, this.FM_SIZE]);
     const idTensor = new ort.Tensor('float32', idEmb, [1, 256]);
 
     // 推論実行

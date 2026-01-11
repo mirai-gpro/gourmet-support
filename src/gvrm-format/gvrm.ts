@@ -52,7 +52,7 @@ export class GVRM {
         this.container = container;
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        this.renderer.setSize(256, 256);
+        this.renderer.setSize(512, 512);  // 512×512 for coarse feature map
         this.renderer.domElement.style.display = 'none';
         container.appendChild(this.renderer.domElement);
 
@@ -66,7 +66,7 @@ export class GVRM {
         );
         this.camera.position.set(0, 1.4, 0.8);
 
-        this.renderTarget = new THREE.WebGLRenderTarget(256, 256, {
+        this.renderTarget = new THREE.WebGLRenderTarget(512, 512, {  // 512×512
             type: THREE.FloatType,
             format: THREE.RGBAFormat
         });
@@ -334,10 +334,10 @@ export class GVRM {
      */
     private diagnoseCoarseFeatureMap(coarseFm: Float32Array): void {
         const numChannels = 32;
-        const H = 256, W = 256;
+        const H = 512, W = 512;  // 512×512
         const spatialSize = H * W;
 
-        console.log('[GVRM] ===== Coarse Feature Map 診断 =====');
+        console.log('[GVRM] ===== Coarse Feature Map 診断 (512×512) =====');
 
         // 1. 全体統計
         let totalMin = Infinity, totalMax = -Infinity;
@@ -355,7 +355,7 @@ export class GVRM {
 
         // 2. 空間分布チェック（中央 vs 周辺）
         // 人物が中央にいれば、中央に値が集中するはず
-        const centerRegion = { minY: 64, maxY: 192, minX: 64, maxX: 192 };  // 中央128x128
+        const centerRegion = { minY: 128, maxY: 384, minX: 128, maxX: 384 };  // 中央256x256
         let centerSum = 0, centerCount = 0;
         let edgeSum = 0, edgeCount = 0;
 
@@ -420,7 +420,7 @@ export class GVRM {
      */
     private normalizeCoarseFeatureMap(coarseFm: Float32Array): Float32Array {
         const numChannels = 32;
-        const spatialSize = 256 * 256;
+        const spatialSize = 512 * 512;  // 512×512
         const normalized = new Float32Array(coarseFm.length);
 
         // チャンネルごとに正規化
@@ -506,20 +506,21 @@ export class GVRM {
 
         this.viewer.updateBones(this.vrm.update());
 
-        const coarseFm = new Float32Array(1 * 32 * 256 * 256);
-        
+        const FM_SIZE = 512;  // 512×512 coarse feature map
+        const coarseFm = new Float32Array(1 * 32 * FM_SIZE * FM_SIZE);
+
         if (this.frameCount === 1) {
-            console.log('[GVRM] Generating coarse feature map (8 passes)...');
+            console.log(`[GVRM] Generating coarse feature map (8 passes, ${FM_SIZE}×${FM_SIZE})...`);
         }
-        
+
         for (let i = 0; i < 8; i++) {
             this.viewer.updateLatentTile(i);
             this.renderer.setRenderTarget(this.renderTarget);
             this.renderer.render(this.scene, this.camera);
-            
-            const pixels = new Float32Array(256 * 256 * 4);
-            this.renderer.readRenderTargetPixels(this.renderTarget, 0, 0, 256, 256, pixels);
-            
+
+            const pixels = new Float32Array(FM_SIZE * FM_SIZE * 4);
+            this.renderer.readRenderTargetPixels(this.renderTarget, 0, 0, FM_SIZE, FM_SIZE, pixels);
+
             if (this.frameCount === 1 && i === 0) {
                 // weighted average 前の生値
                 let rawMin = Infinity, rawMax = -Infinity;
@@ -539,12 +540,13 @@ export class GVRM {
                     alphaRange: `[${alphaMin.toFixed(3)}, ${alphaMax.toFixed(3)}]`
                 });
             }
-            
-            const baseOffset = i * 4 * 256 * 256;
+
+            const spatialSize = FM_SIZE * FM_SIZE;
+            const baseOffset = i * 4 * spatialSize;
 
             // Weighted average: feature = Σ(f × α) / Σ(α)
             // シェーダー出力: RGB = f0,f1,f2 × α, A = Σ(α)
-            for (let p = 0; p < 256 * 256; p++) {
+            for (let p = 0; p < spatialSize; p++) {
                 const fTimesAlpha0 = pixels[p * 4 + 0];
                 const fTimesAlpha1 = pixels[p * 4 + 1];
                 const fTimesAlpha2 = pixels[p * 4 + 2];
@@ -554,20 +556,20 @@ export class GVRM {
                 // α=0 の場合（背景）は 0 のまま
                 if (alphaSum > 0.001) {
                     coarseFm[baseOffset + p] = fTimesAlpha0 / alphaSum;
-                    coarseFm[baseOffset + 256 * 256 + p] = fTimesAlpha1 / alphaSum;
-                    coarseFm[baseOffset + 256 * 256 * 2 + p] = fTimesAlpha2 / alphaSum;
+                    coarseFm[baseOffset + spatialSize + p] = fTimesAlpha1 / alphaSum;
+                    coarseFm[baseOffset + spatialSize * 2 + p] = fTimesAlpha2 / alphaSum;
                 } else {
                     coarseFm[baseOffset + p] = 0;
-                    coarseFm[baseOffset + 256 * 256 + p] = 0;
-                    coarseFm[baseOffset + 256 * 256 * 2 + p] = 0;
+                    coarseFm[baseOffset + spatialSize + p] = 0;
+                    coarseFm[baseOffset + spatialSize * 2 + p] = 0;
                 }
 
                 // ⚠️ ch3, ch7, ch11, ... は現在のシェーダーでは取得不可
                 // 暫定: 隣接チャンネルの平均で補間
                 const ch3Value = (coarseFm[baseOffset + p] +
-                                  coarseFm[baseOffset + 256 * 256 + p] +
-                                  coarseFm[baseOffset + 256 * 256 * 2 + p]) / 3;
-                coarseFm[baseOffset + 256 * 256 * 3 + p] = ch3Value;
+                                  coarseFm[baseOffset + spatialSize + p] +
+                                  coarseFm[baseOffset + spatialSize * 2 + p]) / 3;
+                coarseFm[baseOffset + spatialSize * 3 + p] = ch3Value;
             }
         }
 
