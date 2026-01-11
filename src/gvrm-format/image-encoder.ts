@@ -1,8 +1,9 @@
 // image-encoder.ts
-// ONNX Runtimeバージョン Image Encoder (修正版・デバッグログ付き)
+// DINOv2 + DINO Encoder 完全ONNX版
+// 技術仕様書 Section 3.1: 518×518入力 → 37×37パッチ（1369パッチ）
 
 import * as ort from 'onnxruntime-web';
-import { AutoProcessor, AutoModel, RawImage } from '@huggingface/transformers';
+import { RawImage } from '@huggingface/transformers';
 
 export interface CameraParams {
   viewMatrix: Float32Array;
@@ -19,20 +20,18 @@ export interface SourceCameraConfig {
   imageHeight: number;
 }
 
-// クラス名をImageEncoderに変更(互換性のため)
 export class ImageEncoder {
-  private dinoModel: any = null;
-  private dinoProcessor: any = null;
+  private dinov2Session: ort.InferenceSession | null = null;
   private encoderSession: ort.InferenceSession | null = null;
   private initialized = false;
 
   async init(): Promise<void> {
     if (this.initialized) return;
 
-    console.log('[ImageEncoder] Initializing DINOv2 + ONNX Encoder...');
+    console.log('[ImageEncoder] Initializing ONNX models (37×37 patch support)...');
 
     try {
-      // Template DecoderとNeural Refinerと同じバージョンを使用
+      // ONNX Runtime設定
       ort.env.wasm.wasmPaths = {
         'ort-wasm-simd-threaded.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort-wasm-simd-threaded.wasm',
         'ort-wasm-simd.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.17.3/dist/ort-wasm-simd.wasm',
@@ -42,38 +41,44 @@ export class ImageEncoder {
       ort.env.wasm.numThreads = 1;
       ort.env.wasm.simd = true;
       ort.env.wasm.proxy = false;
-      
+
       console.log('[ImageEncoder] ONNX Runtime v1.17.3 configured');
-      
-      // 1. DINOv2モデルをロード(518x518入力 → 37x37パッチ)
-      // 技術仕様書 Section 3.1: 入力解像度 518×518、パッチサイズ 14×14
-      const modelId = 'Xenova/dinov2-base';
-      console.log('[ImageEncoder] Loading DINOv2 (518x518 input)...');
 
-      // プロセッサを518x518入力用に設定
-      this.dinoProcessor = await AutoProcessor.from_pretrained(modelId, {
-        size: { width: 518, height: 518 },
-        crop_size: { width: 518, height: 518 }
-      });
-      this.dinoModel = await AutoModel.from_pretrained(modelId, {
-        dtype: {
-          embed_tokens: 'fp32',
-          vision_model: 'fp32'
-        },
-        device: 'wasm'
-      });
+      // 1. DINOv2 ONNXモデルをロード（518×518入力 → 37×37パッチ）
+      console.log('[ImageEncoder] Loading DINOv2 ONNX (518×518 input)...');
 
-      // 2. DINO Encoder(ONNX)をロード
-      // 技術仕様書: 37x37 → 518x518にアップサンプリング、出力128ch
+      // 外部データファイルをロード（.onnx.dataが存在する場合）
+      try {
+        const dataResponse = await fetch('/assets/dinov2_518.onnx.data');
+        if (dataResponse.ok) {
+          console.log('[ImageEncoder] Loading external data file...');
+          const externalData = await dataResponse.arrayBuffer();
+          this.dinov2Session = await ort.InferenceSession.create('/assets/dinov2_518.onnx', {
+            externalData: [{
+              path: 'dinov2_518.onnx.data',
+              data: externalData
+            }]
+          });
+        } else {
+          // 外部データファイルがない場合は通常ロード
+          this.dinov2Session = await ort.InferenceSession.create('/assets/dinov2_518.onnx');
+        }
+      } catch {
+        // 外部データファイルがない場合は通常ロード
+        this.dinov2Session = await ort.InferenceSession.create('/assets/dinov2_518.onnx');
+      }
+
+      console.log('[ImageEncoder] 🔍 DINOv2 input names:', this.dinov2Session.inputNames);
+      console.log('[ImageEncoder] 🔍 DINOv2 output names:', this.dinov2Session.outputNames);
+
+      // 2. DINO Encoder ONNXモデルをロード（37×37 → 518×518）
       console.log('[ImageEncoder] Loading DINO Encoder ONNX...');
       this.encoderSession = await ort.InferenceSession.create('/assets/dino_encoder.onnx');
-
-      // ✅ デバッグ: モデルの入出力名を確認
-      console.log('[ImageEncoder] 🔍 Model input names:', this.encoderSession.inputNames);
-      console.log('[ImageEncoder] 🔍 Model output names:', this.encoderSession.outputNames);
+      console.log('[ImageEncoder] 🔍 Encoder input names:', this.encoderSession.inputNames);
+      console.log('[ImageEncoder] 🔍 Encoder output names:', this.encoderSession.outputNames);
 
       this.initialized = true;
-      console.log('[ImageEncoder] ✅ Initialized');
+      console.log('[ImageEncoder] ✅ Initialized with 37×37 patch support');
     } catch (error) {
       console.error('[ImageEncoder] ❌ Failed to initialize:', error);
       throw error;
@@ -81,17 +86,46 @@ export class ImageEncoder {
   }
 
   /**
+   * DINOv2用の前処理（正規化）
+   * mean = [0.485, 0.456, 0.406]
+   * std = [0.229, 0.224, 0.225]
+   */
+  private preprocessImage(image: RawImage): Float32Array {
+    const width = 518;
+    const height = 518;
+    const pixels = new Float32Array(3 * width * height);
+
+    const mean = [0.485, 0.456, 0.406];
+    const std = [0.229, 0.224, 0.225];
+
+    // RawImageのデータはRGBA形式
+    const imageData = image.data;
+
+    for (let c = 0; c < 3; c++) {
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const srcIdx = (y * width + x) * 4 + c;
+          const dstIdx = c * width * height + y * width + x;
+          const normalized = (imageData[srcIdx] / 255.0 - mean[c]) / std[c];
+          pixels[dstIdx] = normalized;
+        }
+      }
+    }
+
+    return pixels;
+  }
+
+  /**
    * DINOv2のパッチ特徴を2D特徴マップに変換
-   * 技術仕様書 Section 3.1: 518x518入力 → 37x37パッチ(1369パッチ)
+   * 技術仕様書 Section 3.1: 518×518入力 → 37×37パッチ（1369パッチ）
    */
   private reshapePatchesToFeatureMap(
     patchData: Float32Array,
     numPatches: number,
     patchDim: number
   ): { data: Float32Array; height: number; width: number } {
-    // DINOv2-base: 518x518入力 → 37x37パッチ(1369パッチ)
     const gridSize = Math.sqrt(numPatches);
-    
+
     if (!Number.isInteger(gridSize)) {
       throw new Error(`Invalid number of patches: ${numPatches}`);
     }
@@ -110,147 +144,12 @@ export class ImageEncoder {
       }
     }
 
-    return {
-      data: featureMap,
-      height: gridSize,
-      width: gridSize
-    };
+    return { data: featureMap, height: gridSize, width: gridSize };
   }
 
   /**
-   * 画像から特徴抽出(CameraParams直接指定版)
-   */
-  async extractFeatures(
-    imageUrl: string,
-    vertices: Float32Array,
-    vertexCount: number,
-    camera: CameraParams,
-    featureDim: number = 128
-  ): Promise<{ projectionFeature: Float32Array; idEmbedding: Float32Array }> {
-    if (!this.dinoModel || !this.encoderSession) {
-      throw new Error('[ImageEncoder] Not initialized. Call init() first.');
-    }
-
-    console.log('[ImageEncoder] Processing image:', imageUrl);
-
-    try {
-      const startTime = performance.now();
-
-      // 1. 画像読み込み
-      const image = await RawImage.fromURL(imageUrl);
-      console.log('[ImageEncoder] Image loaded:', {
-        width: image.width,
-        height: image.height
-      });
-
-      // 2. DINOv2で特徴抽出
-      const inputs = await this.dinoProcessor(image);
-      const { last_hidden_state } = await this.dinoModel(inputs);
-
-      // 3. CLSトークンとパッチトークンを分離
-      const clsToken = last_hidden_state.slice(null, [0, 1], null);
-      const patchTokens = last_hidden_state.slice(null, [1, null], null);
-
-      const clsData = clsToken.data as Float32Array;
-      const patchData = patchTokens.data as Float32Array;
-      const numPatches = patchTokens.dims[1];
-      const patchDim = patchTokens.dims[2]; // 768
-
-      console.log('[ImageEncoder] DINOv2 output:', {
-        numPatches,
-        patchDim,
-        patchGrid: `${Math.sqrt(numPatches)}x${Math.sqrt(numPatches)}`
-      });
-
-      // 4. パッチ特徴を2D特徴マップに変換
-      const { data: featureMapData, height: fmHeight, width: fmWidth } =
-        this.reshapePatchesToFeatureMap(patchData, numPatches, patchDim);
-
-      // 5. ONNX Encoderで128次元特徴マップを生成
-      console.log('[ImageEncoder] Running DINO Encoder...');
-
-      // 技術仕様書: [1, 768, 37, 37] → ONNX Encoder → [1, 128, 518, 518]
-      const dinov2Tensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
-      
-      // ✅ 修正: 入力名を 'dinov2_features' に変更
-      const feeds = { 'dinov2_features': dinov2Tensor };
-
-      const results = await this.encoderSession.run(feeds);
-      
-      // ✅ デバッグ: すべての出力を確認
-      console.log('[ImageEncoder] 🔍 All output keys:', Object.keys(results));
-      
-      // ✅ 修正: 実際の出力名を使用(最初の出力を取得)
-      const outputKey = this.encoderSession.outputNames[0];
-      const appearanceTensor = results[outputKey];
-      
-      if (!appearanceTensor) {
-        throw new Error(`Output '${outputKey}' not found in results`);
-      }
-
-      console.log('[ImageEncoder] Appearance features:', {
-        outputName: outputKey,
-        shape: appearanceTensor.dims,
-        type: appearanceTensor.type
-      });
-
-      // 6. Appearance特徴マップを取得
-      const appearanceData = appearanceTensor.data as Float32Array;
-      const appearanceHeight = appearanceTensor.dims[2] as number;
-      const appearanceWidth = appearanceTensor.dims[3] as number;
-
-      // 7. カメラのスクリーンサイズを特徴マップサイズに調整
-      const adjustedCamera: CameraParams = {
-        ...camera,
-        screenWidth: appearanceWidth,
-        screenHeight: appearanceHeight
-      };
-
-      // 8. Projection Sampling
-      const projectionFeature = this.projectionSampling(
-        appearanceData,
-        appearanceWidth,
-        appearanceHeight,
-        featureDim,
-        vertices,
-        vertexCount,
-        adjustedCamera
-      );
-
-      // 9. ID Embedding生成
-      const idEmbedding = this.createIdEmbedding(clsData, patchDim, 256);
-
-      // 10. 特徴量の正規化
-      this.normalizeFeatures(projectionFeature, vertexCount, featureDim);
-
-      const elapsed = performance.now() - startTime;
-      console.log(`[ImageEncoder] ✅ Feature extraction completed in ${elapsed.toFixed(2)}ms`);
-
-      // 統計情報
-      const sampleSize = Math.min(1000, projectionFeature.length);
-      const sample = Array.from(projectionFeature.slice(0, sampleSize));
-      const mean = sample.reduce((a, b) => a + b, 0) / sample.length;
-      const std = Math.sqrt(sample.reduce((sum, v) => sum + (v - mean) ** 2, 0) / sample.length);
-
-      console.log('[ImageEncoder] Projection feature statistics:', {
-        min: Math.min(...sample).toFixed(4),
-        max: Math.max(...sample).toFixed(4),
-        mean: mean.toFixed(4),
-        std: std.toFixed(4),
-        nonZeroRatio: (sample.filter(v => Math.abs(v) > 0.001).length / sample.length).toFixed(3)
-      });
-
-      return { projectionFeature, idEmbedding };
-
-    } catch (error) {
-      console.error('[ImageEncoder] ❌ Feature extraction failed:', error);
-      throw error;
-    }
-  }
-
-  /**
-   * ソースカメラ設定を使用した特徴抽出(GUAVA論文準拠)
-   * カメラ行列を内部で構築し、feature mapサイズに自動調整
+   * ソースカメラ設定を使用した特徴抽出（GUAVA論文準拠）
+   * 完全ONNX版: DINOv2もONNXで実行し、37×37パッチを確実に取得
    */
   async extractFeaturesWithSourceCamera(
     imageUrl: string,
@@ -259,63 +158,84 @@ export class ImageEncoder {
     vertexCount: number,
     featureDim: number = 128
   ): Promise<{ projectionFeature: Float32Array; idEmbedding: Float32Array }> {
-    if (!this.dinoModel || !this.encoderSession) {
+    if (!this.dinov2Session || !this.encoderSession) {
       throw new Error('[ImageEncoder] Not initialized. Call init() first.');
     }
 
-    console.log('[ImageEncoder] Processing image with source camera:', imageUrl);
+    console.log('[ImageEncoder] Processing image (ONNX mode):', imageUrl);
 
     try {
       const startTime = performance.now();
 
-      // 1. 画像読み込み
+      // 1. 画像読み込みと518×518リサイズ
       const image = await RawImage.fromURL(imageUrl);
-      console.log('[ImageEncoder] Image loaded:', {
+      console.log('[ImageEncoder] Original image:', {
         width: image.width,
         height: image.height
       });
 
-      // 2. DINOv2で特徴抽出
-      const inputs = await this.dinoProcessor(image);
-      const { last_hidden_state } = await this.dinoModel(inputs);
+      const resized = await image.resize(518, 518);
+      console.log('[ImageEncoder] Resized to 518×518');
 
-      // 3. CLSトークンとパッチトークンを分離
-      const clsToken = last_hidden_state.slice(null, [0, 1], null);
-      const patchTokens = last_hidden_state.slice(null, [1, null], null);
+      // 2. DINOv2前処理（正規化）
+      const normalized = this.preprocessImage(resized);
 
-      const clsData = clsToken.data as Float32Array;
-      const patchData = patchTokens.data as Float32Array;
-      const numPatches = patchTokens.dims[1];
-      const patchDim = patchTokens.dims[2]; // 768
-
-      console.log('[ImageEncoder] DINOv2 output:', {
-        numPatches,
-        patchDim,
-        patchGrid: `${Math.sqrt(numPatches)}x${Math.sqrt(numPatches)}`
+      // 3. DINOv2 ONNX実行
+      console.log('[ImageEncoder] Running DINOv2 ONNX...');
+      const dinov2Tensor = new ort.Tensor('float32', normalized, [1, 3, 518, 518]);
+      const dinov2Result = await this.dinov2Session.run({
+        'pixel_values': dinov2Tensor
       });
 
-      // 4. パッチ特徴を2D特徴マップに変換
+      const hiddenState = dinov2Result['last_hidden_state'].data as Float32Array;
+      const totalTokens = dinov2Result['last_hidden_state'].dims[1] as number;
+      const patchDim = dinov2Result['last_hidden_state'].dims[2] as number;
+
+      console.log('[ImageEncoder] DINOv2 output:', {
+        totalTokens,
+        patchDim,
+        expectedTokens: 1370  // 1 CLS + 37×37
+      });
+
+      // 4. CLSトークンとパッチを分離
+      const clsData = hiddenState.slice(0, patchDim);
+      const patchData = hiddenState.slice(patchDim);
+      const numPatches = totalTokens - 1;
+
+      console.log('[ImageEncoder] Patches:', {
+        numPatches,
+        gridSize: `${Math.sqrt(numPatches)}×${Math.sqrt(numPatches)}`
+      });
+
+      // 検証: 37×37パッチであることを確認
+      if (numPatches !== 37 * 37) {
+        console.error(`[ImageEncoder] ❌ Expected 1369 patches, got ${numPatches}`);
+        throw new Error(`Invalid patch count: ${numPatches}`);
+      }
+
+      console.log('[ImageEncoder] ✅ DINOv2 output: 37×37 patches confirmed');
+
+      // 5. パッチを2D特徴マップに変換
       const { data: featureMapData, height: fmHeight, width: fmWidth } =
         this.reshapePatchesToFeatureMap(patchData, numPatches, patchDim);
 
-      // 5. ONNX Encoderで128次元特徴マップを生成
-      console.log('[ImageEncoder] Running DINO Encoder...');
+      console.log('[ImageEncoder] Feature map reshaped:', {
+        channels: patchDim,
+        height: fmHeight,
+        width: fmWidth
+      });
 
-      // 技術仕様書: [1, 768, 37, 37] → ONNX Encoder → [1, 128, 518, 518]
-      const dinov2Tensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
-      
-      // ✅ 修正: 入力名を 'dinov2_features' に変更
-      const feeds = { 'dinov2_features': dinov2Tensor };
+      // 6. DINO Encoder ONNX実行（37×37 → 518×518）
+      console.log('[ImageEncoder] Running DINO Encoder ONNX...');
 
-      const results = await this.encoderSession.run(feeds);
-      
-      // ✅ デバッグ: すべての出力を確認
-      console.log('[ImageEncoder] 🔍 All output keys:', Object.keys(results));
-      
-      // ✅ 修正: 実際の出力名を使用(最初の出力を取得)
+      const encoderTensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
+      const encoderResult = await this.encoderSession.run({
+        'dinov2_features': encoderTensor
+      });
+
       const outputKey = this.encoderSession.outputNames[0];
-      const appearanceTensor = results[outputKey];
-      
+      const appearanceTensor = encoderResult[outputKey];
+
       if (!appearanceTensor) {
         throw new Error(`Output '${outputKey}' not found in results`);
       }
@@ -326,15 +246,22 @@ export class ImageEncoder {
         type: appearanceTensor.type
       });
 
-      // 6. Appearance特徴マップを取得
+      // 7. Appearance特徴マップを取得
       const appearanceData = appearanceTensor.data as Float32Array;
       const appearanceHeight = appearanceTensor.dims[2] as number;
       const appearanceWidth = appearanceTensor.dims[3] as number;
 
-      // 7. 実際の特徴マップサイズでカメラパラメータを構築
+      // 検証
+      if (appearanceHeight !== 518 || appearanceWidth !== 518) {
+        console.warn(`[ImageEncoder] ⚠️ Expected 518×518, got ${appearanceWidth}×${appearanceHeight}`);
+      } else {
+        console.log('[ImageEncoder] ✅ Appearance feature map: 518×518 confirmed');
+      }
+
+      // 8. 実際の特徴マップサイズでカメラパラメータを構築
       const camera = this.buildCameraParamsFromConfig(cameraConfig, appearanceWidth, appearanceHeight);
 
-      // 8. Projection Sampling
+      // 9. Projection Sampling
       const projectionFeature = this.projectionSampling(
         appearanceData,
         appearanceWidth,
@@ -345,10 +272,10 @@ export class ImageEncoder {
         camera
       );
 
-      // 9. ID Embedding生成
+      // 10. ID Embedding生成
       const idEmbedding = this.createIdEmbedding(clsData, patchDim, 256);
 
-      // 10. 特徴量の正規化
+      // 11. 特徴量の正規化
       this.normalizeFeatures(projectionFeature, vertexCount, featureDim);
 
       const elapsed = performance.now() - startTime;
@@ -374,6 +301,34 @@ export class ImageEncoder {
       console.error('[ImageEncoder] ❌ Feature extraction failed:', error);
       throw error;
     }
+  }
+
+  /**
+   * 画像から特徴抽出（CameraParams直接指定版）
+   */
+  async extractFeatures(
+    imageUrl: string,
+    vertices: Float32Array,
+    vertexCount: number,
+    camera: CameraParams,
+    featureDim: number = 128
+  ): Promise<{ projectionFeature: Float32Array; idEmbedding: Float32Array }> {
+    // SourceCameraConfig形式に変換して呼び出し
+    const cameraConfig: SourceCameraConfig = {
+      position: { x: 0, y: 1.4, z: 2 },
+      target: { x: 0, y: 1.4, z: 0 },
+      fov: 45,
+      imageWidth: camera.screenWidth,
+      imageHeight: camera.screenHeight
+    };
+
+    return this.extractFeaturesWithSourceCamera(
+      imageUrl,
+      cameraConfig,
+      vertices,
+      vertexCount,
+      featureDim
+    );
   }
 
   /**
@@ -468,7 +423,7 @@ export class ImageEncoder {
     console.log('[ImageEncoder] Projection sampling:', {
       vertexCount,
       featureDim,
-      mapSize: `${mapWidth}x${mapHeight}`
+      mapSize: `${mapWidth}×${mapHeight}`
     });
 
     const projectionFeatures = new Float32Array(vertexCount * featureDim);
@@ -488,8 +443,8 @@ export class ImageEncoder {
       );
 
       const isVisible = clipW > 0 && depth >= -1 && depth <= 1 &&
-                       screenX >= 0 && screenX < mapWidth &&
-                       screenY >= 0 && screenY < mapHeight;
+        screenX >= 0 && screenX < mapWidth &&
+        screenY >= 0 && screenY < mapHeight;
 
       if (isVisible) visibleCount++;
 
@@ -506,7 +461,7 @@ export class ImageEncoder {
     }
 
     console.log('[ImageEncoder] Visible vertices:', visibleCount, '/', vertexCount);
-    
+
     if (visibleCount === 0) {
       console.warn('[ImageEncoder] ⚠️ No visible vertices! Check camera parameters.');
     }
@@ -616,7 +571,7 @@ export class ImageEncoder {
       position: [position.x, position.y, position.z],
       target: [target.x, target.y, target.z],
       fov,
-      featureMapSize: `${featureMapWidth}x${featureMapHeight}`
+      featureMapSize: `${featureMapWidth}×${featureMapHeight}`
     });
 
     return {
@@ -631,15 +586,14 @@ export class ImageEncoder {
    * リソースを解放
    */
   dispose(): void {
-    if (this.dinoModel) {
-      this.dinoModel.dispose?.();
-      this.dinoModel = null;
+    if (this.dinov2Session) {
+      this.dinov2Session.release();
+      this.dinov2Session = null;
     }
     if (this.encoderSession) {
       this.encoderSession.release();
       this.encoderSession = null;
     }
-    this.dinoProcessor = null;
     this.initialized = false;
     console.log('[ImageEncoder] Disposed');
   }
