@@ -1,5 +1,5 @@
 // image-encoder.ts
-// ONNX Runtime版 Image Encoder
+// ONNX Runtimeバージョン Image Encoder (修正版・デバッグログ付き)
 
 import * as ort from 'onnxruntime-web';
 import { AutoProcessor, AutoModel, RawImage } from '@huggingface/transformers';
@@ -19,7 +19,7 @@ export interface SourceCameraConfig {
   imageHeight: number;
 }
 
-// クラス名をImageEncoderに変更（互換性のため）
+// クラス名をImageEncoderに変更(互換性のため)
 export class ImageEncoder {
   private dinoModel: any = null;
   private dinoProcessor: any = null;
@@ -45,7 +45,7 @@ export class ImageEncoder {
       
       console.log('[ImageEncoder] ONNX Runtime v1.17.3 configured');
       
-      // 1. DINOv2モデルをロード（518x518入力 → 37x37パッチ）
+      // 1. DINOv2モデルをロード(518x518入力 → 37x37パッチ)
       // 技術仕様書 Section 3.1: 入力解像度 518×518、パッチサイズ 14×14
       const modelId = 'Xenova/dinov2-base';
       console.log('[ImageEncoder] Loading DINOv2 (518x518 input)...');
@@ -63,10 +63,14 @@ export class ImageEncoder {
         device: 'wasm'
       });
 
-      // 2. DINO Encoder（ONNX）をロード
+      // 2. DINO Encoder(ONNX)をロード
       // 技術仕様書: 37x37 → 518x518にアップサンプリング、出力128ch
       console.log('[ImageEncoder] Loading DINO Encoder ONNX...');
       this.encoderSession = await ort.InferenceSession.create('/assets/dino_encoder.onnx');
+
+      // ✅ デバッグ: モデルの入出力名を確認
+      console.log('[ImageEncoder] 🔍 Model input names:', this.encoderSession.inputNames);
+      console.log('[ImageEncoder] 🔍 Model output names:', this.encoderSession.outputNames);
 
       this.initialized = true;
       console.log('[ImageEncoder] ✅ Initialized');
@@ -78,14 +82,14 @@ export class ImageEncoder {
 
   /**
    * DINOv2のパッチ特徴を2D特徴マップに変換
-   * 技術仕様書 Section 3.1: 518x518入力 → 37x37パッチ（1369パッチ）
+   * 技術仕様書 Section 3.1: 518x518入力 → 37x37パッチ(1369パッチ)
    */
   private reshapePatchesToFeatureMap(
     patchData: Float32Array,
     numPatches: number,
     patchDim: number
   ): { data: Float32Array; height: number; width: number } {
-    // DINOv2-base: 518x518入力 → 37x37パッチ（1369パッチ）
+    // DINOv2-base: 518x518入力 → 37x37パッチ(1369パッチ)
     const gridSize = Math.sqrt(numPatches);
     
     if (!Number.isInteger(gridSize)) {
@@ -114,7 +118,7 @@ export class ImageEncoder {
   }
 
   /**
-   * 画像から特徴抽出（CameraParams直接指定版）
+   * 画像から特徴抽出(CameraParams直接指定版)
    */
   async extractFeatures(
     imageUrl: string,
@@ -167,12 +171,25 @@ export class ImageEncoder {
 
       // 技術仕様書: [1, 768, 37, 37] → ONNX Encoder → [1, 128, 518, 518]
       const dinov2Tensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
-      const feeds = { 'dino_features': dinov2Tensor };
+      
+      // ✅ 修正: 入力名を 'dinov2_features' に変更
+      const feeds = { 'dinov2_features': dinov2Tensor };
 
       const results = await this.encoderSession.run(feeds);
-      const appearanceTensor = results['appearance_feature'];
+      
+      // ✅ デバッグ: すべての出力を確認
+      console.log('[ImageEncoder] 🔍 All output keys:', Object.keys(results));
+      
+      // ✅ 修正: 実際の出力名を使用(最初の出力を取得)
+      const outputKey = this.encoderSession.outputNames[0];
+      const appearanceTensor = results[outputKey];
+      
+      if (!appearanceTensor) {
+        throw new Error(`Output '${outputKey}' not found in results`);
+      }
 
       console.log('[ImageEncoder] Appearance features:', {
+        outputName: outputKey,
         shape: appearanceTensor.dims,
         type: appearanceTensor.type
       });
@@ -232,7 +249,7 @@ export class ImageEncoder {
   }
 
   /**
-   * ソースカメラ設定を使用した特徴抽出（GUAVA論文準拠）
+   * ソースカメラ設定を使用した特徴抽出(GUAVA論文準拠)
    * カメラ行列を内部で構築し、feature mapサイズに自動調整
    */
   async extractFeaturesWithSourceCamera(
@@ -286,12 +303,25 @@ export class ImageEncoder {
 
       // 技術仕様書: [1, 768, 37, 37] → ONNX Encoder → [1, 128, 518, 518]
       const dinov2Tensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
-      const feeds = { 'dino_features': dinov2Tensor };
+      
+      // ✅ 修正: 入力名を 'dinov2_features' に変更
+      const feeds = { 'dinov2_features': dinov2Tensor };
 
       const results = await this.encoderSession.run(feeds);
-      const appearanceTensor = results['appearance_feature'];
+      
+      // ✅ デバッグ: すべての出力を確認
+      console.log('[ImageEncoder] 🔍 All output keys:', Object.keys(results));
+      
+      // ✅ 修正: 実際の出力名を使用(最初の出力を取得)
+      const outputKey = this.encoderSession.outputNames[0];
+      const appearanceTensor = results[outputKey];
+      
+      if (!appearanceTensor) {
+        throw new Error(`Output '${outputKey}' not found in results`);
+      }
 
       console.log('[ImageEncoder] Appearance features:', {
+        outputName: outputKey,
         shape: appearanceTensor.dims,
         type: appearanceTensor.type
       });
