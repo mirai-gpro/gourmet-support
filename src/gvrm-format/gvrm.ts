@@ -330,51 +330,63 @@ export class GVRM {
 
     /**
      * Coarse Feature Mapの正規化
-     * 方式: グローバルmin-max正規化で[-1, 1]にスケーリング
-     * tanh圧縮は情報損失が大きいため使用しない
+     * 方式: チャンネルごとのmin-max正規化で[-1, 1]にスケーリング
+     * 各チャンネルの特徴分布を保持するため、グローバルではなくチャンネル単位で正規化
      */
     private normalizeCoarseFeatureMap(coarseFm: Float32Array): Float32Array {
-        // まずグローバルなmin/maxを計算
-        let globalMin = Infinity;
-        let globalMax = -Infinity;
-
-        for (let i = 0; i < coarseFm.length; i++) {
-            const val = coarseFm[i];
-            if (isFinite(val)) {
-                if (val < globalMin) globalMin = val;
-                if (val > globalMax) globalMax = val;
-            }
-        }
-
-        console.log(`[GVRM] Coarse FM raw range: [${globalMin.toFixed(2)}, ${globalMax.toFixed(2)}]`);
-
-        const range = globalMax - globalMin;
-        if (range < 1e-6) {
-            console.warn('[GVRM] Coarse FM has near-zero range, returning zeros');
-            return new Float32Array(coarseFm.length);
-        }
-
-        // グローバルmin-maxで[-1, 1]に正規化
+        const numChannels = 32;
+        const spatialSize = 256 * 256;
         const normalized = new Float32Array(coarseFm.length);
-        for (let i = 0; i < coarseFm.length; i++) {
-            const val = coarseFm[i];
-            if (isFinite(val)) {
-                // [min, max] -> [-1, 1]
-                normalized[i] = ((val - globalMin) / range) * 2 - 1;
+
+        // チャンネルごとに正規化
+        for (let ch = 0; ch < numChannels; ch++) {
+            const offset = ch * spatialSize;
+
+            // このチャンネルのmin/maxを計算
+            let chMin = Infinity;
+            let chMax = -Infinity;
+
+            for (let i = 0; i < spatialSize; i++) {
+                const val = coarseFm[offset + i];
+                if (isFinite(val)) {
+                    if (val < chMin) chMin = val;
+                    if (val > chMax) chMax = val;
+                }
+            }
+
+            const chRange = chMax - chMin;
+
+            if (chRange < 1e-6) {
+                // このチャンネルは定数 → 0で埋める
+                for (let i = 0; i < spatialSize; i++) {
+                    normalized[offset + i] = 0;
+                }
             } else {
-                normalized[i] = 0;
+                // [-1, 1] に正規化
+                for (let i = 0; i < spatialSize; i++) {
+                    const val = coarseFm[offset + i];
+                    if (isFinite(val)) {
+                        normalized[offset + i] = ((val - chMin) / chRange) * 2 - 1;
+                    } else {
+                        normalized[offset + i] = 0;
+                    }
+                }
+            }
+
+            // 最初の3チャンネルのみログ出力
+            if (ch < 3) {
+                console.log(`[GVRM] Ch${ch} raw:[${chMin.toFixed(1)},${chMax.toFixed(1)}] → normalized:[-1,1]`);
             }
         }
 
-        // 正規化後の統計確認
-        let normMin = Infinity, normMax = -Infinity, normSum = 0;
-        for (let i = 0; i < Math.min(normalized.length, 10000); i++) {
+        // 正規化後の全体統計
+        let normMin = Infinity, normMax = -Infinity;
+        for (let i = 0; i < normalized.length; i++) {
             const v = normalized[i];
             if (v < normMin) normMin = v;
             if (v > normMax) normMax = v;
-            normSum += v;
         }
-        console.log(`[GVRM] Normalized range: [${normMin.toFixed(4)}, ${normMax.toFixed(4)}], mean: ${(normSum/10000).toFixed(4)}`);
+        console.log(`[GVRM] All channels normalized range: [${normMin.toFixed(4)}, ${normMax.toFixed(4)}]`);
 
         return normalized;
     }
