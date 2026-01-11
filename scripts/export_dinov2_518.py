@@ -48,12 +48,13 @@ else:
 print("\n4. Converting to ONNX...")
 onnx_path = "dinov2_518.onnx"
 
+# 外部データファイルなしでエクスポート（size_threshold を大きく設定）
 torch.onnx.export(
     model,
     dummy_input,
     onnx_path,
     export_params=True,
-    opset_version=17,
+    opset_version=14,  # WebAssembly互換性のためopset 14を使用
     do_constant_folding=True,
     input_names=['pixel_values'],
     output_names=['last_hidden_state'],
@@ -63,6 +64,21 @@ torch.onnx.export(
     },
     verbose=False
 )
+
+# 外部データを内部に埋め込む
+import onnx
+from onnx.external_data_helper import convert_model_to_external_data, load_external_data_for_model
+
+print("\n4b. Embedding external data into single file...")
+onnx_model = onnx.load(onnx_path, load_external_data=True)
+
+# すべての外部データを内部に変換
+for tensor in onnx_model.graph.initializer:
+    if tensor.HasField('data_location') and tensor.data_location == onnx.TensorProto.EXTERNAL:
+        tensor.ClearField('data_location')
+
+# 単一ファイルとして保存
+onnx.save(onnx_model, onnx_path)
 
 # ファイルサイズ確認
 size_mb = os.path.getsize(onnx_path) / 1024 / 1024

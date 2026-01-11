@@ -46,7 +46,28 @@ export class ImageEncoder {
 
       // 1. DINOv2 ONNXモデルをロード（518×518入力 → 37×37パッチ）
       console.log('[ImageEncoder] Loading DINOv2 ONNX (518×518 input)...');
-      this.dinov2Session = await ort.InferenceSession.create('/assets/dinov2_518.onnx');
+
+      // 外部データファイルをロード（.onnx.dataが存在する場合）
+      try {
+        const dataResponse = await fetch('/assets/dinov2_518.onnx.data');
+        if (dataResponse.ok) {
+          console.log('[ImageEncoder] Loading external data file...');
+          const externalData = await dataResponse.arrayBuffer();
+          this.dinov2Session = await ort.InferenceSession.create('/assets/dinov2_518.onnx', {
+            externalData: [{
+              path: 'dinov2_518.onnx.data',
+              data: externalData
+            }]
+          });
+        } else {
+          // 外部データファイルがない場合は通常ロード
+          this.dinov2Session = await ort.InferenceSession.create('/assets/dinov2_518.onnx');
+        }
+      } catch {
+        // 外部データファイルがない場合は通常ロード
+        this.dinov2Session = await ort.InferenceSession.create('/assets/dinov2_518.onnx');
+      }
+
       console.log('[ImageEncoder] 🔍 DINOv2 input names:', this.dinov2Session.inputNames);
       console.log('[ImageEncoder] 🔍 DINOv2 output names:', this.dinov2Session.outputNames);
 
