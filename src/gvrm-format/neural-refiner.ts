@@ -7,9 +7,9 @@ export class NeuralRefiner {
   private session: ort.InferenceSession | null = null;
   private initialized = false;
 
-  private readonly MODEL_PATH = '/assets/refiner_websafe_v1_fixed.onnx';
+  private readonly MODEL_PATH = '/assets/refiner_512_websafe.onnx';
   private readonly FM_CHANNELS = 32;
-  private readonly FM_SIZE = 256;
+  private readonly FM_SIZE = 512;
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -76,8 +76,8 @@ export class NeuralRefiner {
       );
     }
 
-    // Tensor作成
-    const fmTensor = new ort.Tensor('float32', coarseFM, [1, 32, 256, 256]);
+    // Tensor作成（512×512 モデル用）
+    const fmTensor = new ort.Tensor('float32', coarseFM, [1, 32, this.FM_SIZE, this.FM_SIZE]);
     const idTensor = new ort.Tensor('float32', idEmb, [1, 256]);
 
     // 推論実行
@@ -152,25 +152,27 @@ export class NeuralRefiner {
         }
       }
 
-      // 正規化
-      const range = max - min;
-      
-      if (range < 0.001) {
-        console.error('[NeuralRefiner] ❌ Output range too small!');
-        out.fill(0.5);
-      } else if (min >= 0 && max <= 1) {
-        console.log('[NeuralRefiner] Already in [0, 1] range');
-      } else if (min >= -1 && max <= 1) {
-        console.log('[NeuralRefiner] Converting [-1, 1] to [0, 1]...');
-        for (let i = 0; i < out.length; i++) {
-          out[i] = (out[i] + 1) / 2;
-        }
-      } else {
-        console.log('[NeuralRefiner] Applying min-max normalization...');
-        for (let i = 0; i < out.length; i++) {
-          out[i] = (out[i] - min) / range;
-        }
+      // 正規化: [-1, 1] → [0, 1] の固定変換（min-max ではなく）
+      // Neural Refiner の出力は通常 [-1, 1] 付近を想定
+      // 少し範囲外の値はクリップする
+      console.log('[NeuralRefiner] Converting output to [0, 1] with fixed mapping...');
+      for (let i = 0; i < out.length; i++) {
+        // [-1, 1] → [0, 1]
+        let normalized = (out[i] + 1) / 2;
+        // クリップ
+        out[i] = Math.max(0, Math.min(1, normalized));
       }
+
+      // 変換後の統計
+      let finalMin = Infinity, finalMax = -Infinity;
+      for (let i = 0; i < 10000; i++) {
+        if (out[i] < finalMin) finalMin = out[i];
+        if (out[i] > finalMax) finalMax = out[i];
+      }
+      console.log('[NeuralRefiner] Final output range:', {
+        min: finalMin.toFixed(4),
+        max: finalMax.toFixed(4)
+      });
 
       console.log('[NeuralRefiner] ✅ Normalization complete');
       return out;

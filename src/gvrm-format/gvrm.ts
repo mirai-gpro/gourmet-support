@@ -52,7 +52,7 @@ export class GVRM {
         this.container = container;
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
-        this.renderer.setSize(256, 256);
+        this.renderer.setSize(512, 512);  // 512×512 for coarse feature map
         this.renderer.domElement.style.display = 'none';
         container.appendChild(this.renderer.domElement);
 
@@ -66,7 +66,7 @@ export class GVRM {
         );
         this.camera.position.set(0, 1.4, 0.8);
 
-        this.renderTarget = new THREE.WebGLRenderTarget(256, 256, {
+        this.renderTarget = new THREE.WebGLRenderTarget(512, 512, {  // 512×512
             type: THREE.FloatType,
             format: THREE.RGBAFormat
         });
@@ -329,67 +329,164 @@ export class GVRM {
     private isFirstFrameProcessed = false;
 
     /**
+     * 🔍 Coarse Feature Map 診断
+     * 空間構造・チャンネル分布・背景/前景分離を確認
+     */
+    private diagnoseCoarseFeatureMap(coarseFm: Float32Array): void {
+        const numChannels = 32;
+        const H = 512, W = 512;  // 512×512
+        const spatialSize = H * W;
+
+        console.log('[GVRM] ===== Coarse Feature Map 診断 (512×512) =====');
+
+        // 1. 全体統計
+        let totalMin = Infinity, totalMax = -Infinity;
+        let zeroCount = 0, nearZeroCount = 0;
+        for (let i = 0; i < coarseFm.length; i++) {
+            const v = coarseFm[i];
+            if (v < totalMin) totalMin = v;
+            if (v > totalMax) totalMax = v;
+            if (v === 0) zeroCount++;
+            if (Math.abs(v) < 0.01) nearZeroCount++;
+        }
+        const zeroRatio = (zeroCount / coarseFm.length * 100).toFixed(1);
+        const nearZeroRatio = (nearZeroCount / coarseFm.length * 100).toFixed(1);
+        console.log(`[GVRM] 全体: min=${totalMin.toFixed(2)}, max=${totalMax.toFixed(2)}, ゼロ=${zeroRatio}%, ほぼゼロ=${nearZeroRatio}%`);
+
+        // 2. 空間分布チェック（中央 vs 周辺）
+        // 人物が中央にいれば、中央に値が集中するはず
+        const centerRegion = { minY: 128, maxY: 384, minX: 128, maxX: 384 };  // 中央256x256
+        let centerSum = 0, centerCount = 0;
+        let edgeSum = 0, edgeCount = 0;
+
+        for (let ch = 0; ch < numChannels; ch++) {
+            const offset = ch * spatialSize;
+            for (let y = 0; y < H; y++) {
+                for (let x = 0; x < W; x++) {
+                    const idx = offset + y * W + x;
+                    const v = Math.abs(coarseFm[idx]);
+                    if (y >= centerRegion.minY && y < centerRegion.maxY &&
+                        x >= centerRegion.minX && x < centerRegion.maxX) {
+                        centerSum += v;
+                        centerCount++;
+                    } else {
+                        edgeSum += v;
+                        edgeCount++;
+                    }
+                }
+            }
+        }
+        const centerAvg = (centerSum / centerCount).toFixed(4);
+        const edgeAvg = (edgeSum / edgeCount).toFixed(4);
+        console.log(`[GVRM] 空間分布: 中央平均=${centerAvg}, 周辺平均=${edgeAvg}, 比率=${(centerSum/centerCount / (edgeSum/edgeCount)).toFixed(2)}x`);
+
+        // 3. チャンネルごとの非ゼロ率
+        const channelStats: string[] = [];
+        for (let ch = 0; ch < Math.min(8, numChannels); ch++) {
+            const offset = ch * spatialSize;
+            let nonZero = 0;
+            let chSum = 0;
+            for (let i = 0; i < spatialSize; i++) {
+                const v = coarseFm[offset + i];
+                if (Math.abs(v) > 0.01) nonZero++;
+                chSum += Math.abs(v);
+            }
+            const nonZeroRatio = (nonZero / spatialSize * 100).toFixed(0);
+            const avgMag = (chSum / spatialSize).toFixed(2);
+            channelStats.push(`Ch${ch}:${nonZeroRatio}%/${avgMag}`);
+        }
+        console.log(`[GVRM] チャンネル統計(非ゼロ率/平均絶対値): ${channelStats.join(', ')}`);
+
+        // 4. 値のヒストグラム（概要）
+        const bins = [0, 0, 0, 0, 0]; // <-100, -100~-1, -1~1, 1~100, >100
+        for (let i = 0; i < coarseFm.length; i++) {
+            const v = coarseFm[i];
+            if (v < -100) bins[0]++;
+            else if (v < -1) bins[1]++;
+            else if (v <= 1) bins[2]++;
+            else if (v <= 100) bins[3]++;
+            else bins[4]++;
+        }
+        const total = coarseFm.length;
+        console.log(`[GVRM] 値分布: <-100:${(bins[0]/total*100).toFixed(1)}%, -100~-1:${(bins[1]/total*100).toFixed(1)}%, -1~1:${(bins[2]/total*100).toFixed(1)}%, 1~100:${(bins[3]/total*100).toFixed(1)}%, >100:${(bins[4]/total*100).toFixed(1)}%`);
+
+        console.log('[GVRM] =====================================');
+    }
+
+    /**
      * Coarse Feature Mapの正規化
-     * GSViewerのadditive blendingで蓄積された値を-1〜+1に正規化
+     * 方式: パーセンタイルベース正規化（外れ値を除外）
+     * 1st〜99thパーセンタイルで正規化し、外れ値はクリップ
      */
     private normalizeCoarseFeatureMap(coarseFm: Float32Array): Float32Array {
-        const normalized = new Float32Array(coarseFm.length);
         const numChannels = 32;
-        const spatialSize = 256 * 256;
+        const spatialSize = 512 * 512;  // 512×512
+        const normalized = new Float32Array(coarseFm.length);
 
-        // チャンネルごとに正規化（Instance Normalization的アプローチ）
+        // チャンネルごとに正規化
         for (let ch = 0; ch < numChannels; ch++) {
             const offset = ch * spatialSize;
 
-            // 統計量を計算
-            let sum = 0;
-            let sumSq = 0;
-            let validCount = 0;
-
+            // このチャンネルの非ゼロ値を収集
+            const values: number[] = [];
             for (let i = 0; i < spatialSize; i++) {
                 const val = coarseFm[offset + i];
-                if (isFinite(val)) {
-                    sum += val;
-                    sumSq += val * val;
-                    validCount++;
+                if (isFinite(val) && Math.abs(val) > 0.001) {
+                    values.push(val);
                 }
             }
 
-            if (validCount === 0) {
-                // 全て無効値の場合はゼロ埋め
+            if (values.length < 100) {
+                // ほぼ空のチャンネル → 0で埋める
                 for (let i = 0; i < spatialSize; i++) {
                     normalized[offset + i] = 0;
                 }
                 continue;
             }
 
-            const mean = sum / validCount;
-            const variance = (sumSq / validCount) - (mean * mean);
-            const std = Math.sqrt(Math.max(variance, 1e-8)); // 安定性のため最小値設定
+            // ソートしてパーセンタイルを取得
+            values.sort((a, b) => a - b);
+            const p1 = values[Math.floor(values.length * 0.01)];  // 1st percentile
+            const p99 = values[Math.floor(values.length * 0.99)]; // 99th percentile
 
-            // 正規化してtanhで-1〜+1にクリップ
-            for (let i = 0; i < spatialSize; i++) {
-                const val = coarseFm[offset + i];
-                if (isFinite(val)) {
-                    const normalizedVal = (val - mean) / std;
-                    // tanhで滑らかに-1〜+1にマッピング
-                    normalized[offset + i] = Math.tanh(normalizedVal * 0.5);
-                } else {
+            const pRange = p99 - p1;
+            if (pRange < 0.001) {
+                for (let i = 0; i < spatialSize; i++) {
                     normalized[offset + i] = 0;
                 }
+                continue;
             }
 
-            // 最初のフレームで最初の数チャンネルのみログ出力
-            if (ch < 3) {
-                let minVal = Infinity, maxVal = -Infinity;
-                for (let i = 0; i < spatialSize; i++) {
-                    const v = normalized[offset + i];
-                    if (v < minVal) minVal = v;
-                    if (v > maxVal) maxVal = v;
+            // パーセンタイル範囲で正規化、外れ値はクリップ
+            for (let i = 0; i < spatialSize; i++) {
+                const val = coarseFm[offset + i];
+                if (!isFinite(val) || Math.abs(val) < 0.001) {
+                    // 背景（ゼロ付近）は0にマップ
+                    normalized[offset + i] = 0;
+                } else {
+                    // [p1, p99] → [-1, 1]、範囲外はクリップ
+                    let norm = ((val - p1) / pRange) * 2 - 1;
+                    normalized[offset + i] = Math.max(-1, Math.min(1, norm));
                 }
-                console.log(`[GVRM] Normalized ch${ch}: mean=${mean.toFixed(2)}, std=${std.toFixed(2)}, range=[${minVal.toFixed(3)}, ${maxVal.toFixed(3)}]`);
+            }
+
+            // 最初の3チャンネルのみログ出力
+            if (ch < 3) {
+                console.log(`[GVRM] Ch${ch} p1=${p1.toFixed(1)}, p99=${p99.toFixed(1)}, nonZero=${values.length}`);
             }
         }
+
+        // 正規化後の全体統計
+        let normMin = Infinity, normMax = -Infinity;
+        let zeroCount = 0;
+        for (let i = 0; i < normalized.length; i++) {
+            const v = normalized[i];
+            if (v < normMin) normMin = v;
+            if (v > normMax) normMax = v;
+            if (v === 0) zeroCount++;
+        }
+        const zeroRatio = (zeroCount / normalized.length * 100).toFixed(1);
+        console.log(`[GVRM] Normalized: range=[${normMin.toFixed(4)}, ${normMax.toFixed(4)}], zeros=${zeroRatio}%`);
 
         return normalized;
     }
@@ -409,58 +506,81 @@ export class GVRM {
 
         this.viewer.updateBones(this.vrm.update());
 
-        const coarseFm = new Float32Array(1 * 32 * 256 * 256);
-        
+        const FM_SIZE = 512;  // 512×512 coarse feature map
+        const coarseFm = new Float32Array(1 * 32 * FM_SIZE * FM_SIZE);
+
         if (this.frameCount === 1) {
-            console.log('[GVRM] Generating coarse feature map (8 passes)...');
+            console.log(`[GVRM] Generating coarse feature map (8 passes, ${FM_SIZE}×${FM_SIZE})...`);
         }
-        
+
         for (let i = 0; i < 8; i++) {
             this.viewer.updateLatentTile(i);
             this.renderer.setRenderTarget(this.renderTarget);
             this.renderer.render(this.scene, this.camera);
-            
-            const pixels = new Float32Array(256 * 256 * 4);
-            this.renderer.readRenderTargetPixels(this.renderTarget, 0, 0, 256, 256, pixels);
-            
+
+            const pixels = new Float32Array(FM_SIZE * FM_SIZE * 4);
+            this.renderer.readRenderTargetPixels(this.renderTarget, 0, 0, FM_SIZE, FM_SIZE, pixels);
+
             if (this.frameCount === 1 && i === 0) {
-                const pixelStats = {
-                    min: Math.min(...Array.from(pixels.slice(0, 1000))),
-                    max: Math.max(...Array.from(pixels.slice(0, 1000))),
-                    sample: Array.from(pixels.slice(0, 10)).map(v => v.toFixed(6))
-                };
-                console.log(`[GVRM] Pass ${i} pixel data:`, pixelStats);
+                // weighted average 前の生値
+                let rawMin = Infinity, rawMax = -Infinity;
+                let alphaMin = Infinity, alphaMax = -Infinity;
+                for (let j = 0; j < 1000; j++) {
+                    const r = pixels[j * 4];
+                    const a = pixels[j * 4 + 3];
+                    if (r < rawMin) rawMin = r;
+                    if (r > rawMax) rawMax = r;
+                    if (a > 0) {
+                        if (a < alphaMin) alphaMin = a;
+                        if (a > alphaMax) alphaMax = a;
+                    }
+                }
+                console.log(`[GVRM] Pass ${i} raw:`, {
+                    featureRange: `[${rawMin.toFixed(1)}, ${rawMax.toFixed(1)}]`,
+                    alphaRange: `[${alphaMin.toFixed(3)}, ${alphaMax.toFixed(3)}]`
+                });
             }
-            
-            const baseOffset = i * 4 * 256 * 256;
-            
-            for (let p = 0; p < 256 * 256; p++) {
-                coarseFm[baseOffset + p] = pixels[p * 4 + 0];
-                coarseFm[baseOffset + 256 * 256 + p] = pixels[p * 4 + 1];
-                coarseFm[baseOffset + 256 * 256 * 2 + p] = pixels[p * 4 + 2];
-                coarseFm[baseOffset + 256 * 256 * 3 + p] = pixels[p * 4 + 3];
+
+            const spatialSize = FM_SIZE * FM_SIZE;
+            const baseOffset = i * 4 * spatialSize;
+
+            // Weighted average: feature = Σ(f × α) / Σ(α)
+            // シェーダー出力: RGB = f0,f1,f2 × α, A = Σ(α)
+            for (let p = 0; p < spatialSize; p++) {
+                const fTimesAlpha0 = pixels[p * 4 + 0];
+                const fTimesAlpha1 = pixels[p * 4 + 1];
+                const fTimesAlpha2 = pixels[p * 4 + 2];
+                const alphaSum = pixels[p * 4 + 3];
+
+                // αで割って weighted average を計算
+                // α=0 の場合（背景）は 0 のまま
+                if (alphaSum > 0.001) {
+                    coarseFm[baseOffset + p] = fTimesAlpha0 / alphaSum;
+                    coarseFm[baseOffset + spatialSize + p] = fTimesAlpha1 / alphaSum;
+                    coarseFm[baseOffset + spatialSize * 2 + p] = fTimesAlpha2 / alphaSum;
+                } else {
+                    coarseFm[baseOffset + p] = 0;
+                    coarseFm[baseOffset + spatialSize + p] = 0;
+                    coarseFm[baseOffset + spatialSize * 2 + p] = 0;
+                }
+
+                // ⚠️ ch3, ch7, ch11, ... は現在のシェーダーでは取得不可
+                // 暫定: 隣接チャンネルの平均で補間
+                const ch3Value = (coarseFm[baseOffset + p] +
+                                  coarseFm[baseOffset + spatialSize + p] +
+                                  coarseFm[baseOffset + spatialSize * 2 + p]) / 3;
+                coarseFm[baseOffset + spatialSize * 3 + p] = ch3Value;
             }
         }
 
         if (!this.isFirstFrameProcessed) {
             console.log('[GVRM] Calling Neural Refiner...');
 
+            // 🔍 Coarse Feature Map 診断
+            this.diagnoseCoarseFeatureMap(coarseFm);
+
             // Coarse Feature Mapの正規化（Neural Refinerは-1〜+1を期待）
             const normalizedCoarseFm = this.normalizeCoarseFeatureMap(coarseFm);
-
-            // 正規化後の統計を確認
-            let normMin = Infinity, normMax = -Infinity, normSum = 0;
-            for (let i = 0; i < Math.min(normalizedCoarseFm.length, 10000); i++) {
-                const v = normalizedCoarseFm[i];
-                if (v < normMin) normMin = v;
-                if (v > normMax) normMax = v;
-                normSum += v;
-            }
-            console.log('[GVRM] Normalized coarse FM:', {
-                min: normMin.toFixed(4),
-                max: normMax.toFixed(4),
-                mean: (normSum / 10000).toFixed(4)
-            });
 
             const startTime = performance.now();
             const refinedRgb = await this.refiner.process(normalizedCoarseFm, this.idEmbedding);
