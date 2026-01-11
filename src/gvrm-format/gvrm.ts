@@ -521,21 +521,53 @@ export class GVRM {
             this.renderer.readRenderTargetPixels(this.renderTarget, 0, 0, 256, 256, pixels);
             
             if (this.frameCount === 1 && i === 0) {
-                const pixelStats = {
-                    min: Math.min(...Array.from(pixels.slice(0, 1000))),
-                    max: Math.max(...Array.from(pixels.slice(0, 1000))),
-                    sample: Array.from(pixels.slice(0, 10)).map(v => v.toFixed(6))
-                };
-                console.log(`[GVRM] Pass ${i} pixel data:`, pixelStats);
+                // weighted average 前の生値
+                let rawMin = Infinity, rawMax = -Infinity;
+                let alphaMin = Infinity, alphaMax = -Infinity;
+                for (let j = 0; j < 1000; j++) {
+                    const r = pixels[j * 4];
+                    const a = pixels[j * 4 + 3];
+                    if (r < rawMin) rawMin = r;
+                    if (r > rawMax) rawMax = r;
+                    if (a > 0) {
+                        if (a < alphaMin) alphaMin = a;
+                        if (a > alphaMax) alphaMax = a;
+                    }
+                }
+                console.log(`[GVRM] Pass ${i} raw:`, {
+                    featureRange: `[${rawMin.toFixed(1)}, ${rawMax.toFixed(1)}]`,
+                    alphaRange: `[${alphaMin.toFixed(3)}, ${alphaMax.toFixed(3)}]`
+                });
             }
             
             const baseOffset = i * 4 * 256 * 256;
-            
+
+            // Weighted average: feature = Σ(f × α) / Σ(α)
+            // シェーダー出力: RGB = f0,f1,f2 × α, A = Σ(α)
             for (let p = 0; p < 256 * 256; p++) {
-                coarseFm[baseOffset + p] = pixels[p * 4 + 0];
-                coarseFm[baseOffset + 256 * 256 + p] = pixels[p * 4 + 1];
-                coarseFm[baseOffset + 256 * 256 * 2 + p] = pixels[p * 4 + 2];
-                coarseFm[baseOffset + 256 * 256 * 3 + p] = pixels[p * 4 + 3];
+                const fTimesAlpha0 = pixels[p * 4 + 0];
+                const fTimesAlpha1 = pixels[p * 4 + 1];
+                const fTimesAlpha2 = pixels[p * 4 + 2];
+                const alphaSum = pixels[p * 4 + 3];
+
+                // αで割って weighted average を計算
+                // α=0 の場合（背景）は 0 のまま
+                if (alphaSum > 0.001) {
+                    coarseFm[baseOffset + p] = fTimesAlpha0 / alphaSum;
+                    coarseFm[baseOffset + 256 * 256 + p] = fTimesAlpha1 / alphaSum;
+                    coarseFm[baseOffset + 256 * 256 * 2 + p] = fTimesAlpha2 / alphaSum;
+                } else {
+                    coarseFm[baseOffset + p] = 0;
+                    coarseFm[baseOffset + 256 * 256 + p] = 0;
+                    coarseFm[baseOffset + 256 * 256 * 2 + p] = 0;
+                }
+
+                // ⚠️ ch3, ch7, ch11, ... は現在のシェーダーでは取得不可
+                // 暫定: 隣接チャンネルの平均で補間
+                const ch3Value = (coarseFm[baseOffset + p] +
+                                  coarseFm[baseOffset + 256 * 256 + p] +
+                                  coarseFm[baseOffset + 256 * 256 * 2 + p]) / 3;
+                coarseFm[baseOffset + 256 * 256 * 3 + p] = ch3Value;
             }
         }
 
