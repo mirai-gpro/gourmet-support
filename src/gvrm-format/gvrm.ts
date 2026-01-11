@@ -25,6 +25,11 @@ export class GVRM {
     private isReady = false;
 
     constructor(container: HTMLElement) {
+        if (!container) {
+            throw new Error('[GVRM] Container is undefined! Check that #avatar3DContainer exists in DOM.');
+        }
+        console.log('[GVRM] Container found:', container.id, container.tagName);
+
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         this.renderer.setSize(256, 256);
         this.renderer.domElement.style.display = 'none';

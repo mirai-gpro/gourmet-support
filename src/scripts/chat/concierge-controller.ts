@@ -35,11 +35,15 @@ export class ConciergeController extends CoreController {
     const query = (sel: string) => this.container.querySelector(sel) as HTMLElement;
     
     // ★修正: アバターコンテナの取得 (Concierge.astroの変更に対応)
-    this.els.avatarContainer = query('#avatar3DContainer'); 
+    this.els.avatarContainer = query('#avatar3DContainer');
     this.els.modeSwitch = query('#modeSwitch') as HTMLInputElement;
-    
+
+    console.log('[ConciergeController] avatarContainer:', this.els.avatarContainer);
+    console.log('[ConciergeController] this.container:', this.container);
+
     // ★追加: GUAVAレンダラーの初期化
     if (this.els.avatarContainer) {
+      console.log('[ConciergeController] Creating GVRM with container:', this.els.avatarContainer.id);
       this.guavaRenderer = new GVRM(this.els.avatarContainer);
       
       try {
