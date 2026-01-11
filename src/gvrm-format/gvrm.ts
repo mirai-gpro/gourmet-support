@@ -329,6 +329,91 @@ export class GVRM {
     private isFirstFrameProcessed = false;
 
     /**
+     * 🔍 Coarse Feature Map 診断
+     * 空間構造・チャンネル分布・背景/前景分離を確認
+     */
+    private diagnoseCoarseFeatureMap(coarseFm: Float32Array): void {
+        const numChannels = 32;
+        const H = 256, W = 256;
+        const spatialSize = H * W;
+
+        console.log('[GVRM] ===== Coarse Feature Map 診断 =====');
+
+        // 1. 全体統計
+        let totalMin = Infinity, totalMax = -Infinity;
+        let zeroCount = 0, nearZeroCount = 0;
+        for (let i = 0; i < coarseFm.length; i++) {
+            const v = coarseFm[i];
+            if (v < totalMin) totalMin = v;
+            if (v > totalMax) totalMax = v;
+            if (v === 0) zeroCount++;
+            if (Math.abs(v) < 0.01) nearZeroCount++;
+        }
+        const zeroRatio = (zeroCount / coarseFm.length * 100).toFixed(1);
+        const nearZeroRatio = (nearZeroCount / coarseFm.length * 100).toFixed(1);
+        console.log(`[GVRM] 全体: min=${totalMin.toFixed(2)}, max=${totalMax.toFixed(2)}, ゼロ=${zeroRatio}%, ほぼゼロ=${nearZeroRatio}%`);
+
+        // 2. 空間分布チェック（中央 vs 周辺）
+        // 人物が中央にいれば、中央に値が集中するはず
+        const centerRegion = { minY: 64, maxY: 192, minX: 64, maxX: 192 };  // 中央128x128
+        let centerSum = 0, centerCount = 0;
+        let edgeSum = 0, edgeCount = 0;
+
+        for (let ch = 0; ch < numChannels; ch++) {
+            const offset = ch * spatialSize;
+            for (let y = 0; y < H; y++) {
+                for (let x = 0; x < W; x++) {
+                    const idx = offset + y * W + x;
+                    const v = Math.abs(coarseFm[idx]);
+                    if (y >= centerRegion.minY && y < centerRegion.maxY &&
+                        x >= centerRegion.minX && x < centerRegion.maxX) {
+                        centerSum += v;
+                        centerCount++;
+                    } else {
+                        edgeSum += v;
+                        edgeCount++;
+                    }
+                }
+            }
+        }
+        const centerAvg = (centerSum / centerCount).toFixed(4);
+        const edgeAvg = (edgeSum / edgeCount).toFixed(4);
+        console.log(`[GVRM] 空間分布: 中央平均=${centerAvg}, 周辺平均=${edgeAvg}, 比率=${(centerSum/centerCount / (edgeSum/edgeCount)).toFixed(2)}x`);
+
+        // 3. チャンネルごとの非ゼロ率
+        const channelStats: string[] = [];
+        for (let ch = 0; ch < Math.min(8, numChannels); ch++) {
+            const offset = ch * spatialSize;
+            let nonZero = 0;
+            let chSum = 0;
+            for (let i = 0; i < spatialSize; i++) {
+                const v = coarseFm[offset + i];
+                if (Math.abs(v) > 0.01) nonZero++;
+                chSum += Math.abs(v);
+            }
+            const nonZeroRatio = (nonZero / spatialSize * 100).toFixed(0);
+            const avgMag = (chSum / spatialSize).toFixed(2);
+            channelStats.push(`Ch${ch}:${nonZeroRatio}%/${avgMag}`);
+        }
+        console.log(`[GVRM] チャンネル統計(非ゼロ率/平均絶対値): ${channelStats.join(', ')}`);
+
+        // 4. 値のヒストグラム（概要）
+        const bins = [0, 0, 0, 0, 0]; // <-100, -100~-1, -1~1, 1~100, >100
+        for (let i = 0; i < coarseFm.length; i++) {
+            const v = coarseFm[i];
+            if (v < -100) bins[0]++;
+            else if (v < -1) bins[1]++;
+            else if (v <= 1) bins[2]++;
+            else if (v <= 100) bins[3]++;
+            else bins[4]++;
+        }
+        const total = coarseFm.length;
+        console.log(`[GVRM] 値分布: <-100:${(bins[0]/total*100).toFixed(1)}%, -100~-1:${(bins[1]/total*100).toFixed(1)}%, -1~1:${(bins[2]/total*100).toFixed(1)}%, 1~100:${(bins[3]/total*100).toFixed(1)}%, >100:${(bins[4]/total*100).toFixed(1)}%`);
+
+        console.log('[GVRM] =====================================');
+    }
+
+    /**
      * Coarse Feature Mapの正規化
      * 方式: チャンネルごとのmin-max正規化で[-1, 1]にスケーリング
      * 各チャンネルの特徴分布を保持するため、グローバルではなくチャンネル単位で正規化
@@ -441,6 +526,9 @@ export class GVRM {
 
         if (!this.isFirstFrameProcessed) {
             console.log('[GVRM] Calling Neural Refiner...');
+
+            // 🔍 Coarse Feature Map 診断
+            this.diagnoseCoarseFeatureMap(coarseFm);
 
             // Coarse Feature Mapの正規化（Neural Refinerは-1〜+1を期待）
             const normalizedCoarseFm = this.normalizeCoarseFeatureMap(coarseFm);
