@@ -71,6 +71,18 @@ export class GVRM {
         this.animate();
     }
 
+    /**
+     * 内部コンポーネントの初期化（オプション）
+     * concierge-controller.tsから呼ばれる場合に対応
+     */
+    public async init(): Promise<void> {
+        if (this.isDisabled) {
+            console.warn('[GVRM] init() called but GVRM is disabled');
+            return;
+        }
+        console.log('[GVRM] init() called - internal components will initialize on loadAssets()');
+    }
+
     public async loadAssets(plyUrl: string, imageUrl?: string): Promise<boolean> {
         // 無効化モードの場合は早期リターン
         if (this.isDisabled) {
