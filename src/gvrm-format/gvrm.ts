@@ -330,66 +330,51 @@ export class GVRM {
 
     /**
      * Coarse Feature Mapの正規化
-     * GSViewerのadditive blendingで蓄積された値を-1〜+1に正規化
+     * 方式: グローバルmin-max正規化で[-1, 1]にスケーリング
+     * tanh圧縮は情報損失が大きいため使用しない
      */
     private normalizeCoarseFeatureMap(coarseFm: Float32Array): Float32Array {
-        const normalized = new Float32Array(coarseFm.length);
-        const numChannels = 32;
-        const spatialSize = 256 * 256;
+        // まずグローバルなmin/maxを計算
+        let globalMin = Infinity;
+        let globalMax = -Infinity;
 
-        // チャンネルごとに正規化（Instance Normalization的アプローチ）
-        for (let ch = 0; ch < numChannels; ch++) {
-            const offset = ch * spatialSize;
-
-            // 統計量を計算
-            let sum = 0;
-            let sumSq = 0;
-            let validCount = 0;
-
-            for (let i = 0; i < spatialSize; i++) {
-                const val = coarseFm[offset + i];
-                if (isFinite(val)) {
-                    sum += val;
-                    sumSq += val * val;
-                    validCount++;
-                }
-            }
-
-            if (validCount === 0) {
-                // 全て無効値の場合はゼロ埋め
-                for (let i = 0; i < spatialSize; i++) {
-                    normalized[offset + i] = 0;
-                }
-                continue;
-            }
-
-            const mean = sum / validCount;
-            const variance = (sumSq / validCount) - (mean * mean);
-            const std = Math.sqrt(Math.max(variance, 1e-8)); // 安定性のため最小値設定
-
-            // 正規化してtanhで-1〜+1にクリップ
-            for (let i = 0; i < spatialSize; i++) {
-                const val = coarseFm[offset + i];
-                if (isFinite(val)) {
-                    const normalizedVal = (val - mean) / std;
-                    // tanhで滑らかに-1〜+1にマッピング
-                    normalized[offset + i] = Math.tanh(normalizedVal * 0.5);
-                } else {
-                    normalized[offset + i] = 0;
-                }
-            }
-
-            // 最初のフレームで最初の数チャンネルのみログ出力
-            if (ch < 3) {
-                let minVal = Infinity, maxVal = -Infinity;
-                for (let i = 0; i < spatialSize; i++) {
-                    const v = normalized[offset + i];
-                    if (v < minVal) minVal = v;
-                    if (v > maxVal) maxVal = v;
-                }
-                console.log(`[GVRM] Normalized ch${ch}: mean=${mean.toFixed(2)}, std=${std.toFixed(2)}, range=[${minVal.toFixed(3)}, ${maxVal.toFixed(3)}]`);
+        for (let i = 0; i < coarseFm.length; i++) {
+            const val = coarseFm[i];
+            if (isFinite(val)) {
+                if (val < globalMin) globalMin = val;
+                if (val > globalMax) globalMax = val;
             }
         }
+
+        console.log(`[GVRM] Coarse FM raw range: [${globalMin.toFixed(2)}, ${globalMax.toFixed(2)}]`);
+
+        const range = globalMax - globalMin;
+        if (range < 1e-6) {
+            console.warn('[GVRM] Coarse FM has near-zero range, returning zeros');
+            return new Float32Array(coarseFm.length);
+        }
+
+        // グローバルmin-maxで[-1, 1]に正規化
+        const normalized = new Float32Array(coarseFm.length);
+        for (let i = 0; i < coarseFm.length; i++) {
+            const val = coarseFm[i];
+            if (isFinite(val)) {
+                // [min, max] -> [-1, 1]
+                normalized[i] = ((val - globalMin) / range) * 2 - 1;
+            } else {
+                normalized[i] = 0;
+            }
+        }
+
+        // 正規化後の統計確認
+        let normMin = Infinity, normMax = -Infinity, normSum = 0;
+        for (let i = 0; i < Math.min(normalized.length, 10000); i++) {
+            const v = normalized[i];
+            if (v < normMin) normMin = v;
+            if (v > normMax) normMax = v;
+            normSum += v;
+        }
+        console.log(`[GVRM] Normalized range: [${normMin.toFixed(4)}, ${normMax.toFixed(4)}], mean: ${(normSum/10000).toFixed(4)}`);
 
         return normalized;
     }
@@ -447,20 +432,6 @@ export class GVRM {
 
             // Coarse Feature Mapの正規化（Neural Refinerは-1〜+1を期待）
             const normalizedCoarseFm = this.normalizeCoarseFeatureMap(coarseFm);
-
-            // 正規化後の統計を確認
-            let normMin = Infinity, normMax = -Infinity, normSum = 0;
-            for (let i = 0; i < Math.min(normalizedCoarseFm.length, 10000); i++) {
-                const v = normalizedCoarseFm[i];
-                if (v < normMin) normMin = v;
-                if (v > normMax) normMax = v;
-                normSum += v;
-            }
-            console.log('[GVRM] Normalized coarse FM:', {
-                min: normMin.toFixed(4),
-                max: normMax.toFixed(4),
-                mean: (normSum / 10000).toFixed(4)
-            });
 
             const startTime = performance.now();
             const refinedRgb = await this.refiner.process(normalizedCoarseFm, this.idEmbedding);
