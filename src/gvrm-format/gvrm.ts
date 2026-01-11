@@ -12,23 +12,29 @@ import { WebGLDisplay } from './webgl-display';
 export class GVRM {
     private scene = new THREE.Scene();
     private camera: THREE.PerspectiveCamera;
-    private renderer: THREE.WebGLRenderer;
+    private renderer: THREE.WebGLRenderer | null = null;
     private renderTarget: THREE.WebGLRenderTarget;
     private refiner = new NeuralRefiner();
     private templateDecoder = new TemplateDecoder();
     private imageEncoder = new ImageEncoder();
     private vrm = new VRMManager();
     public viewer: GSViewer | null = null;
-    private webglDisplay: WebGLDisplay;
+    private webglDisplay: WebGLDisplay | null = null;
+    private container: HTMLElement | null = null;
 
     private idEmbedding: Float32Array = new Float32Array(256).fill(0.5);
     private isReady = false;
+    private isDisabled = false;
 
     constructor(container: HTMLElement) {
+        // containerがない場合は無効化モードで動作（フォールバック画像を使用）
         if (!container) {
-            throw new Error('[GVRM] Container is undefined! Check that #avatar3DContainer exists in DOM.');
+            console.warn('[GVRM] Container is undefined - running in disabled mode (fallback image will be used)');
+            this.isDisabled = true;
+            return;
         }
         console.log('[GVRM] Container found:', container.id, container.tagName);
+        this.container = container;
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         this.renderer.setSize(256, 256);
@@ -58,9 +64,15 @@ export class GVRM {
         this.animate();
     }
 
-    public async loadAssets(plyUrl: string) {
+    public async loadAssets(plyUrl: string, imageUrl?: string): Promise<boolean> {
+        // 無効化モードの場合は早期リターン
+        if (this.isDisabled) {
+            console.warn('[GVRM] Disabled mode - skipping asset loading');
+            return false;
+        }
+
         console.log('[GVRM] Loading assets...');
-        
+
         try {
             const data = await PLYLoader.load(plyUrl);
             console.log('[GVRM] PLY loaded, vertex count:', data.positions.length / 3);
