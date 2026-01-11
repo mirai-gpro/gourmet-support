@@ -9,11 +9,16 @@ import { ImageEncoder } from './image-encoder';
 import type { SourceCameraConfig } from './image-encoder';
 import { WebGLDisplay } from './webgl-display';
 
+export interface GVRMConfig {
+    templatePath: string;
+    imagePath: string;
+}
+
 export class GVRM {
     private scene = new THREE.Scene();
-    private camera: THREE.PerspectiveCamera;
+    private camera!: THREE.PerspectiveCamera;
     private renderer: THREE.WebGLRenderer | null = null;
-    private renderTarget: THREE.WebGLRenderTarget;
+    private renderTarget!: THREE.WebGLRenderTarget;
     private refiner = new NeuralRefiner();
     private templateDecoder = new TemplateDecoder();
     private imageEncoder = new ImageEncoder();
@@ -26,21 +31,24 @@ export class GVRM {
     private isReady = false;
     private isDisabled = false;
 
-    constructor(container: HTMLElement) {
-        // containerがない場合は直接DOMから検索
-        if (!container) {
-            console.warn('[GVRM] Container parameter is undefined - searching DOM directly...');
-            const found = document.getElementById('avatar3DContainer');
-            if (found) {
-                console.log('[GVRM] Found #avatar3DContainer via direct DOM search');
-                container = found as HTMLElement;
-            } else {
-                console.error('[GVRM] #avatar3DContainer not found in DOM!');
-                this.isDisabled = true;
-                return;
-            }
+    /**
+     * コンストラクタ - 引数なしでも動作（init()で初期化）
+     */
+    constructor(container?: HTMLElement) {
+        console.log('[GVRM] Constructor called, container:', container ? 'provided' : 'not provided');
+
+        // containerが渡された場合は即座に初期化
+        if (container) {
+            this.setupContainer(container);
         }
-        console.log('[GVRM] Container ready:', container.id, container.tagName);
+        // containerがない場合はinit()で初期化される
+    }
+
+    /**
+     * コンテナのセットアップ
+     */
+    private setupContainer(container: HTMLElement): void {
+        console.log('[GVRM] Setting up container:', container.id, container.tagName);
         this.container = container;
 
         this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
@@ -51,14 +59,14 @@ export class GVRM {
         this.webglDisplay = new WebGLDisplay(container, 512, 512);
 
         this.camera = new THREE.PerspectiveCamera(
-            45, 
-            container.clientWidth / container.clientHeight, 
-            0.01, 
+            45,
+            container.clientWidth / container.clientHeight,
+            0.01,
             100
         );
         this.camera.position.set(0, 1.4, 0.8);
-        
-        this.renderTarget = new THREE.WebGLRenderTarget(256, 256, { 
+
+        this.renderTarget = new THREE.WebGLRenderTarget(256, 256, {
             type: THREE.FloatType,
             format: THREE.RGBAFormat
         });
@@ -72,15 +80,29 @@ export class GVRM {
     }
 
     /**
-     * 内部コンポーネントの初期化（オプション）
-     * concierge-controller.tsから呼ばれる場合に対応
+     * 初期化メソッド - configを受け取ってアセットをロード
+     * 本番環境のconcierge-controller.tsから呼ばれる
      */
-    public async init(): Promise<void> {
-        if (this.isDisabled) {
-            console.warn('[GVRM] init() called but GVRM is disabled');
-            return;
+    public async init(config?: GVRMConfig): Promise<void> {
+        console.log('[GVRM] init() called with config:', config);
+
+        // コンテナがまだセットアップされていない場合はDOMから検索
+        if (!this.container) {
+            const found = document.getElementById('avatar3DContainer');
+            if (found) {
+                console.log('[GVRM] Found #avatar3DContainer via DOM search');
+                this.setupContainer(found as HTMLElement);
+            } else {
+                console.error('[GVRM] #avatar3DContainer not found in DOM!');
+                this.isDisabled = true;
+                throw new Error('[GVRM] Container not found');
+            }
         }
-        console.log('[GVRM] init() called - internal components will initialize on loadAssets()');
+
+        // configが渡された場合はアセットをロード
+        if (config) {
+            await this.loadAssets(config.templatePath, config.imagePath);
+        }
     }
 
     public async loadAssets(plyUrl: string, imageUrl?: string): Promise<boolean> {
