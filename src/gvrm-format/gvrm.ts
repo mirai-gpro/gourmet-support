@@ -415,8 +415,8 @@ export class GVRM {
 
     /**
      * Coarse Feature Mapの正規化
-     * 方式: チャンネルごとのmin-max正規化で[-1, 1]にスケーリング
-     * 各チャンネルの特徴分布を保持するため、グローバルではなくチャンネル単位で正規化
+     * 方式: パーセンタイルベース正規化（外れ値を除外）
+     * 1st〜99thパーセンタイルで正規化し、外れ値はクリップ
      */
     private normalizeCoarseFeatureMap(coarseFm: Float32Array): Float32Array {
         const numChannels = 32;
@@ -427,51 +427,66 @@ export class GVRM {
         for (let ch = 0; ch < numChannels; ch++) {
             const offset = ch * spatialSize;
 
-            // このチャンネルのmin/maxを計算
-            let chMin = Infinity;
-            let chMax = -Infinity;
-
+            // このチャンネルの非ゼロ値を収集
+            const values: number[] = [];
             for (let i = 0; i < spatialSize; i++) {
                 const val = coarseFm[offset + i];
-                if (isFinite(val)) {
-                    if (val < chMin) chMin = val;
-                    if (val > chMax) chMax = val;
+                if (isFinite(val) && Math.abs(val) > 0.001) {
+                    values.push(val);
                 }
             }
 
-            const chRange = chMax - chMin;
-
-            if (chRange < 1e-6) {
-                // このチャンネルは定数 → 0で埋める
+            if (values.length < 100) {
+                // ほぼ空のチャンネル → 0で埋める
                 for (let i = 0; i < spatialSize; i++) {
                     normalized[offset + i] = 0;
                 }
-            } else {
-                // [-1, 1] に正規化
+                continue;
+            }
+
+            // ソートしてパーセンタイルを取得
+            values.sort((a, b) => a - b);
+            const p1 = values[Math.floor(values.length * 0.01)];  // 1st percentile
+            const p99 = values[Math.floor(values.length * 0.99)]; // 99th percentile
+
+            const pRange = p99 - p1;
+            if (pRange < 0.001) {
                 for (let i = 0; i < spatialSize; i++) {
-                    const val = coarseFm[offset + i];
-                    if (isFinite(val)) {
-                        normalized[offset + i] = ((val - chMin) / chRange) * 2 - 1;
-                    } else {
-                        normalized[offset + i] = 0;
-                    }
+                    normalized[offset + i] = 0;
+                }
+                continue;
+            }
+
+            // パーセンタイル範囲で正規化、外れ値はクリップ
+            for (let i = 0; i < spatialSize; i++) {
+                const val = coarseFm[offset + i];
+                if (!isFinite(val) || Math.abs(val) < 0.001) {
+                    // 背景（ゼロ付近）は0にマップ
+                    normalized[offset + i] = 0;
+                } else {
+                    // [p1, p99] → [-1, 1]、範囲外はクリップ
+                    let norm = ((val - p1) / pRange) * 2 - 1;
+                    normalized[offset + i] = Math.max(-1, Math.min(1, norm));
                 }
             }
 
             // 最初の3チャンネルのみログ出力
             if (ch < 3) {
-                console.log(`[GVRM] Ch${ch} raw:[${chMin.toFixed(1)},${chMax.toFixed(1)}] → normalized:[-1,1]`);
+                console.log(`[GVRM] Ch${ch} p1=${p1.toFixed(1)}, p99=${p99.toFixed(1)}, nonZero=${values.length}`);
             }
         }
 
         // 正規化後の全体統計
         let normMin = Infinity, normMax = -Infinity;
+        let zeroCount = 0;
         for (let i = 0; i < normalized.length; i++) {
             const v = normalized[i];
             if (v < normMin) normMin = v;
             if (v > normMax) normMax = v;
+            if (v === 0) zeroCount++;
         }
-        console.log(`[GVRM] All channels normalized range: [${normMin.toFixed(4)}, ${normMax.toFixed(4)}]`);
+        const zeroRatio = (zeroCount / normalized.length * 100).toFixed(1);
+        console.log(`[GVRM] Normalized: range=[${normMin.toFixed(4)}, ${normMax.toFixed(4)}], zeros=${zeroRatio}%`);
 
         return normalized;
     }
