@@ -66,18 +66,22 @@ const fragmentShader = `
     float dist = length(center);
 
     // Gaussian falloff: exp(-dist^2 / sigma^2)
+    // sigma = 0.25 で中心から端まで滑らかに減衰
     float sigma = 0.25;
     float gaussian = exp(-dist * dist / (2.0 * sigma * sigma));
 
+    // 端で完全に透明
     if (dist > 0.5) discard;
 
-    // 不透明度（sigmoid活性化）
+    // 不透明度を適用（sigmoid活性化されたopacity）
+    // opacity値は学習済みなので、sigmoidで[0,1]に変換
     float alpha = 1.0 / (1.0 + exp(-vOpacity));
     alpha *= gaussian;
 
+    // α < 0.01 はスキップ
     if (alpha < 0.01) discard;
 
-    // RGB = feature[0,1,2] × α, A = α（weighted average計算用）
+    // 特徴量にαを掛けて出力（alpha blending準備）
     gl_FragColor = vec4(vFeature.rgb * alpha, alpha);
   }
 `;
@@ -156,7 +160,7 @@ export class GSViewer {
       depthTest: true,
       depthWrite: false,  // Alpha blending用
       transparent: true,
-      blending: THREE.AdditiveBlending  // 特徴量の加算合成
+      blending: THREE.NormalBlending  // ✅ AdditiveBlending → NormalBlending に変更
     });
 
     this.mesh = new THREE.Points(this.geometry, material);

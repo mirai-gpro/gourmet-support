@@ -1,11 +1,20 @@
 // image-encoder.ts
 // DINOv2 + DINO Encoder 完全ONNX版
-// 技術仕様書 Section 3.1: 518×518入力 → 37×37パッチ（1369パッチ）
+// 技術仕様書 Section 3.1: 518×518入力 → 37×37パッチ(1369パッチ)
+// 修正版: 配列形式のposition/target対応
 
 import * as ort from 'onnxruntime-web';
 import { RawImage } from '@huggingface/transformers';
 
 export interface CameraParams {
+  position: [number, number, number];
+  target: [number, number, number];
+  fov: number;
+  aspect: number;
+  near: number;
+  far: number;
+  width: number;
+  height: number;
   viewMatrix: Float32Array;
   projMatrix: Float32Array;
   screenWidth: number;
@@ -13,8 +22,8 @@ export interface CameraParams {
 }
 
 export interface SourceCameraConfig {
-  position: { x: number; y: number; z: number };
-  target: { x: number; y: number; z: number };
+  position: [number, number, number];
+  target: [number, number, number];
   fov: number;
   imageWidth: number;
   imageHeight: number;
@@ -24,6 +33,10 @@ export class ImageEncoder {
   private dinov2Session: ort.InferenceSession | null = null;
   private encoderSession: ort.InferenceSession | null = null;
   private initialized = false;
+  
+  // ? 論文準拠: 2つのブランチを保存
+  private templateFeatures: Float32Array | null = null;  // 518×518×128
+  private uvFeatures: Float32Array | null = null;        // 518×518×32
 
   async init(): Promise<void> {
     if (this.initialized) return;
@@ -44,10 +57,10 @@ export class ImageEncoder {
 
       console.log('[ImageEncoder] ONNX Runtime v1.17.3 configured');
 
-      // 1. DINOv2 ONNXモデルをロード（518×518入力 → 37×37パッチ）
+      // 1. DINOv2 ONNXモデルをロード(518×518入力 → 37×37パッチ)
       console.log('[ImageEncoder] Loading DINOv2 ONNX (518×518 input)...');
 
-      // 外部データファイルをロード（.onnx.dataが存在する場合）
+      // 外部データファイルをロード(.onnx.dataが存在する場合)
       try {
         const dataResponse = await fetch('/assets/dinov2_518.onnx.data');
         if (dataResponse.ok) {
@@ -68,25 +81,25 @@ export class ImageEncoder {
         this.dinov2Session = await ort.InferenceSession.create('/assets/dinov2_518.onnx');
       }
 
-      console.log('[ImageEncoder] 🔍 DINOv2 input names:', this.dinov2Session.inputNames);
-      console.log('[ImageEncoder] 🔍 DINOv2 output names:', this.dinov2Session.outputNames);
+      console.log('[ImageEncoder] ?? DINOv2 input names:', this.dinov2Session.inputNames);
+      console.log('[ImageEncoder] ?? DINOv2 output names:', this.dinov2Session.outputNames);
 
-      // 2. DINO Encoder ONNXモデルをロード（37×37 → 518×518）
+      // 2. DINO Encoder ONNXモデルをロード(37×37 → 518×518)
       console.log('[ImageEncoder] Loading DINO Encoder ONNX...');
       this.encoderSession = await ort.InferenceSession.create('/assets/dino_encoder.onnx');
-      console.log('[ImageEncoder] 🔍 Encoder input names:', this.encoderSession.inputNames);
-      console.log('[ImageEncoder] 🔍 Encoder output names:', this.encoderSession.outputNames);
+      console.log('[ImageEncoder] ?? Encoder input names:', this.encoderSession.inputNames);
+      console.log('[ImageEncoder] ?? Encoder output names:', this.encoderSession.outputNames);
 
       this.initialized = true;
-      console.log('[ImageEncoder] ✅ Initialized with 37×37 patch support');
+      console.log('[ImageEncoder] ? Initialized with 37×37 patch support');
     } catch (error) {
-      console.error('[ImageEncoder] ❌ Failed to initialize:', error);
+      console.error('[ImageEncoder] ? Failed to initialize:', error);
       throw error;
     }
-  }
+  } // ← この閉じ括弧が抜けていました
 
   /**
-   * DINOv2用の前処理（正規化）
+   * DINOv2用の前処理(正規化)
    * mean = [0.485, 0.456, 0.406]
    * std = [0.229, 0.224, 0.225]
    */
@@ -117,7 +130,7 @@ export class ImageEncoder {
 
   /**
    * DINOv2のパッチ特徴を2D特徴マップに変換
-   * 技術仕様書 Section 3.1: 518×518入力 → 37×37パッチ（1369パッチ）
+   * 技術仕様書 Section 3.1: 518×518入力 → 37×37パッチ(1369パッチ)
    */
   private reshapePatchesToFeatureMap(
     patchData: Float32Array,
@@ -148,7 +161,7 @@ export class ImageEncoder {
   }
 
   /**
-   * ソースカメラ設定を使用した特徴抽出（GUAVA論文準拠）
+   * ソースカメラ設定を使用した特徴抽出(GUAVA論文準拠)
    * 完全ONNX版: DINOv2もONNXで実行し、37×37パッチを確実に取得
    */
   async extractFeaturesWithSourceCamera(
@@ -177,7 +190,7 @@ export class ImageEncoder {
       const resized = await image.resize(518, 518);
       console.log('[ImageEncoder] Resized to 518×518');
 
-      // 2. DINOv2前処理（正規化）
+      // 2. DINOv2前処理(正規化)
       const normalized = this.preprocessImage(resized);
 
       // 3. DINOv2 ONNX実行
@@ -209,11 +222,11 @@ export class ImageEncoder {
 
       // 検証: 37×37パッチであることを確認
       if (numPatches !== 37 * 37) {
-        console.error(`[ImageEncoder] ❌ Expected 1369 patches, got ${numPatches}`);
+        console.error(`[ImageEncoder] ? Expected 1369 patches, got ${numPatches}`);
         throw new Error(`Invalid patch count: ${numPatches}`);
       }
 
-      console.log('[ImageEncoder] ✅ DINOv2 output: 37×37 patches confirmed');
+      console.log('[ImageEncoder] ? DINOv2 output: 37×37 patches confirmed');
 
       // 5. パッチを2D特徴マップに変換
       const { data: featureMapData, height: fmHeight, width: fmWidth } =
@@ -225,7 +238,7 @@ export class ImageEncoder {
         width: fmWidth
       });
 
-      // 6. DINO Encoder ONNX実行（37×37 → 518×518）
+      // 6. DINO Encoder ONNX実行(37×37 → 518×518)
       console.log('[ImageEncoder] Running DINO Encoder ONNX...');
 
       const encoderTensor = new ort.Tensor('float32', featureMapData, [1, patchDim, fmHeight, fmWidth]);
@@ -253,9 +266,9 @@ export class ImageEncoder {
 
       // 検証
       if (appearanceHeight !== 518 || appearanceWidth !== 518) {
-        console.warn(`[ImageEncoder] ⚠️ Expected 518×518, got ${appearanceWidth}×${appearanceHeight}`);
+        console.warn(`[ImageEncoder] ?? Expected 518×518, got ${appearanceWidth}×${appearanceHeight}`);
       } else {
-        console.log('[ImageEncoder] ✅ Appearance feature map: 518×518 confirmed');
+        console.log('[ImageEncoder] ? Appearance feature map: 518×518 confirmed');
       }
 
       // 8. 実際の特徴マップサイズでカメラパラメータを構築
@@ -279,7 +292,7 @@ export class ImageEncoder {
       this.normalizeFeatures(projectionFeature, vertexCount, featureDim);
 
       const elapsed = performance.now() - startTime;
-      console.log(`[ImageEncoder] ✅ Feature extraction completed in ${elapsed.toFixed(2)}ms`);
+      console.log(`[ImageEncoder] ? Feature extraction completed in ${elapsed.toFixed(2)}ms`);
 
       // 統計情報
       const sampleSize = Math.min(1000, projectionFeature.length);
@@ -295,16 +308,69 @@ export class ImageEncoder {
         nonZeroRatio: (sample.filter(v => Math.abs(v) > 0.001).length / sample.length).toFixed(3)
       });
 
+
+      // ? 論文準拠: 2つのブランチに分離
+      // Appendix B.2: "transform its dimensions to 32 and 128"
+      const appearanceChannels = appearanceTensor.dims[1] as number;
+      
+      console.log('[ImageEncoder] ?? 論文準拠: Feature branches separation');
+      console.log('[ImageEncoder] Encoder output channels:', appearanceChannels);
+      
+      const numPixels = appearanceWidth * appearanceHeight;
+      
+      if (appearanceChannels >= 128 + 32) {
+        this.templateFeatures = new Float32Array(numPixels * 128);
+        this.uvFeatures = new Float32Array(numPixels * 32);
+        
+        for (let i = 0; i < numPixels; i++) {
+          for (let c = 0; c < 128; c++) {
+            this.templateFeatures[i * 128 + c] = appearanceData[c * numPixels + i];
+          }
+          for (let c = 0; c < 32; c++) {
+            this.uvFeatures[i * 32 + c] = appearanceData[(128 + c) * numPixels + i];
+          }
+        }
+        
+        console.log('[ImageEncoder] ? Separated: 128ch (template) + 32ch (UV)');
+        
+      } else if (appearanceChannels === 128) {
+        console.warn('[ImageEncoder] ?? Encoder outputs 128ch only, using subset for UV (32ch)');
+        
+        this.templateFeatures = new Float32Array(numPixels * 128);
+        this.uvFeatures = new Float32Array(numPixels * 32);
+        
+        for (let i = 0; i < numPixels; i++) {
+          for (let c = 0; c < 128; c++) {
+            this.templateFeatures[i * 128 + c] = appearanceData[c * numPixels + i];
+          }
+          for (let c = 0; c < 32; c++) {
+            this.uvFeatures[i * 32 + c] = appearanceData[c * numPixels + i];
+          }
+        }
+        
+        console.log('[ImageEncoder] ? Separated: 128ch (template) + 32ch subset (UV)');
+        
+      } else {
+        throw new Error(`Unexpected channel count: ${appearanceChannels}. Expected >= 128`);
+      }
+      
+      console.log('[ImageEncoder] Feature branches saved:', {
+        templateSize: this.templateFeatures.length,
+        uvSize: this.uvFeatures.length,
+        templateChannels: 128,
+        uvChannels: 32
+      });
       return { projectionFeature, idEmbedding };
 
     } catch (error) {
-      console.error('[ImageEncoder] ❌ Feature extraction failed:', error);
+      console.error('[ImageEncoder] ? Feature extraction failed:', error);
       throw error;
     }
   }
 
   /**
-   * 画像から特徴抽出（CameraParams直接指定版）
+   * 画像から特徴抽出(CameraParams直接指定版)
+   * ?? FIX: 渡されたカメラパラメータを使用 (ハードコード値を削除)
    */
   async extractFeatures(
     imageUrl: string,
@@ -313,14 +379,21 @@ export class ImageEncoder {
     camera: CameraParams,
     featureDim: number = 128
   ): Promise<{ projectionFeature: Float32Array; idEmbedding: Float32Array }> {
-    // SourceCameraConfig形式に変換して呼び出し
+    // ? 渡されたカメラパラメータを使用 (論文準拠)
     const cameraConfig: SourceCameraConfig = {
-      position: { x: 0, y: 1.4, z: 2 },
-      target: { x: 0, y: 1.4, z: 0 },
-      fov: 45,
-      imageWidth: camera.screenWidth,
-      imageHeight: camera.screenHeight
+      position: camera.position,
+      target: camera.target,
+      fov: camera.fov,
+      imageWidth: camera.width,
+      imageHeight: camera.height
     };
+
+    console.log('[ImageEncoder] ?? Using actual camera parameters:', {
+      position: cameraConfig.position,
+      target: cameraConfig.target,
+      fov: cameraConfig.fov,
+      resolution: `${cameraConfig.imageWidth}×${cameraConfig.imageHeight}`
+    });
 
     return this.extractFeaturesWithSourceCamera(
       imageUrl,
@@ -341,13 +414,13 @@ export class ImageEncoder {
     screenWidth: number,
     screenHeight: number
   ): [number, number, number, number] {
-    // View transform
+    // View transform (column-major)
     const viewX = viewMatrix[0] * vx + viewMatrix[4] * vy + viewMatrix[8] * vz + viewMatrix[12];
     const viewY = viewMatrix[1] * vx + viewMatrix[5] * vy + viewMatrix[9] * vz + viewMatrix[13];
     const viewZ = viewMatrix[2] * vx + viewMatrix[6] * vy + viewMatrix[10] * vz + viewMatrix[14];
     const viewW = viewMatrix[3] * vx + viewMatrix[7] * vy + viewMatrix[11] * vz + viewMatrix[15];
 
-    // Projection transform
+    // Projection transform (column-major)
     const clipX = projMatrix[0] * viewX + projMatrix[4] * viewY + projMatrix[8] * viewZ + projMatrix[12] * viewW;
     const clipY = projMatrix[1] * viewX + projMatrix[5] * viewY + projMatrix[9] * viewZ + projMatrix[13] * viewW;
     const clipZ = projMatrix[2] * viewX + projMatrix[6] * viewY + projMatrix[10] * viewZ + projMatrix[14] * viewW;
@@ -463,7 +536,7 @@ export class ImageEncoder {
     console.log('[ImageEncoder] Visible vertices:', visibleCount, '/', vertexCount);
 
     if (visibleCount === 0) {
-      console.warn('[ImageEncoder] ⚠️ No visible vertices! Check camera parameters.');
+      console.warn('[ImageEncoder] ?? No visible vertices! Check camera parameters.');
     }
 
     return projectionFeatures;
@@ -510,16 +583,21 @@ export class ImageEncoder {
   }
 
   /**
-   * ソースカメラ設定からカメラパラメータを構築
+   * ? ソースカメラ設定からカメラパラメータを構築(配列形式対応)
    * GUAVA論文: ソース画像撮影時のカメラパラメータを使用
+   * 修正版: WebGL column-major形式に準拠
    */
-  buildCameraParamsFromConfig(config: SourceCameraConfig, featureMapWidth: number, featureMapHeight: number): CameraParams {
+  buildCameraParamsFromConfig(
+    config: SourceCameraConfig, 
+    featureMapWidth: number, 
+    featureMapHeight: number
+  ): CameraParams {
     const { position, target, fov } = config;
 
-    // カメラ方向ベクトルを計算
-    const dx = target.x - position.x;
-    const dy = target.y - position.y;
-    const dz = target.z - position.z;
+    // ? 配列形式で方向ベクトルを計算
+    const dx = target[0] - position[0];
+    const dy = target[1] - position[1];
+    const dz = target[2] - position[2];
     const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
 
     // 前方向ベクトル (カメラが見る方向)
@@ -542,18 +620,21 @@ export class ImageEncoder {
     uy = rz * fx - rx * fz;
     uz = rx * fy - ry * fx;
 
-    // View Matrix (column-major): 世界座標からカメラ座標へ
+    // 平行移動成分を計算(配列形式対応)
+    const tx = -(rx * position[0] + ry * position[1] + rz * position[2]);
+    const ty = -(ux * position[0] + uy * position[1] + uz * position[2]);
+    const tz = (fx * position[0] + fy * position[1] + fz * position[2]);
+
+    // View Matrix (WebGL column-major形式)
+    // 列ベクトルの順: right, up, -forward, translation
     const viewMatrix = new Float32Array([
-      rx, ux, -fx, 0,
-      ry, uy, -fy, 0,
-      rz, uz, -fz, 0,
-      -(rx * position.x + ry * position.y + rz * position.z),
-      -(ux * position.x + uy * position.y + uz * position.z),
-      -(-fx * position.x + -fy * position.y + -fz * position.z),
-      1
+      rx,  ry,  rz,  0,
+      ux,  uy,  uz,  0,
+      -fx, -fy, -fz, 0,
+      tx,  ty,  tz,  1
     ]);
 
-    // Projection Matrix: FOVとアスペクト比を使用
+    // Projection Matrix (WebGL column-major形式)
     const fovRad = fov * Math.PI / 180;
     const aspect = featureMapWidth / featureMapHeight;
     const f = 1 / Math.tan(fovRad / 2);
@@ -561,25 +642,61 @@ export class ImageEncoder {
     const far = 100;
 
     const projMatrix = new Float32Array([
-      f / aspect, 0, 0, 0,
-      0, f, 0, 0,
-      0, 0, (far + near) / (near - far), -1,
-      0, 0, (2 * far * near) / (near - far), 0
+      f / aspect, 0,  0,   0,
+      0,          f,  0,   0,
+      0,          0,  (far + near) / (near - far),  (2 * far * near) / (near - far),
+      0,          0,  -1,  0
     ]);
 
     console.log('[ImageEncoder] Built camera params from config:', {
-      position: [position.x, position.y, position.z],
-      target: [target.x, target.y, target.z],
+      position: [position[0], position[1], position[2]],
+      target: [target[0], target[1], target[2]],
       fov,
       featureMapSize: `${featureMapWidth}×${featureMapHeight}`
     });
 
     return {
+      position,
+      target,
+      fov,
+      aspect,
+      near: 0.01,
+      far: 100,
+      width: featureMapWidth,
+      height: featureMapHeight,
       viewMatrix,
       projMatrix,
       screenWidth: featureMapWidth,
       screenHeight: featureMapHeight
     };
+  }
+
+  /**
+   * ? 論文準拠: UV branch の features を取得 (32ch)
+   */
+  getUVFeatures(): Float32Array {
+    if (!this.uvFeatures) {
+      throw new Error('[ImageEncoder] UV features not available. Call extractFeaturesWithSourceCamera() first.');
+    }
+    return this.uvFeatures;
+  }
+
+  /**
+   * ? 論文準拠: Template branch の features を取得 (128ch)
+   */
+  getTemplateFeatures(): Float32Array {
+    if (!this.templateFeatures) {
+      throw new Error('[ImageEncoder] Template features not available. Call extractFeaturesWithSourceCamera() first.');
+    }
+    return this.templateFeatures;
+  }
+
+  /**
+   * 互換性のため: appearance feature map を取得 (128ch)
+   * @deprecated Use getTemplateFeatures() instead
+   */
+  getAppearanceFeatureMap(): Float32Array {
+    return this.getTemplateFeatures();
   }
 
   /**

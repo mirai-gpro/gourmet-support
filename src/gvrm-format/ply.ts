@@ -168,7 +168,7 @@ export class PLYLoader {
 
         const addSphere = (boneIdx: number, center: THREE.Vector3, radius: number, density: number) => {
             if (boneIdx === 22) {
-                // 顎専用: 前方に偏った半球
+                // 顎専用: 前方に向いた半球
                 for (let i = 0; i <= density; i++) {
                     for (let j = 0; j <= density; j++) {
                         const phi = (i / density) * Math.PI - Math.PI / 2;
@@ -233,6 +233,7 @@ export class PLYLoader {
 
         const data = {
             positions: new Float32Array(vertexCount * 3),
+            normals: new Float32Array(vertexCount * 3),      // ← 法線配列を追加
             colors: new Float32Array(vertexCount * 3),
             boneIndices: new Float32Array(vertexCount * 4),
             boneWeights: new Float32Array(vertexCount * 4),
@@ -294,6 +295,7 @@ export class PLYLoader {
             const z = normalizedPositions[i * 3 + 2];
 
             data.positions.set([x, y, z], i * 3);
+            data.normals.set([read('nx'), read('ny'), read('nz')], i * 3);    // ← 法線を読み込み
             data.colors.set([read('f_dc_0'), read('f_dc_1'), read('f_dc_2')], i * 3);
             data.scales.set([
                 read('scale_0') * scaleFactor,
@@ -328,7 +330,7 @@ export class PLYLoader {
         return {
             ...data,
             calibration: { bbox, scaleInfo },
-            boneStats  // ← これを追加
+            boneStats
         };
     }
 }
