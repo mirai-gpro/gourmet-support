@@ -1,0 +1,75 @@
+# カスタマーサポートシステム デプロイスクリプト (PowerShell)
+
+# 設定
+$PROJECT_ID = "hp-support-477512"
+$SERVICE_NAME = "gourmet-support"
+$REGION = "us-central1"
+$IMAGE_NAME = "gcr.io/$PROJECT_ID/$SERVICE_NAME"
+
+# 環境変数
+$GEMINI_API_KEY = "AIzaSyDj63uw3IzoKOJzqrghfYU9pNCFL4PLtgc"
+$PROMPTS_BUCKET_NAME = "hp-support-477512-prompts"
+$GOOGLE_PLACES_API_KEY = "AIzaSyCGqO4DE9uOMDgN-yRMSZ7qNFCYn-P3k3I"
+$HOTPEPPER_API_KEY = "c22031a566715e40"  # https://webservice.recruit.co.jp/ で取得
+$TRIPADVISOR_API_KEY="14516430BFB74E94A198B967C4DDD17F"
+
+Write-Host "====================================" -ForegroundColor Cyan
+Write-Host "カスタマーサポートシステム デプロイ" -ForegroundColor Cyan
+Write-Host "====================================" -ForegroundColor Cyan
+Write-Host ""
+
+# デバッグ: 変数確認
+Write-Host "PROJECT_ID: $PROJECT_ID" -ForegroundColor Gray
+Write-Host "IMAGE_NAME: $IMAGE_NAME" -ForegroundColor Gray
+Write-Host ""
+
+# 1. イメージビルド
+Write-Host "[1/3] Dockerイメージをビルド中..." -ForegroundColor Yellow
+gcloud builds submit --tag "$IMAGE_NAME" --project "$PROJECT_ID"
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "ビルドに失敗しました" -ForegroundColor Red
+    exit 1
+}
+Write-Host "ビルド完了" -ForegroundColor Green
+Write-Host ""
+
+# 2. Cloud Runにデプロイ
+Write-Host "[2/3] Cloud Runにデプロイ中..." -ForegroundColor Yellow
+gcloud run deploy "$SERVICE_NAME" `
+    --image "$IMAGE_NAME" `
+    --platform managed `
+    --region "$REGION" `
+    --allow-unauthenticated `
+    --set-env-vars "GEMINI_API_KEY=$GEMINI_API_KEY,PROMPTS_BUCKET_NAME=$PROMPTS_BUCKET_NAME,GOOGLE_PLACES_API_KEY=$GOOGLE_PLACES_API_KEY,TRIPADVISOR_API_KEY=$TRIPADVISOR_API_KEY,HOTPEPPER_API_KEY=$HOTPEPPER_API_KEY" `
+    --memory 512Mi `
+    --cpu 1 `
+    --timeout 300 `
+    --max-instances 10 `
+    --project "$PROJECT_ID"
+
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "デプロイに失敗しました" -ForegroundColor Red
+    exit 1
+}
+Write-Host "デプロイ完了" -ForegroundColor Green
+Write-Host ""
+
+# 3. URLを取得
+Write-Host "[3/3] サービスURLを取得中..." -ForegroundColor Yellow
+$SERVICE_URL = gcloud run services describe "$SERVICE_NAME" `
+    --region "$REGION" `
+    --format 'value(status.url)' `
+    --project "$PROJECT_ID"
+
+Write-Host ""
+Write-Host "====================================" -ForegroundColor Cyan
+Write-Host "デプロイが完了しました!" -ForegroundColor Green
+Write-Host "====================================" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "サービスURL: $SERVICE_URL" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "次のステップ:" -ForegroundColor Cyan
+Write-Host "1. GCSバケットにプロンプトをアップロード"
+Write-Host "2. 上記URLにアクセスして動作確認"
+Write-Host ""

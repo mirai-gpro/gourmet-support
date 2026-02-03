@@ -1,0 +1,4 @@
+gcloud logging read "resource.type=cloud_run_revision AND severity>=ERROR" `
+  --limit 50 `
+  --format json `
+  --project hp-support-477512

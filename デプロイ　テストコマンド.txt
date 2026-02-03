@@ -1,0 +1,78 @@
+export GOOGLE_APPLICATION_CREDENTIALS="/path/to/hp-support-477512-afbd23b80ea8.json"
+
+# 環境変数の設定（Windows PowerShell）
+$env:TWILIO_ACCOUNT_SID="ACc07a248bcd2855feb014c36ee0773d79"
+$env:TWILIO_AUTH_TOKEN="4e6decf149836342498be1dc272a4ecd"
+# twilio モジュールのインストール
+pip install twilio
+# テスト実行
+python test_twilio_connection.py
+
+
+
+$env:GOOGLE_APPLICATION_CREDENTIALS="C:\Users\hamad\gourmet-support\hp-support-477512-afbd23b80ea8.json"
+$env:GOOGLE_API_KEY="AIzaSyBMCiZxyCof-db2jB8WWWW6bWWTWxWXLuM"
+pip install google-cloud-speech google-cloud-texttospeech google-generativeai
+python test_voice_ai.py
+
+
+
+$env:TWILIO_ACCOUNT_SID="ACc07a248bcd2855feb014c36ee0773d79"
+$env:TWILIO_AUTH_TOKEN="4e6decf149836342498be1dc272a4ecd"
+$env:TWILIO_PHONE_NUMBER="+819025565125"
+$env:TEST_PHONE_NUMBER="+819025565125"
+python test_real_call.py
+
+
+cd C:\Users\hamad\gourmet-support\api
+git pull
+gcloud builds submit --tag gcr.io/hp-support-477512/gourmet-voice-api
+gcloud run deploy gourmet-voice-api --image gcr.io/hp-support-477512/gourmet-voice-api --platform managed --region us-central1 --allow-unauthenticated --set-env-vars "BASE_URL=https://gourmet-voice-api-417509577941.us-central1.run.app"
+
+cd C:\Users\hamad\gourmet-support
+python test_real_call.py
+# 選択: 3
+# Webhook: https://gourmet-voice-api-417509577941.us-central1.run.app/api/twilio/answer
+
+
+
+cd api
+gcloud builds submit --tag gcr.io/hp-support-477512/gourmet-voice-api
+gcloud run deploy gourmet-voice-api --image gcr.io/hp-support-477512/gourmet-voice-api --platform managed --region us-central1 --allow-unauthenticated
+
+
+
+
+
+
+
+gcloud run deploy gourmet-voice-api --region us-central1 --source api --set-env-vars="BASE_URL=https://gourmet-voice-api-417509577941.us-central1.run.app,TWILIO_ACCOUNT_SID=ACc07a248bcd2855feb014c36ee0773d79,TWILIO_AUTH_TOKEN=4e6decf149836342498be1dc272a4ecd,GOOGLE_API_KEY=AIzaSyBMCiZxyCof-db2jB8WWWW6bWWTWxWXLuM"
+
+
+
+
+cd C:\Users\hamad\gourmet-support
+$env:TWILIO_ACCOUNT_SID="ACc07a248bcd2855feb014c36ee0773d79"
+$env:TWILIO_AUTH_TOKEN="4e6decf149836342498be1dc272a4ecd"
+
+# フォーム形式で送信
+$params = @{
+    To = "+819025565125"
+    From = "+819025565125"
+    Url = "https://gourmet-voice-api-417509577941.us-central1.run.app/api/twilio/answer"
+    StatusCallback = "https://gourmet-voice-api-417509577941.us-central1.run.app/api/twilio/status"
+}
+
+$auth = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("${env:TWILIO_ACCOUNT_SID}:${env:TWILIO_AUTH_TOKEN}"))
+
+Invoke-RestMethod `
+    -Uri "https://api.twilio.com/2010-04-01/Accounts/$env:TWILIO_ACCOUNT_SID/Calls.json" `
+    -Method Post `
+    -Body $params `
+    -Headers @{ Authorization = "Basic $auth" }
+
+
+
+
+python api/reservation/test_voice_conversation.py --save-audio
+

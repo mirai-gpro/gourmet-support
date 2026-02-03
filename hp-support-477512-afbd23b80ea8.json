@@ -1,0 +1,13 @@
+{
+  "type": "service_account",
+  "project_id": "hp-support-477512",
+  "private_key_id": "afbd23b80ea8d8a24e4f59532c048afa9bfaf3c5",
+  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQClHYbK/zVznfmw\n2Z5PesNQsWA7BSGSjGGCFoaRFLAr+xE6A28IN6NRSmoKeNLbWVMKtCoPGYEh3J2Q\nkdzWs8Exm85U0MAwbouy/Z6WQaTPJA7FoEug+pMQHeiZRp4BHNDzeNgZgVfRSvCZ\n22WApepXJLuPKepawrfrt++XWo9KhFdfcRbsuwDPUXZ7vA/6bs66j/lErJ2968Bn\nYuySWWw5nJ+9cf2ju9M05myovHswu3LapNAbtnfYi8kXM0UR+Um3H2OAamqgGWzo\nCFkW5+Z4AeW/NknIKl2neaSuBjqZtx8KCyXg12bRbOZm5fBz71U0spMJNXN//T4Z\nvaccESolAgMBAAECggEACGSCUUzR54u269rRNa1XQoGUPcZqfkZIFIfW6jFDgntz\nVOAPeOWfFbGIcfonOZgGOmE4UWZ/TlHQ6SQeNgQ9WdYCEa8/Uuw430MN7bRDeiCV\nPE1ZWsLceRwUEmpo+0R+3clILq+zii4FdxnpmbWVPj2zPOPUB4NQkZjaraD1me4g\nPjDYVqlDkhGK0OjAyEVVVBehHtdPaxEHUdObUkEMRWsKtL6KMKluIuG6wh6LRgQC\ngvMJAny+YmHO9qOczOv/kh9+8ATZxmdqB0JJGHtXCEmDxLDMZwm2SpzGK2gKf9rZ\nilOUtU5qwD7DBF0IZ9VYovlqD9DAF9/9DZ2jhP2KRwKBgQDOZQ0EOZo4IlCFSFDG\nlPZjekRtMk6E5reTxR7cjUsiZn7VlxNwWib1LQVnwtPhR+RhYhHbAt3+zSd8QMBW\nplbl7yLt25qXhuhuRp1LDDwu4dxJi/2MjJ3MhRp/dJAkbTdGsg1jUsDwyjzyiNq+\ndzGAp2kLcLvxhY/sUbqcjQse/wKBgQDMzKiOkYywZCq4EQ/VVpqVfGUfMMEV4Oqm\nh2zfEHCNSepHH9S9RwyNDuU8MMABzls48wst85Ra723hPS2+0nMM/tbPrCD7LoP4\n4Q0rDr+vKWNHKaLI87YQ8wBeJMJ4SylLYynhyldehm/iaa0fgJjAos0h58xYn5JA\nWp0xHVha2wKBgQC2hR5xsg7zvUS/2Se1tV3+ss14U5ikZvPJNfUIzdq33TQk5qlG\nHjN9dgblr6F4A/+vLu7jYzG2du6ILyrodck7JbMZ7a5UefVqMABBsdw3CX2pfKcI\neAHEL6EzPX2K+Rp85lB4mWIOjoo/YU8wSG/6ehGnEFbkS1zve4cvkntXOQKBgQC5\nn/JTLpdvNYsGxOgt/M4mGdbp+123P+JPSEYktJjfZxSCnNZNLL2yiMK72I/f0zMZ\nnikO4E0iUwur8LCq2cLQD5eSKbjHEjUp+ond8gNJd2D1mkZij4sBN8+ohPcC41Ut\ncFcAwU6JbZ6xgAkbmYpaZ/U3+wpbdV6xF7CMWMXBqwKBgALT4PgXzw2ScHyD7SIg\novV/vkziceueJCR3BSaSOTxVSADV+tCw8vqOCkS1glabAzt+VUUgfRlKpzTS4eN8\nL3eiiZOciMlTGAsuxqJLLSB1oJf1hgI7NUBPM2KLHXDKidXuFh/cqKUWdOc3XH3V\ngWcwVleXHJsqxb/KXbTlbM5J\n-----END PRIVATE KEY-----\n",
+  "client_email": "gourmet-support-voice@hp-support-477512.iam.gserviceaccount.com",
+  "client_id": "101866395883931690796",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token",
+  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/gourmet-support-voice%40hp-support-477512.iam.gserviceaccount.com",
+  "universe_domain": "googleapis.com"
+}
